@@ -372,6 +372,15 @@ configMigrations.push({
   },
 });
 
+// ---- V5 migration: configurable context window ----
+// 0 means "auto" — fall back to the per-model table in the engine.
+configMigrations.push({
+  version: 5,
+  up: (db) => {
+    db.exec("ALTER TABLE settings ADD COLUMN context_window INTEGER NOT NULL DEFAULT 32768;");
+  },
+});
+
 const knowledgeMigrations: Migration[] = [
   {
     version: 1,

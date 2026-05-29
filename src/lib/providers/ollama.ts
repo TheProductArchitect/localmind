@@ -28,8 +28,8 @@ export const ollamaProvider: Provider = {
     }));
   },
 
-  async *chat({ model, messages, tools, signal }): AsyncGenerator<ProviderDelta> {
-    const body = {
+  async *chat({ model, messages, tools, signal, contextWindow }): AsyncGenerator<ProviderDelta> {
+    const body: Record<string, unknown> = {
       model,
       messages: messages.map((m) => {
         if (m.role === "tool") {
@@ -54,6 +54,12 @@ export const ollamaProvider: Provider = {
           }))
         : undefined,
     };
+
+    // Tell Ollama what context window to load the model with; without this it
+    // silently uses its small default (often 2k–4k), starving large models.
+    if (contextWindow && contextWindow > 0) {
+      body.options = { num_ctx: contextWindow };
+    }
 
     const r = await fetch(`${HOST}/api/chat`, {
       method: "POST",

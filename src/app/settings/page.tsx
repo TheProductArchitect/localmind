@@ -84,6 +84,26 @@ function GeneralSection() {
       </Card>
 
       <Card className="p-4 space-y-2">
+        <p className="font-medium text-sm">Model context window</p>
+        <p className="text-xs text-muted-foreground">
+          How much conversation and code the model can consider at once. Larger windows suit big
+          local coding models (e.g. 70B Qwen/DeepSeek) but use more memory. This size is sent to
+          the local model server so the model actually loads with it. Auto picks a size based on
+          the model name.
+        </p>
+        <select defaultValue={s.context_window}
+          onChange={(e) => save({ context_window: Number(e.target.value) })}
+          className="mt-1 flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm">
+          <option value={0}>Auto (based on model)</option>
+          <option value={8192}>8K tokens</option>
+          <option value={16384}>16K tokens</option>
+          <option value={32768}>32K tokens</option>
+          <option value={65536}>64K tokens</option>
+          <option value={131072}>128K tokens</option>
+        </select>
+      </Card>
+
+      <Card className="p-4 space-y-2">
         <p className="font-medium text-sm">Approved folders</p>
         <p className="text-xs text-muted-foreground">The filesystem tool can only touch paths inside these directories.</p>
         <Input defaultValue={JSON.parse(s.approved_dirs || "[]").join(", ")}

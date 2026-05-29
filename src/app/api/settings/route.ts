@@ -17,6 +17,7 @@ export async function PATCH(req: NextRequest) {
     "assistant_name", "personality", "theme", "locale", "active_profile_id",
     "provider", "active_model", "lan_enabled", "port", "https_enabled",
     "approved_dirs", "onboarded", "chat_font_size", "auto_backup", "backup_dir",
+    "context_window",
   ];
   for (const k of allowed) {
     if (k in body) patch[k] = body[k];

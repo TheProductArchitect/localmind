@@ -29,5 +29,6 @@ export interface Provider {
     messages: ChatMessage[];
     tools: ToolDefinition[];
     signal?: AbortSignal;
+    contextWindow?: number;
   }): AsyncGenerator<ProviderDelta>;
 }

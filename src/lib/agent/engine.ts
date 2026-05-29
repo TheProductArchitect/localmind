@@ -29,18 +29,30 @@ const MAX_TOOL_CALLS = 25;
 const TOOL_TIMEOUT_MS = 30_000;
 const BROWSER_TOOL_TIMEOUT_MS = 60_000;
 
-// Per-model context window sizes (token estimates).
+// Per-model context window sizes (token estimates). Used only as a fallback when
+// the user has not set an explicit context window (context_window = 0 / "auto").
 const CONTEXT_WINDOWS: Record<string, number> = {
   "llama3.2": 8192, "llama3.1": 8192, "llama3": 8192, "llama2": 4096,
   "qwen2.5-coder": 32768, "qwen2.5": 32768, "mistral": 8192, "phi3.5": 4096,
   "gpt-4o": 128000, "gpt-4o-mini": 128000,
 };
 
+// Sensible large default for unrecognised models — sized for local coding work
+// rather than collapsing to a tiny window.
+const DEFAULT_CONTEXT_WINDOW = 32768;
+
 function contextWindowFor(model: string): number {
   for (const [key, size] of Object.entries(CONTEXT_WINDOWS)) {
     if (model.toLowerCase().includes(key)) return size;
   }
-  return 4096;
+  return DEFAULT_CONTEXT_WINDOW;
+}
+
+// Resolve the effective context window: prefer the user-configured value, and
+// fall back to the per-model table only when no explicit value is set.
+function resolveContextWindow(configured: number | null | undefined, model: string): number {
+  if (configured && configured > 0) return configured;
+  return contextWindowFor(model);
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -102,7 +114,7 @@ export async function* runAgent(
   let toolCallCount = 0;
 
   // Context window overflow prevention — compress old turns if the history is large.
-  const ctxWindow = contextWindowFor(settings.active_model);
+  const ctxWindow = resolveContextWindow(settings.context_window, settings.active_model);
   const estTokens = messages.reduce((s, m) => s + approxTokens((m as any).content || ""), 0);
   if (estTokens > ctxWindow * 0.8 && messages.length > 6) {
     try {
@@ -120,6 +132,7 @@ export async function* runAgent(
         ],
         tools: [],
         signal,
+        contextWindow: ctxWindow,
       })) {
         if (d.type === "text") summary += d.delta;
       }
@@ -146,6 +159,7 @@ export async function* runAgent(
         messages,
         tools: toolDefs,
         signal,
+        contextWindow: ctxWindow,
       })) {
         if (signal.aborted) return;
         if (delta.type === "text") {
