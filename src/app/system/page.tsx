@@ -32,7 +32,12 @@ export default function SystemPage() {
 
   useEffect(() => {
     const tick = async () => {
-      try { setH(await (await fetch("/api/system/health")).json()); } catch {}
+      try {
+        const r = await fetch("/api/system/health");
+        if (!r.ok) return;
+        const data = await r.json();
+        if (data && data.ram && data.disk) setH(data);
+      } catch {}
     };
     tick();
     const t = setInterval(tick, 2000);
@@ -81,7 +86,7 @@ export default function SystemPage() {
 
       {tab === "Performance" && <PerformancePanel />}
 
-      {tab === "Health" && h && (
+      {tab === "Health" && h && h.ram && h.disk && (
         <div className="grid gap-4 sm:grid-cols-2">
           <Card className="p-4">
             <p className="text-sm font-medium mb-2">CPU</p>
