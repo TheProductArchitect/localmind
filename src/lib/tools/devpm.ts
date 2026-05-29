@@ -1,13 +1,10 @@
 import fs from "fs/promises";
 import path from "path";
-import { execFile } from "child_process";
-import { promisify } from "util";
 import {
   listCodebases, getCodebase, searchCodebaseFiles, listDevTasks, createDevTask,
 } from "../db/devpm";
 import type { Tool } from "./types";
-
-const exec = promisify(execFile);
+import { runInSandbox, SandboxUnavailableError } from "./sandbox";
 
 export const devpmTool: Tool = {
   actionType: "read_files",
@@ -96,12 +93,30 @@ export const devpmTool: Tool = {
       const commands = JSON.parse(cb.commands || "[]") as { name: string; command: string }[];
       const match = commands.find((c) => c.name === input.command);
       if (!match) return { ok: false, output: `No registered command named "${input.command}".` };
+      const root = cb.path.replace(/^~/, process.env.HOME || "");
       try {
-        const root = cb.path.replace(/^~/, process.env.HOME || "");
-        const { stdout, stderr } = await exec("sh", ["-c", match.command], { cwd: root, timeout: 120000 });
-        return { ok: true, output: (stdout + stderr).slice(0, 8000) || "(no output)", summary: `ran ${match.name}` };
+        // Run inside a container with only the codebase directory mounted, so a
+        // hallucinated command cannot touch the rest of the host filesystem.
+        const realRoot = await fs.realpath(root);
+        const result = await runInSandbox({
+          command: match.command,
+          workdir: realRoot,
+          mounts: [realRoot],
+          timeoutMs: 120000,
+        });
+        const combined = (result.stdout + result.stderr).slice(0, 8000) || "(no output)";
+        if (result.timedOut) {
+          return { ok: false, output: `Command timed out.\n${combined}`, summary: "timed out" };
+        }
+        if (result.exitCode !== 0) {
+          return { ok: false, output: `Command exited with code ${result.exitCode}.\n${combined}`, summary: "failed" };
+        }
+        return { ok: true, output: combined, summary: `ran ${match.name}` };
       } catch (e: any) {
-        return { ok: false, output: `Command failed: ${e?.message}\n${e?.stdout || ""}${e?.stderr || ""}`, summary: "failed" };
+        if (e instanceof SandboxUnavailableError) {
+          return { ok: false, output: e.message, summary: "sandbox unavailable" };
+        }
+        return { ok: false, output: `Command failed: ${e?.message}`, summary: "failed" };
       }
     }
     return { ok: false, output: `Unknown operation: ${input.operation}` };
