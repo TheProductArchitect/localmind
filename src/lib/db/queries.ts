@@ -25,6 +25,7 @@ export type Settings = {
   tts_voice: string | null;
   auto_capture: number;
   api_token_hash: string | null;
+  context_window: number;
 };
 
 export function getSettings(): Settings {
