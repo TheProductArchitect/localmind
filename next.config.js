@@ -8,5 +8,17 @@ const nextConfig = {
     config.externals.push({ "better-sqlite3": "commonjs better-sqlite3" });
     return config;
   },
+  async headers() {
+    if (process.env.NODE_ENV === "production") return [];
+    // Development only: prevent the preview pane from serving stale cached pages.
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "Cache-Control", value: "no-store, must-revalidate" },
+        ],
+      },
+    ];
+  },
 };
 module.exports = nextConfig;
