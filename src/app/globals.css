@@ -4,55 +4,68 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
+    /* Quiet Workstation — layered paper-light surfaces */
+    --background: 240 20% 98%;
+    --foreground: 240 10% 9%;
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
+    --card-foreground: 240 10% 9%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
+    --popover-foreground: 240 10% 9%;
+    --primary: 240 9% 12%;
+    --primary-foreground: 0 0% 99%;
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 6% 12%;
+    --muted: 240 5% 96%;
     /* Darkened for WCAG AA 4.5:1 contrast on the light background. */
-    --muted-foreground: 240 5% 34%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
-    --radius: 0.5rem;
+    --muted-foreground: 240 4% 42%;
+    --accent: 240 5% 95%;
+    --accent-foreground: 240 6% 12%;
+    /* Refined indigo, reserved for focus + active states */
+    --brand: 243 75% 59%;
+    --brand-foreground: 0 0% 100%;
+    --brand-soft: 243 100% 97%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 99%;
+    --border: 240 8% 90%;
+    --input: 240 8% 89%;
+    --ring: 243 75% 59%;
+    --radius: 0.75rem;
   }
   .dark {
-    --background: 240 10% 3.9%;
+    --background: 240 10% 5%;
     --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
+    --card: 240 9% 8%;
     --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
+    --popover: 240 9% 8%;
     --popover-foreground: 0 0% 98%;
     --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
+    --primary-foreground: 240 6% 10%;
+    --secondary: 240 5% 14%;
     --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
+    --muted: 240 5% 14%;
     /* Lightened for WCAG AA 4.5:1 contrast on the dark background. */
-    --muted-foreground: 240 5% 72%;
-    --accent: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 68%;
+    --accent: 240 5% 15%;
     --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
+    --brand: 243 80% 70%;
+    --brand-foreground: 240 10% 6%;
+    --brand-soft: 243 40% 18%;
+    --destructive: 0 62.8% 45%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
+    --border: 240 5% 16%;
+    --input: 240 5% 18%;
+    --ring: 243 80% 70%;
+    --radius: 0.75rem;
   }
 }
 
 @layer base {
   * { @apply border-border; }
-  body { @apply bg-background text-foreground; }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    text-rendering: optimizeLegibility;
+  }
 
   /* WCAG: visible focus indicator on every interactive element. */
   a:focus-visible,
@@ -63,6 +76,23 @@
   [tabindex]:focus-visible {
     @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
   }
+
+  /* Refined, unobtrusive scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(240 5% 80%) transparent;
+  }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    background-color: hsl(240 5% 80%);
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover { background-color: hsl(240 5% 68%); }
+  .dark *::-webkit-scrollbar-thumb { background-color: hsl(240 5% 24%); }
+  .dark *::-webkit-scrollbar-thumb:hover { background-color: hsl(240 5% 32%); }
 }
 
 .markdown pre {
