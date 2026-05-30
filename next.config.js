@@ -10,10 +10,12 @@ const nextConfig = {
   },
   async headers() {
     if (process.env.NODE_ENV === "production") return [];
-    // Development only: prevent the preview pane from serving stale cached pages.
+    // Development only: prevent the preview pane from serving stale cached
+    // HTML pages, while leaving Next.js static chunks (/_next/static/*) to be
+    // cached normally so styles/scripts load reliably inside the preview iframe.
     return [
       {
-        source: "/:path*",
+        source: "/((?!_next/static).*)",
         headers: [
           { key: "Cache-Control", value: "no-store, must-revalidate" },
         ],
