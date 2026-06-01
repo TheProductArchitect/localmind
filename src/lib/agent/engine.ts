@@ -11,6 +11,13 @@ import {
   addMessage, getMessages, getSettings, updateConversation, deleteTrailingTurn, getConversation,
 } from "../db/queries";
 import { approxTokens } from "../utils";
+import { startProcess, updateProcess, completeProcess } from "../db/agent-processes";
+import { unregisterProcess } from "./process-registry";
+
+// Best-effort orchestration hooks — orchestration writes must never crash the agent loop.
+function safeProcessHook(fn: () => void): void {
+  try { fn(); } catch (e) { console.warn("[orchestration] hook failed", (e as Error).message); }
+}
 
 export type SSEEvent =
   | { type: "text_chunk"; delta: string }
@@ -113,6 +120,21 @@ export async function* runAgent(
   let contextCompressed = false;
   let toolCallCount = 0;
 
+  // ---- Orchestration: register this chat as an agent process. ----
+  const firstUserText = history.find((m) => m.role === "user")?.content || userMessage;
+  const processDisplay = firstUserText.slice(0, 80).replace(/\s+/g, " ").trim() || "Chat";
+  let processId = "";
+  safeProcessHook(() => {
+    processId = startProcess({
+      process_type: "chat",
+      display_name: processDisplay,
+      owner_user_id: convOwner || null,
+      agent_name: "Main",
+      persona_id: "persona-general",
+      metadata: { conversation_id: conversationId, model: settings.active_model },
+    });
+  });
+
   // Context window overflow prevention — compress old turns if the history is large.
   const ctxWindow = resolveContextWindow(settings.context_window, settings.active_model);
   const estTokens = messages.reduce((s, m) => s + approxTokens((m as any).content || ""), 0);
@@ -146,10 +168,13 @@ export async function* runAgent(
     }
   }
 
+  let processOutcome: "completed" | "failed" | "cancelled" = "completed";
+
   try {
     if (contextCompressed) yield { type: "context_compressed" };
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
-      if (signal.aborted) return;
+      if (signal.aborted) { processOutcome = "cancelled"; return; }
+      safeProcessHook(() => updateProcess(processId, { current_step: `Iteration ${iter + 1}` }));
 
       let iterText = "";
       const toolCalls: { id: string; name: string; arguments: Record<string, unknown> }[] = [];
@@ -228,6 +253,10 @@ export async function* runAgent(
             allowed = false;
             approvedBy = "rule";
           } else {
+            safeProcessHook(() => updateProcess(processId, {
+              status: "waiting_confirmation",
+              current_step: `Waiting for confirmation on ${actionType}`,
+            }));
             yield {
               type: "confirmation_required",
               toolCallId: call.id,
@@ -242,6 +271,7 @@ export async function* runAgent(
             if (!allowed) {
               yield { type: "confirmation_timeout", toolCallId: call.id };
             }
+            safeProcessHook(() => updateProcess(processId, { status: "running" }));
           }
         }
 
@@ -338,12 +368,18 @@ export async function* runAgent(
 
     yield { type: "done", conversationId, title, tokenCount: totalTokens };
   } catch (e: any) {
+    processOutcome = signal.aborted ? "cancelled" : "failed";
     if (signal.aborted) return;
     yield {
       type: "error",
       message: "Something went wrong while generating a response. Check that Ollama is running.",
       code: "agent_error",
     };
+  } finally {
+    safeProcessHook(() => {
+      completeProcess(processId, processOutcome);
+      unregisterProcess(processId);
+    });
   }
 }
 

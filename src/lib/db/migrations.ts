@@ -381,6 +381,198 @@ configMigrations.push({
   },
 });
 
+// ---- V6 migration: V5-spec tables ----
+//
+// Adds personas, system prompt blocks, context-window settings, model context
+// overrides, orchestration processes & routing rules, long-running jobs &
+// checkpoints, plugins, and the datastore tables. Seeds two built-in personas
+// (General Assistant, DevPM) with their five built-in system prompt blocks.
+configMigrations.push({
+  version: 6,
+  up: (db) => {
+    db.exec(`
+      CREATE TABLE personas (
+        persona_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        model_name TEXT,
+        enabled_tools TEXT NOT NULL DEFAULT '[]',
+        permission_profile_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE system_prompt_blocks (
+        block_id TEXT PRIMARY KEY,
+        persona_id TEXT NOT NULL,
+        block_type TEXT NOT NULL CHECK (block_type IN ('builtin','custom-static','custom-conditional')),
+        block_name TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        condition_json TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_blocks_persona ON system_prompt_blocks(persona_id, sort_order);
+
+      CREATE TABLE context_window_settings (
+        settings_id TEXT PRIMARY KEY,
+        persona_id TEXT,
+        compression_threshold_pct INTEGER NOT NULL DEFAULT 80,
+        compression_target_pct INTEGER NOT NULL DEFAULT 50,
+        compression_strategy TEXT NOT NULL DEFAULT 'summarise'
+          CHECK (compression_strategy IN ('summarise','truncate','sliding_window')),
+        summarisation_model TEXT,
+        tool_result_max_chars INTEGER NOT NULL DEFAULT 4000,
+        per_conversation_override_enabled INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE model_context_overrides (
+        model_name TEXT PRIMARY KEY,
+        context_window_tokens INTEGER NOT NULL,
+        source TEXT NOT NULL DEFAULT 'user-override'
+          CHECK (source IN ('hardcoded','reported','user-override')),
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE agent_processes (
+        process_id TEXT PRIMARY KEY,
+        process_type TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        owner_user_id TEXT,
+        agent_name TEXT,
+        persona_id TEXT,
+        started_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        status TEXT NOT NULL,
+        current_step TEXT,
+        priority INTEGER NOT NULL DEFAULT 0,
+        metadata_json TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX idx_agent_proc_status ON agent_processes(status, started_at DESC);
+      CREATE INDEX idx_agent_proc_owner ON agent_processes(owner_user_id, started_at DESC);
+
+      CREATE TABLE agent_routing_rules (
+        rule_id TEXT PRIMARY KEY,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        condition_type TEXT NOT NULL,
+        condition_value TEXT,
+        target_agent_name TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE long_running_jobs (
+        job_id TEXT PRIMARY KEY,
+        job_name TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        owner_user_id TEXT,
+        allowed_tools TEXT NOT NULL DEFAULT '[]',
+        max_duration_hours INTEGER NOT NULL DEFAULT 2,
+        max_iterations INTEGER NOT NULL DEFAULT 50,
+        stopping_condition TEXT NOT NULL DEFAULT 'natural',
+        notification_channel TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at INTEGER NOT NULL,
+        last_checkpoint_at INTEGER
+      );
+
+      CREATE TABLE job_checkpoints (
+        checkpoint_id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        iteration INTEGER NOT NULL,
+        conversation_snapshot TEXT NOT NULL,
+        status_description TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_checkpoint_job ON job_checkpoints(job_id, iteration DESC);
+
+      CREATE TABLE plugins (
+        plugin_id TEXT PRIMARY KEY,
+        plugin_type TEXT NOT NULL
+          CHECK (plugin_type IN ('mcp-server','workflow-template','system-prompt-template','agent-config','knowledge-dataset')),
+        name TEXT NOT NULL,
+        version TEXT NOT NULL,
+        source_url TEXT,
+        installed_at INTEGER NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        config_json TEXT NOT NULL DEFAULT '{}'
+      );
+
+      CREATE TABLE datastore_tables (
+        table_name TEXT PRIMARY KEY,
+        schema_json TEXT NOT NULL DEFAULT '{}',
+        row_count INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE datastore_records (
+        record_id TEXT PRIMARY KEY,
+        table_name TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_datastore_table ON datastore_records(table_name, created_at DESC);
+    `);
+
+    // SQLite computes epoch ms at runtime — deterministic from the migration's
+    // point of view and resilient against any host clock weirdness at install.
+    const NOW = "(CAST(strftime('%s','now') AS INTEGER) * 1000)";
+
+    db.exec(`
+      INSERT INTO personas (persona_id, name, description, model_name, enabled_tools, permission_profile_id, created_at, updated_at) VALUES
+        ('persona-general', 'General Assistant', 'Friendly, general-purpose assistant.',         NULL, '[]', 'normal', ${NOW}, ${NOW}),
+        ('persona-devpm',   'DevPM',             'Engineering project manager with code-aware tooling.', NULL, '[]', 'normal', ${NOW}, ${NOW});
+    `);
+
+    // Seed five built-in blocks per persona. Content is left empty — the
+    // assembler generates it at runtime from settings/permissions/tools/memory.
+    const personas = ["general", "devpm"];
+    const builtins = ["identity", "permissions", "tools", "memory", "date_context"];
+    const ins = db.prepare(`
+      INSERT INTO system_prompt_blocks
+        (block_id, persona_id, block_type, block_name, content, enabled, sort_order, condition_json, created_at, updated_at)
+      VALUES (?, ?, 'builtin', ?, '', 1, ?, NULL,
+        CAST(strftime('%s','now') AS INTEGER) * 1000,
+        CAST(strftime('%s','now') AS INTEGER) * 1000)
+    `);
+    for (const p of personas) {
+      builtins.forEach((name, i) => {
+        ins.run(`blk-${p}-${name}`, `persona-${p}`, name, i);
+      });
+    }
+
+    db.exec(`
+      INSERT INTO context_window_settings
+        (settings_id, persona_id, compression_threshold_pct, compression_target_pct, compression_strategy,
+         summarisation_model, tool_result_max_chars, per_conversation_override_enabled, updated_at)
+      VALUES
+        ('ctx-global', NULL, 80, 50, 'summarise', NULL, 4000, 0, ${NOW});
+    `);
+  },
+});
+
+// ---- V7 migration: long-running job injects + conversation pointer ----
+//
+// `pending_injects` queues user-supplied "Inject instruction" messages that the
+// executor consumes between iterations. `conversation_id` lets the executor pin
+// the job to a single conversation across resumes.
+configMigrations.push({
+  version: 7,
+  up: (db) => {
+    db.exec(`
+      ALTER TABLE long_running_jobs ADD COLUMN pending_injects TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE long_running_jobs ADD COLUMN conversation_id TEXT;
+      ALTER TABLE long_running_jobs ADD COLUMN current_iteration INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE long_running_jobs ADD COLUMN process_id TEXT;
+    `);
+  },
+});
+
 const knowledgeMigrations: Migration[] = [
   {
     version: 1,

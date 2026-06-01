@@ -4,7 +4,8 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
   MessageSquare, Shield, ScrollText, Box, Activity, Settings as SettingsIcon,
-  Plug, BookOpen, Workflow, Users, Code2, Sun,
+  Plug, BookOpen, Workflow, Users, Code2, Sun, Sparkles, Gauge, Network,
+  Database, Package, Route,
 } from "lucide-react";
 
 type NavItem = { href: string; label: string; icon: React.ComponentType<{ className?: string }> };
@@ -18,13 +19,24 @@ const GROUPS: NavGroup[] = [
       { href: "/today", label: "Today", icon: Sun },
       { href: "/devpm", label: "DevPM", icon: Code2 },
       { href: "/knowledge", label: "Knowledge", icon: BookOpen },
+      { href: "/data", label: "Data", icon: Database },
     ],
   },
   {
     title: "Automation",
     items: [
+      { href: "/orchestration", label: "Orchestration", icon: Network },
       { href: "/automations", label: "Automations", icon: Workflow },
       { href: "/mcp", label: "MCP Servers", icon: Plug },
+      { href: "/plugins", label: "Plugins", icon: Package },
+    ],
+  },
+  {
+    title: "Agent Configuration",
+    items: [
+      { href: "/agent/system-prompt", label: "System Prompt", icon: Sparkles },
+      { href: "/agent/context-window", label: "Context Window", icon: Gauge },
+      { href: "/agent/routing", label: "Routing", icon: Route },
     ],
   },
   {

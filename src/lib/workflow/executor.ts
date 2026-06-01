@@ -5,6 +5,11 @@ import { runAgentCollect } from "../agent/engine";
 import { listAllTools } from "../tools";
 import { createConversation } from "../db/queries";
 import { logger } from "../logger";
+import { startProcess, updateProcess, completeProcess } from "../db/agent-processes";
+
+function safeProcessHook(fn: () => void): void {
+  try { fn(); } catch (e) { console.warn("[orchestration] hook failed", (e as Error).message); }
+}
 
 export type WorkflowStep =
   | { type: "agent"; prompt: string }
@@ -41,8 +46,21 @@ export async function runWorkflow(workflowId: string): Promise<{ runId: string; 
   const runStarted = Date.now();
   let status = "completed";
 
+  let processId = "";
+  safeProcessHook(() => {
+    processId = startProcess({
+      process_type: "workflow",
+      display_name: wf.name || `Workflow ${workflowId}`,
+      metadata: { workflow_id: workflowId, run_id: runId, conversation_id: convId, total_steps: steps.length },
+    });
+  });
+
   try {
     for (let i = 0; i < steps.length; i++) {
+      safeProcessHook(() => updateProcess(processId, {
+        current_step: `Step ${i + 1} of ${steps.length}: ${steps[i].type}`,
+        metadata: { step_index: i, total_steps: steps.length },
+      }));
       if (Date.now() - runStarted > RUN_TIMEOUT_MS) {
         results.push({ step: i, type: "abort", error: "workflow run time limit exceeded" });
         status = "failed";
@@ -103,6 +121,7 @@ export async function runWorkflow(workflowId: string): Promise<{ runId: string; 
     logger.error("workflow run failed", { workflowId, error: e?.message });
   }
 
+  safeProcessHook(() => completeProcess(processId, status === "completed" ? "completed" : "failed"));
   finishWorkflowRun(runId, status, results);
   return { runId, status, results };
 }

@@ -10,6 +10,25 @@ try {
   }
 } catch {}
 
+// Reap zombie agent_processes that never completed (crashed run, kill -9, etc.).
+try {
+  const { reaper } = require("./lib/db/agent-processes") as typeof import("./lib/db/agent-processes");
+  const cleaned = reaper();
+  if (cleaned > 0) logger.info(`reaped ${cleaned} stale agent process row(s)`);
+} catch (e) {
+  logger.warn("agent_processes reaper skipped", { error: (e as Error).message });
+}
+
+// Re-enqueue any long-running jobs that were running when the app last shut down.
+try {
+  const { bootResumeOrphanedJobs } = require("./lib/agent/job-executor") as typeof import("./lib/agent/job-executor");
+  const { enqueueJob } = require("./lib/db/jobs") as typeof import("./lib/db/jobs");
+  const resumed = bootResumeOrphanedJobs(enqueueJob);
+  if (resumed > 0) logger.info(`re-enqueued ${resumed} long-running job(s) for resume`);
+} catch (e) {
+  logger.warn("long-running job resume skipped", { error: (e as Error).message });
+}
+
 // Catch any promise rejection or exception that escapes normal handling.
 process.on("unhandledRejection", (reason: any) => {
   logger.error("unhandledRejection", { reason: reason?.message || String(reason) });

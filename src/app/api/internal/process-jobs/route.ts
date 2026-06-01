@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { claimNextJob, finishJob, updateJobProgress } from "@/lib/db/jobs";
 import { processIngestJob } from "@/lib/knowledge/ingest";
+import { runJob } from "@/lib/agent/job-executor";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -20,6 +21,12 @@ export async function POST(req: NextRequest) {
       const result = await processIngestJob(payload, (done, total) => updateJobProgress(job.id, done, total));
       finishJob(job.id, "done");
       return NextResponse.json({ job: job.id, type: job.type, result });
+    }
+    if (job.type === "long_running_job") {
+      const { jobId } = JSON.parse(job.payload) as { jobId: string };
+      await runJob(jobId);
+      finishJob(job.id, "done");
+      return NextResponse.json({ job: job.id, type: job.type, longJobId: jobId });
     }
     finishJob(job.id, "failed", `Unknown job type: ${job.type}`);
     return NextResponse.json({ job: job.id, error: "unknown type" });

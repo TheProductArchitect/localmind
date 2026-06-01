@@ -109,6 +109,50 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/updates/*", methods: "ALL", role: "owner" },
   { path: "/api/data", methods: "ALL", role: "owner" },
   { path: "/api/voice/*", methods: "ALL", role: "authenticated" },
+
+  // --- V5: Agent configuration (personas, system prompt blocks) ---
+  { path: "/api/agent/personas", methods: ["GET"], role: "authenticated" },
+  { path: "/api/agent/personas", methods: ["POST"], role: "owner" },
+  { path: "/api/agent/personas/*", methods: ["GET"], role: "authenticated" },
+  { path: "/api/agent/personas/*", methods: ["PATCH", "DELETE"], role: "owner" },
+  { path: "/api/agent/system-prompt/*", methods: ["GET", "POST"], role: "authenticated" },
+  { path: "/api/agent/system-prompt/*", methods: ["PATCH"], role: "owner" },
+
+  // --- V5: Context window settings + per-model overrides ---
+  { path: "/api/agent/context-settings", methods: ["GET"], role: "authenticated" },
+  { path: "/api/agent/context-settings", methods: ["PATCH"], role: "owner" },
+  { path: "/api/agent/context-settings/*", methods: ["GET"], role: "authenticated" },
+  { path: "/api/agent/context-settings/*", methods: ["PATCH"], role: "owner" },
+  { path: "/api/agent/model-context-overrides", methods: ["GET"], role: "authenticated" },
+  { path: "/api/agent/model-context-overrides/*", methods: ["GET"], role: "authenticated" },
+  { path: "/api/agent/model-context-overrides/*", methods: ["PUT", "DELETE"], role: "owner" },
+
+  // --- V5: Orchestration (processes, trace, pause/resume/cancel) ---
+  { path: "/api/orchestration/processes", methods: ["GET"], role: "authenticated" },
+  { path: "/api/orchestration/processes/*", methods: ["GET", "DELETE", "POST"], role: "authenticated" },
+
+  // --- V5: Long-running jobs ---
+  { path: "/api/jobs", methods: ["GET", "POST"], role: "authenticated" },
+  { path: "/api/jobs/*", methods: ["GET", "DELETE", "POST"], role: "authenticated" },
+
+  // --- V5: Plugins (marketplace + installed) ---
+  { path: "/api/plugins", methods: ["GET"], role: "authenticated" },
+  { path: "/api/plugins", methods: ["PATCH"], role: "owner" },
+  { path: "/api/plugins/registry", methods: ["GET"], role: "authenticated" },
+  { path: "/api/plugins/install", methods: ["POST"], role: "owner" },
+  { path: "/api/plugins/*", methods: ["GET"], role: "authenticated" },
+  { path: "/api/plugins/*", methods: ["DELETE", "POST"], role: "owner" },
+
+  // --- V5: Structured data outputs (datastore + spreadsheets) ---
+  { path: "/api/data/tables", methods: "ALL", role: "authenticated" },
+  { path: "/api/data/tables/*", methods: "ALL", role: "authenticated" },
+  { path: "/api/data/spreadsheets", methods: "ALL", role: "authenticated" },
+  { path: "/api/data/spreadsheets/*", methods: "ALL", role: "authenticated" },
+
+  // --- V5: Multi-model routing rules ---
+  { path: "/api/agent/routing-rules", methods: ["GET"], role: "authenticated" },
+  { path: "/api/agent/routing-rules", methods: ["POST"], role: "owner" },
+  { path: "/api/agent/routing-rules/*", methods: ["PATCH", "DELETE"], role: "owner" },
 ];
 
 const RANK: Record<RouteRole, number> = { public: 0, authenticated: 1, member: 2, owner: 3 };

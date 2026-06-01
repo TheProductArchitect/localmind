@@ -7,6 +7,8 @@ import { macAutomationTool } from "./mac-automation";
 import { browserTool } from "./browser";
 import { knowledgeTool } from "./knowledge";
 import { devpmTool } from "./devpm";
+import { datastoreTool } from "./datastore";
+import { spreadsheetTool } from "./spreadsheet";
 import { getMcpTools } from "./mcp";
 import type { Tool } from "./types";
 
@@ -20,6 +22,8 @@ const BUILTIN: Tool[] = [
   browserTool,
   knowledgeTool,
   devpmTool,
+  datastoreTool,
+  spreadsheetTool,
 ];
 
 export function listBuiltinTools(): Tool[] {
