@@ -52,10 +52,12 @@ export default function DataPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-6 max-w-5xl space-y-4">
-      <div className="flex items-center gap-2">
-        <Database className="h-5 w-5" />
-        <h1 className="text-xl font-semibold flex-1">Data</h1>
+    <div className="mx-auto max-w-5xl px-10 py-14 space-y-6">
+      <div className="flex items-end justify-between gap-6 mb-2">
+        <div>
+          <p className="lm-micro mb-2">Data</p>
+          <h1 className="lm-display">Tables &amp; spreadsheets</h1>
+        </div>
         <Button size="sm" variant="outline" onClick={load}>
           <RefreshCw className="h-3.5 w-3.5" /> Refresh
         </Button>

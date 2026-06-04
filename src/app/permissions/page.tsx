@@ -79,9 +79,12 @@ export default function PermissionsPage() {
   const risky = profile && profile.tiers.send_email === "allow";
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <div className="flex items-center gap-2 mb-4">
-        <h1 className="text-xl font-semibold">Permissions Board</h1>
+    <div className="mx-auto max-w-5xl px-10 py-14">
+      <div className="flex items-end justify-between gap-6 mb-10">
+        <div>
+          <p className="lm-micro mb-2">Permissions</p>
+          <h1 className="lm-display">What Sora may do</h1>
+        </div>
         {risky && <Badge variant="warning">Risky: Send email is Always Allow</Badge>}
       </div>
 

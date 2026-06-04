@@ -13,9 +13,17 @@ export const KEYDATA_FILE = path.join(DATA_DIR, "keydata");
 export const KNOWLEDGE_DIR = path.join(DATA_DIR, "knowledge");
 export const NOTES_DIR = path.join(KNOWLEDGE_DIR, "notes");
 export const MCP_SERVERS_DIR = path.join(DATA_DIR, "mcp-servers");
+export const KEYS_DIR = path.join(DATA_DIR, "keys");
+export const NODE_PRIVKEY_FILE = path.join(KEYS_DIR, "node.key");
+export const NODE_PUBKEY_FILE = path.join(KEYS_DIR, "node.pub");
+export const TLS_CERT_FILE = path.join(KEYS_DIR, "tls.crt");
+export const TLS_FINGERPRINT_FILE = path.join(KEYS_DIR, "tls.sha256");
 
 export function ensureDataDir() {
   for (const d of [DATA_DIR, BACKUPS_DIR, LOGS_DIR, TRASH_DIR, KNOWLEDGE_DIR, NOTES_DIR, MCP_SERVERS_DIR]) {
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
   }
+  // Keys directory is mode 0700 — private material lives here.
+  if (!fs.existsSync(KEYS_DIR)) fs.mkdirSync(KEYS_DIR, { recursive: true, mode: 0o700 });
+  else try { fs.chmodSync(KEYS_DIR, 0o700); } catch { /* non-fatal on filesystems that ignore mode */ }
 }

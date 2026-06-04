@@ -141,10 +141,10 @@ export default function RoutingPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-6 max-w-4xl space-y-4">
-      <div className="flex items-center gap-2">
-        <Route className="h-5 w-5" />
-        <h1 className="text-xl font-semibold">Multi-Model Routing</h1>
+    <div className="mx-auto max-w-4xl px-10 py-14 space-y-6">
+      <div className="mb-2">
+        <p className="lm-micro mb-2">Agent · routing</p>
+        <h1 className="lm-display">Which model, when</h1>
       </div>
       <p className="text-sm text-muted-foreground">
         Rules are evaluated top to bottom — the first match wins. Manual override (typing <code>@AgentName</code> in chat) always takes precedence.

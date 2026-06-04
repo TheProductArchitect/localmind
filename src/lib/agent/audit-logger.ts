@@ -5,6 +5,7 @@ import {
   type AuditRow,
 } from "../db/queries";
 import { sha256 } from "../crypto";
+import { recordAuditLink } from "../db/fleet";
 
 export type AuditStartArgs = {
   actionType: string;
@@ -53,6 +54,59 @@ export function logComplete(
   // Recompute hash to reflect final state (still chained off prev predecessor's hash)
   // We update in-place; integrity verification recomputes the chain from input.
   updateAuditRow(id, { status, output_summary: outputSummary.slice(0, 2000) });
+}
+
+/**
+ * Federated audit start — writes a local audit row AND records a cross-
+ * reference into `fleet_audit_links` in the same transaction (well, two
+ * sequential writes — better-sqlite3 prepares aren't auto-transactional but
+ * a crash between them only leaves an orphan audit row, never a dangling
+ * cross-reference). Per V6 plan §6: both sides of a cross-machine action
+ * keep an attestation in their own chain.
+ *
+ * Used in two directions:
+ *   - inbound  : peer delegated a task to us; we record OUR audit row + a
+ *                link to THEIR origin row.
+ *   - outbound : we delegated a task to a peer; we record OUR audit row + a
+ *                link to THEIR executor row (only AFTER the response comes
+ *                back with the peer's audit id and signature).
+ */
+export type FederatedAuditMeta = {
+  peer_node_id: string;
+  peer_audit_id: number;
+  signature: string;          // envelope sig from the request (inbound) or response (outbound)
+  lamport: number;            // envelope lamport at time of cross-reference
+  direction: "outbound" | "inbound";
+};
+
+export function logStartFederated(args: AuditStartArgs, meta: FederatedAuditMeta): number {
+  const auditId = logStart(args);
+  recordAuditLink({
+    local_audit_id: auditId,
+    peer_node_id: meta.peer_node_id,
+    peer_audit_id: meta.peer_audit_id,
+    signature: meta.signature,
+    direction: meta.direction,
+    lamport: meta.lamport,
+  });
+  return auditId;
+}
+
+/**
+ * Convenience: link an EXISTING audit row to a peer's audit row. Used by the
+ * initiator side of a delegation — we logStart() before the RPC (so the peer
+ * can reference it), then after the response arrives we record the outbound
+ * link with the peer's executor_audit_id.
+ */
+export function linkAuditToPeer(localAuditId: number, meta: FederatedAuditMeta): void {
+  recordAuditLink({
+    local_audit_id: localAuditId,
+    peer_node_id: meta.peer_node_id,
+    peer_audit_id: meta.peer_audit_id,
+    signature: meta.signature,
+    direction: meta.direction,
+    lamport: meta.lamport,
+  });
 }
 
 export function verifyChain(): { ok: boolean; firstBadId?: number } {

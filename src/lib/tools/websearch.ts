@@ -3,6 +3,12 @@ import type { Tool } from "./types";
 export const websearchTool: Tool = {
   actionType: "web_search",
   preview: (i) => `Search: ${i.query}`,
+  version: "1",
+  // Searches are functionally deterministic for the same query within minutes;
+  // the V6 tool_call_cache LRU bounds staleness via natural eviction. If the
+  // user wants fresh results, they can use a slightly different query (which
+  // changes the input hash).
+  cacheable: () => true,
   definition: {
     name: "web_search",
     description: "Search the web and return top results. Uses Brave Search if BRAVE_API_KEY is set, otherwise DuckDuckGo HTML.",

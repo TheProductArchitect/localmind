@@ -69,8 +69,11 @@ export default function ModelsPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <h1 className="text-xl font-semibold mb-4">Model Manager</h1>
+    <div className="mx-auto max-w-5xl px-10 py-14">
+      <div className="mb-10">
+        <p className="lm-micro mb-2">Models</p>
+        <h1 className="lm-display">Local minds</h1>
+      </div>
       {err && (
         <div className="mb-4 rounded-md border border-destructive bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {err}

@@ -1,22 +1,57 @@
 "use client";
+
+/**
+ * ⌘K command palette — the primary navigation surface in v2.
+ *
+ * Since the rail only carries five glyphs, the palette is how users reach
+ * the long tail (audit log, individual settings panes, plugin pages, etc.)
+ * without bloating the nav. Grouped by the five destinations so muscle
+ * memory transfers from the rail.
+ */
+
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 
-const COMMANDS = [
-  { label: "New conversation", href: "/?new=1", group: "Actions" },
-  { label: "Go to Chat", href: "/", group: "Workspace" },
-  { label: "Go to Today", href: "/today", group: "Workspace" },
-  { label: "Go to DevPM", href: "/devpm", group: "Workspace" },
-  { label: "Go to Knowledge", href: "/knowledge", group: "Workspace" },
-  { label: "Go to Automations", href: "/automations", group: "Automation" },
-  { label: "Go to MCP Servers", href: "/mcp", group: "Automation" },
-  { label: "Go to Access", href: "/access", group: "Access & Security" },
-  { label: "Go to Permissions", href: "/permissions", group: "Access & Security" },
-  { label: "Go to Audit Log", href: "/audit", group: "Access & Security" },
-  { label: "Go to Model Manager", href: "/models", group: "System" },
-  { label: "Go to System Dashboard", href: "/system", group: "System" },
-  { label: "Go to Settings", href: "/settings", group: "System" },
+type Command = { label: string; href: string; group: string; hint?: string };
+
+const COMMANDS: Command[] = [
+  // Actions
+  { label: "New conversation", href: "/?new=1",      group: "Actions", hint: "⌘N" },
+  { label: "Toggle command palette", href: "#",      group: "Actions", hint: "⌘K" },
+
+  // Chat
+  { label: "Chat",              href: "/",           group: "Chat" },
+
+  // Work
+  { label: "Work timeline",     href: "/work",       group: "Work" },
+  { label: "Task graphs",       href: "/graphs",     group: "Work" },
+  { label: "Orchestration",     href: "/orchestration", group: "Work" },
+  { label: "Automations",       href: "/automations", group: "Work" },
+  { label: "Jobs",              href: "/work?tab=jobs", group: "Work" },
+
+  // Knowledge
+  { label: "Knowledge base",    href: "/knowledge",  group: "Knowledge" },
+  { label: "Memory",            href: "/knowledge?tab=memory", group: "Knowledge" },
+  { label: "Data tables",       href: "/data",       group: "Knowledge" },
+
+  // Fleet
+  { label: "Fleet · peers",     href: "/fleet",      group: "Fleet" },
+  { label: "MCP servers",       href: "/mcp",        group: "Fleet" },
+  { label: "Models",            href: "/models",     group: "Fleet" },
+  { label: "Plugins",           href: "/plugins",    group: "Fleet" },
+
+  // Settings
+  { label: "Settings",                href: "/settings",     group: "Settings" },
+  { label: "Permissions",             href: "/permissions",  group: "Settings" },
+  { label: "Audit log",               href: "/audit",        group: "Settings" },
+  { label: "Analytics",               href: "/analytics",    group: "Settings" },
+  { label: "System health",           href: "/system",       group: "Settings" },
+  { label: "Access · users & roles",  href: "/access",       group: "Settings" },
+  { label: "Agent · system prompt",   href: "/agent/system-prompt", group: "Settings" },
+  { label: "Agent · context window",  href: "/agent/context-window", group: "Settings" },
+  { label: "Agent · routing rules",   href: "/agent/routing", group: "Settings" },
+  { label: "DevPM",                   href: "/devpm",        group: "Settings" },
 ];
 
 export function CommandPalette() {
@@ -42,52 +77,66 @@ export function CommandPalette() {
 
   if (!open) return null;
   const filtered = COMMANDS.filter((c) => c.label.toLowerCase().includes(q.toLowerCase()));
-  const groups = filtered.reduce<Record<string, typeof COMMANDS>>((acc, c) => {
+  const groups = filtered.reduce<Record<string, Command[]>>((acc, c) => {
     (acc[c.group] ||= []).push(c);
     return acc;
   }, {});
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-start justify-center pt-32 animate-fade-in"
+      className="fixed inset-0 z-50 flex items-start justify-center pt-32"
+      style={{ background: "hsl(234 22% 2% / 0.6)", backdropFilter: "blur(8px)" }}
       onClick={() => setOpen(false)}
     >
       <div
-        className="w-full max-w-lg rounded-xl border border-border/70 bg-card shadow-lift overflow-hidden animate-scale-in"
+        className="w-full max-w-xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "hsl(234 18% 7% / 0.92)",
+          border: "1px solid hsl(0 0% 100% / 0.10)",
+          borderRadius: 14,
+          boxShadow: "0 24px 80px hsl(0 0% 0% / 0.6), 0 0 0 1px hsl(0 0% 100% / 0.04) inset",
+          backdropFilter: "blur(24px) saturate(140%)",
+        }}
       >
-        <div className="flex items-center gap-2.5 border-b border-border/70 px-4">
-          <Search className="h-4 w-4 text-muted-foreground" />
+        <div className="flex items-center gap-3 px-4" style={{ borderBottom: "1px solid hsl(0 0% 100% / 0.08)" }}>
+          <Search className="h-4 w-4" style={{ color: "hsl(0 0% 100% / 0.4)" }} />
           <input
             autoFocus
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search actions, pages…"
-            className="flex-1 bg-transparent py-3.5 text-sm outline-none placeholder:text-muted-foreground/70"
+            className="flex-1 bg-transparent py-4 text-[14px] outline-none"
+            style={{ color: "hsl(0 0% 100% / 0.96)" }}
+            data-pulse="false"
           />
-          <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-medium text-muted-foreground">
-            ESC
-          </kbd>
+          <kbd className="lm-micro" style={{ padding: "2px 6px", border: "1px solid hsl(0 0% 100% / 0.10)", borderRadius: 4 }}>ESC</kbd>
         </div>
-        <div className="max-h-80 overflow-y-auto p-2">
+        <div className="max-h-96 overflow-y-auto p-2">
           {Object.entries(groups).map(([group, items]) => (
-            <div key={group} className="mb-1.5 last:mb-0">
-              <p className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-                {group}
-              </p>
+            <div key={group} className="mb-2 last:mb-0">
+              <p className="lm-micro px-3 py-1.5">{group}</p>
               {items.map((c) => (
                 <button
-                  key={c.label}
-                  onClick={() => { setOpen(false); router.push(c.href); }}
-                  className="block w-full rounded-lg px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent"
+                  key={c.label + c.href}
+                  onClick={() => { setOpen(false); if (c.href !== "#") router.push(c.href); }}
+                  className="flex w-full items-center justify-between rounded-[10px] px-3 py-2 text-left text-[13px] transition-colors"
+                  style={{ color: "hsl(0 0% 100% / 0.92)" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "hsl(0 0% 100% / 0.06)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
-                  {c.label}
+                  <span>{c.label}</span>
+                  {c.hint && (
+                    <span className="lm-micro" style={{ letterSpacing: "0.08em" }}>{c.hint}</span>
+                  )}
                 </button>
               ))}
             </div>
           ))}
           {filtered.length === 0 && (
-            <p className="px-3 py-6 text-center text-sm text-muted-foreground">No matching commands.</p>
+            <p className="lm-body text-center py-8" style={{ color: "hsl(0 0% 100% / 0.4)" }}>
+              No matching commands.
+            </p>
           )}
         </div>
       </div>

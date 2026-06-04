@@ -55,6 +55,11 @@ export const filesystemTool: Tool = {
       default: return "read_files";
     }
   },
+  version: "1",
+  // Reads + listings cache by (path, hash-of-input). Writes/deletes never
+  // cache — they mutate. Note: a file mutated outside LocalMind won't bust
+  // our cache (we don't watch the FS); the LRU window bounds staleness.
+  cacheable: (input) => input.operation === "read" || input.operation === "list",
   preview: (input) => {
     const op = input.operation;
     const p = input.path;

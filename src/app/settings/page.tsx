@@ -1,38 +1,130 @@
 "use client";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Button, Card, Input, Badge } from "@/components/ui";
 import { toast } from "@/components/toast";
+import {
+  Settings as SettingsIcon, Wrench, Wifi, Plug2, MessagesSquare, Lock, Archive,
+  Shield, ScrollText, BarChart3, Activity, Users, Sparkles, Code2, ChevronRight,
+} from "lucide-react";
 
-const SECTIONS = ["General", "Tools", "Network", "Providers", "Communications", "Data & Privacy", "Backup"];
+const SECTIONS = [
+  { id: "General",          Icon: SettingsIcon },
+  { id: "Tools",            Icon: Wrench },
+  { id: "Network",          Icon: Wifi },
+  { id: "Providers",        Icon: Plug2 },
+  { id: "Communications",   Icon: MessagesSquare },
+  { id: "Data & Privacy",   Icon: Lock },
+  { id: "Backup",           Icon: Archive },
+] as const;
+
+type SectionId = (typeof SECTIONS)[number]["id"];
+
+// Deep links to admin pages — grouped so the side nav reads as discrete
+// clusters rather than one long flat list. Each link routes AWAY from the
+// settings shell, so they're visually quieter than the in-page section
+// buttons and carry an explicit external chevron.
+const ADMIN_GROUPS: { title: string; links: { href: string; label: string; Icon: React.ComponentType<{ className?: string }> }[] }[] = [
+  {
+    title: "Agent",
+    links: [
+      { href: "/agent/system-prompt",  label: "System prompt",   Icon: Sparkles },
+      { href: "/agent/context-window", label: "Context window",  Icon: Sparkles },
+      { href: "/agent/routing",        label: "Model routing",   Icon: Sparkles },
+    ],
+  },
+  {
+    title: "Governance",
+    links: [
+      { href: "/permissions", label: "Permissions", Icon: Shield },
+      { href: "/access",      label: "Users & roles", Icon: Users },
+      { href: "/audit",       label: "Audit log",   Icon: ScrollText },
+    ],
+  },
+  {
+    title: "Observability",
+    links: [
+      { href: "/system",    label: "System health", Icon: Activity },
+      { href: "/analytics", label: "Analytics",     Icon: BarChart3 },
+      { href: "/devpm",     label: "DevPM",         Icon: Code2 },
+    ],
+  },
+];
 
 export default function SettingsPage() {
-  const [section, setSection] = useState("General");
+  const [section, setSection] = useState<SectionId>("General");
   return (
     <div className="flex h-full">
-      <div className="w-44 shrink-0 border-r p-2">
-        {SECTIONS.map((s) => (
-          <button
-            key={s}
-            onClick={() => setSection(s)}
-            className={`block w-full text-left rounded-md px-3 py-1.5 text-sm ${
-              section === s ? "bg-accent font-medium" : "hover:bg-accent/50 text-muted-foreground"
-            }`}
-          >
-            {s}
-          </button>
+      <aside
+        className="w-60 shrink-0 overflow-y-auto py-10 px-5"
+        style={{
+          borderRight: "1px solid hsl(0 0% 100% / 0.06)",
+          background: "hsl(234 22% 4% / 0.4)",
+          backdropFilter: "blur(14px)",
+        }}
+      >
+        <p className="lm-micro mb-4">Settings</p>
+        <nav className="space-y-0.5">
+          {SECTIONS.map(({ id, Icon }) => {
+            const active = section === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setSection(id)}
+                className={`lm-settings-link ${active ? "is-active" : ""}`}
+                data-pulse="true"
+              >
+                <Icon className="h-3.5 w-3.5" />
+                <span>{id}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        {ADMIN_GROUPS.map((g) => (
+          <div key={g.title} className="mt-8">
+            <p className="lm-micro mb-2" style={{ color: "hsl(0 0% 100% / 0.3)" }}>{g.title}</p>
+            <nav className="space-y-0.5">
+              {g.links.map(({ href, label, Icon }) => (
+                <Link key={href} href={href} className="lm-settings-link is-external" data-pulse="true">
+                  <Icon className="h-3.5 w-3.5" />
+                  <span>{label}</span>
+                  <ChevronRight className="h-3 w-3 ml-auto" style={{ color: "hsl(0 0% 100% / 0.2)" }} />
+                </Link>
+              ))}
+            </nav>
+          </div>
         ))}
+      </aside>
+
+      <div className="flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-2xl px-10 py-14">
+          <p className="lm-micro mb-2">{section}</p>
+          <h1 className="lm-display mb-10">{sectionTitle(section)}</h1>
+          {section === "General"        && <GeneralSection />}
+          {section === "Tools"          && <ToolsSection />}
+          {section === "Network"        && <NetworkSection />}
+          {section === "Providers"      && <ProvidersSection />}
+          {section === "Communications" && <CommsSection />}
+          {section === "Data & Privacy" && <DataSection />}
+          {section === "Backup"         && <BackupSection />}
+        </div>
       </div>
-      <div className="flex-1 overflow-y-auto p-6 max-w-2xl">
-        {section === "General" && <GeneralSection />}
-        {section === "Tools" && <ToolsSection />}
-        {section === "Network" && <NetworkSection />}
-        {section === "Providers" && <ProvidersSection />}
-        {section === "Communications" && <CommsSection />}
-        {section === "Data & Privacy" && <DataSection />}
-        {section === "Backup" && <BackupSection />}
-      </div>
+
     </div>
   );
+}
+
+function sectionTitle(id: SectionId): string {
+  return {
+    "General":        "How Sora behaves",
+    "Tools":          "What Sora is allowed to do",
+    "Network":        "Where Sora can be reached",
+    "Providers":      "External model providers",
+    "Communications": "Channels and notifications",
+    "Data & Privacy": "Your data, your rules",
+    "Backup":         "Save and restore",
+  }[id];
 }
 
 function useSettings() {
@@ -60,7 +152,56 @@ function GeneralSection() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">General</h1>
+      <Card className="p-4 space-y-3">
+        <p className="lm-micro">Agent mode</p>
+        <p className="text-[12px]" style={{ color: "hsl(0 0% 100% / 0.6)" }}>
+          How much Sora may do without asking. Memory reads are always allowed — she owns what she&apos;s remembered about you.
+        </p>
+        <div className="grid grid-cols-3 gap-2">
+          {([
+            { id: "auto",  label: "Auto",   hint: "Trust Sora fully. Every action runs through." },
+            { id: "plan",  label: "Plan",   hint: "Read-only. Mutations require leaving plan mode." },
+            { id: "ask",   label: "Ask",    hint: "Default. Reads free, mutations confirmed." },
+          ] as const).map((m) => {
+            const active = (s.agent_mode || "ask") === m.id;
+            return (
+              <button
+                key={m.id}
+                onClick={() => save({ agent_mode: m.id })}
+                className="lm-mode-tile"
+                data-active={active}
+                data-pulse="true"
+              >
+                <span className="lm-body" style={{ color: active ? "hsl(0 0% 100%)" : "hsl(0 0% 100% / 0.7)", fontWeight: 500 }}>
+                  {m.label}
+                </span>
+                <span className="lm-micro" style={{ textTransform: "none", letterSpacing: 0, fontSize: 11, color: "hsl(0 0% 100% / 0.45)" }}>
+                  {m.hint}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <style jsx>{`
+          .lm-mode-tile {
+            display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+            padding: 12px 14px;
+            background: hsl(0 0% 100% / 0.03);
+            border: 1px solid hsl(0 0% 100% / 0.08);
+            border-radius: 12px;
+            text-align: left;
+            transition: background var(--lm-dur-micro) var(--lm-ease-micro),
+                        border-color var(--lm-dur-micro) var(--lm-ease-micro),
+                        box-shadow var(--lm-dur-micro) var(--lm-ease-micro);
+          }
+          .lm-mode-tile:hover { background: hsl(0 0% 100% / 0.05); }
+          .lm-mode-tile[data-active="true"] {
+            background: hsl(0 0% 100% / 0.08);
+            border-color: hsl(0 0% 100% / 0.22);
+            box-shadow: 0 0 24px hsl(0 0% 100% / 0.12);
+          }
+        `}</style>
+      </Card>
       <Card className="p-4 space-y-3">
         <label className="block text-sm">Assistant name
           <Input defaultValue={s.assistant_name} onBlur={(e) => save({ assistant_name: e.target.value })} className="mt-1" />
@@ -419,6 +560,11 @@ function TwilioWizard() {
 function CommsSection() {
   const [telegram, setTelegram] = useState({ enabled: false, botToken: "", defaultChatId: "" });
   const [twilio, setTwilio] = useState({ enabled: false, accountSid: "", authToken: "", authorisedNumber: "", publicUrl: "" });
+  // WhatsApp piggybacks on Twilio's WhatsApp API — same SID/auth, but a
+  // separate enable flag + WhatsApp-from number and per-channel webhook URL.
+  // Storing the config in its own channel row lets us wire Twilio's two
+  // independent webhooks (SMS vs WhatsApp) without conflating them.
+  const [whatsapp, setWhatsapp] = useState({ enabled: false, fromNumber: "", authorisedNumber: "" });
   const [apiToken, setApiToken] = useState("");
 
   useEffect(() => {
@@ -427,6 +573,8 @@ function CommsSection() {
     fetch("/api/channels?type=twilio").then((r) => r.json()).then((j) =>
       setTwilio({ enabled: j.enabled, accountSid: j.config?.accountSid || "", authToken: j.config?.authToken || "",
         authorisedNumber: j.config?.authorisedNumber || "", publicUrl: j.config?.publicUrl || "" }));
+    fetch("/api/channels?type=whatsapp").then((r) => r.json()).then((j) =>
+      setWhatsapp({ enabled: j.enabled, fromNumber: j.config?.fromNumber || "", authorisedNumber: j.config?.authorisedNumber || "" }));
   }, []);
 
   async function saveChannel(type: string, enabled: boolean, config: any) {
@@ -479,6 +627,43 @@ function CommsSection() {
           onChange={(e) => setTwilio({ ...twilio, publicUrl: e.target.value })} />
         <Button size="sm" onClick={() => saveChannel("twilio", twilio.enabled, twilio)}>Save Twilio</Button>
         <TwilioWizard />
+      </Card>
+
+      <Card className="p-4 space-y-2">
+        <div className="flex items-center gap-2">
+          <p className="font-medium text-sm flex-1">WhatsApp</p>
+          <input type="checkbox" checked={whatsapp.enabled}
+            onChange={(e) => setWhatsapp({ ...whatsapp, enabled: e.target.checked })} />
+        </div>
+        <p className="text-xs" style={{ color: "hsl(0 0% 100% / 0.62)" }}>
+          WhatsApp itself doesn&apos;t let third-party apps connect directly — Meta only opens it
+          through approved Business Solution Providers. Twilio is one of those providers (Meta-approved),
+          so the practical setup is: <b>Twilio handles the actual WhatsApp connection on your behalf</b>.
+          Sora sends messages to Twilio over their normal SMS-style API; Twilio relays them onto
+          WhatsApp using the number you&apos;ve enabled on the Twilio console. Inbound WhatsApp
+          messages arrive back at Sora through the same webhook pipeline as SMS.
+        </p>
+        <p className="text-xs" style={{ color: "hsl(0 0% 100% / 0.55)" }}>
+          To set it up: in the Twilio console go to <i>Messaging → Try it out → WhatsApp sandbox</i>
+          (free, for testing) or onboard a production WhatsApp sender. Twilio will give you a
+          WhatsApp-enabled number — paste it below with the <code>whatsapp:</code> prefix.
+        </p>
+        <Input
+          placeholder="WhatsApp 'from' number (Twilio-side), e.g. whatsapp:+14155238886"
+          value={whatsapp.fromNumber}
+          onChange={(e) => setWhatsapp({ ...whatsapp, fromNumber: e.target.value })}
+        />
+        <Input
+          placeholder="Your authorised WhatsApp number (your phone, e.g. +1...)"
+          value={whatsapp.authorisedNumber}
+          onChange={(e) => setWhatsapp({ ...whatsapp, authorisedNumber: e.target.value })}
+        />
+        <Button size="sm" onClick={() => saveChannel("whatsapp", whatsapp.enabled, whatsapp)}>Save WhatsApp</Button>
+        {whatsapp.enabled && twilio.publicUrl && (
+          <p className="text-xs" style={{ color: "hsl(0 0% 100% / 0.55)" }}>
+            Twilio WhatsApp inbound webhook: <code>{twilio.publicUrl}/api/channels/twilio/whatsapp</code>
+          </p>
+        )}
       </Card>
 
       <Card className="p-4 space-y-2">

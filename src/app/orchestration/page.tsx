@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Card, Badge, Input, Textarea } from "@/components/ui";
 import { toast } from "@/components/toast";
-import { Network, Eye, Pause, Play, X, Clock, RefreshCw, Plus, Zap, Send } from "lucide-react";
+import { Network, Eye, Pause, Play, X, Clock, RefreshCw, Plus, Zap, Send, BookOpen, ChevronDown } from "lucide-react";
+import Link from "next/link";
 
 type Proc = {
   process_id: string;
@@ -211,17 +212,24 @@ export default function OrchestrationPage() {
 
   return (
     <div className="flex h-full">
-      <div className="flex-1 overflow-y-auto p-6 space-y-4 max-w-5xl">
-        <div className="flex items-center gap-2">
-          <Network className="h-5 w-5" />
-          <h1 className="text-xl font-semibold flex-1">Orchestration</h1>
-          <Button size="sm" onClick={() => setShowJobForm((s) => !s)}>
-            <Plus className="h-3.5 w-3.5" /> New job
-          </Button>
-          <Button size="sm" variant="outline" onClick={refresh}>
-            <RefreshCw className="h-3.5 w-3.5" /> Refresh
-          </Button>
+      <div className="flex-1 overflow-y-auto px-10 py-14 space-y-6 max-w-5xl">
+        <div className="flex items-end justify-between gap-6 mb-2">
+          <div>
+            <p className="lm-micro mb-2">Orchestration</p>
+            <h1 className="lm-display">Processes &amp; jobs</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={() => setShowJobForm((s) => !s)}>
+              <Plus className="h-3.5 w-3.5" /> New job
+            </Button>
+            <Button size="sm" variant="outline" onClick={refresh}>
+              <RefreshCw className="h-3.5 w-3.5" /> Refresh
+            </Button>
+          </div>
         </div>
+
+        <OrchestrationExplainer />
+
 
         {/* New-job form */}
         {showJobForm && (
@@ -472,6 +480,169 @@ export default function OrchestrationPage() {
           </div>
         </aside>
       )}
+    </div>
+  );
+}
+
+/**
+ * <OrchestrationExplainer/> — a collapsible primer that answers the
+ * "what's default vs customizable" question without forcing the user to
+ * leave the page or read source. Lives at the top of /orchestration.
+ */
+function OrchestrationExplainer() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="lm-explainer" data-open={open}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="lm-explainer__head"
+        data-pulse="true"
+        aria-expanded={open}
+      >
+        <BookOpen className="h-4 w-4" style={{ color: "hsl(0 0% 100% / 0.6)" }} />
+        <span className="lm-body" style={{ color: "hsl(0 0% 100% / 0.92)", fontWeight: 500 }}>
+          How orchestration works
+        </span>
+        <ChevronDown
+          className="h-4 w-4 ml-auto"
+          style={{
+            color: "hsl(0 0% 100% / 0.4)",
+            transition: "transform var(--lm-dur-micro) var(--lm-ease-micro)",
+            transform: open ? "rotate(180deg)" : "rotate(0deg)",
+          }}
+        />
+      </button>
+      {open && (
+        <div className="lm-explainer__body">
+          <section>
+            <p className="lm-micro mb-2">What runs through orchestration</p>
+            <p className="lm-body" style={{ color: "hsl(0 0% 100% / 0.78)" }}>
+              Every unit of Sora&apos;s work — chat turns, scheduled automations, long-running jobs,
+              V6 task graphs, and the subagents Sora spawns — becomes a tracked process you see
+              here. Each carries its own model, prompt, audit trail, and budget.
+            </p>
+          </section>
+
+          <section className="mt-5">
+            <p className="lm-micro mb-2">What&apos;s default</p>
+            <ul className="lm-explainer__list">
+              <li>
+                <b>Every chat turn</b> spins up a process and routes through the active persona&apos;s
+                system prompt. Sora decides whether to act directly, call <code>pi_code</code> for
+                substantial edits, or spawn subagents.
+              </li>
+              <li>
+                <b>Subagent decision protocol</b> is baked into the identity block of the system
+                prompt — dependency map → check resources &amp; history → spawn sequential or parallel.
+              </li>
+              <li>
+                <b>Resource governor</b> caps parallel work at a sanity ceiling of 16 regardless of
+                what Sora requests. Within that, she consults free RAM + recent batch success rate
+                to pick a size.
+              </li>
+              <li>
+                <b>Task graphs cache</b> by content-hash — identical work doesn&apos;t re-run.
+              </li>
+              <li>
+                <b>Loop guard</b> suspends a conversation after 5 identical tool calls in 60s. You
+                explicitly resume from chat.
+              </li>
+            </ul>
+          </section>
+
+          <section className="mt-5">
+            <p className="lm-micro mb-2">What you can customize</p>
+            <ul className="lm-explainer__list">
+              <li>
+                <b>Agent mode</b> — auto / plan / ask. Set per-session from the chat header or
+                permanently in <Link href="/settings" className="lm-explainer__link">Settings → General</Link>.
+              </li>
+              <li>
+                <b>System prompt</b> — every block (identity, permissions, tools, memory, date) can
+                be overridden with custom text. <Link href="/agent/system-prompt" className="lm-explainer__link">Edit here</Link>.
+              </li>
+              <li>
+                <b>Per-tool permissions</b> — which actions are allow / ask / pin. <Link href="/permissions" className="lm-explainer__link">Edit here</Link>.
+              </li>
+              <li>
+                <b>Long-running job</b> — when you click <i>New job</i> above you set name, goal,
+                model, max iterations, and budget. The job runs in the background and audits every
+                step.
+              </li>
+              <li>
+                <b>Multi-model routing rules</b> — pick a different model per task shape. <Link href="/agent/routing" className="lm-explainer__link">Edit here</Link>.
+              </li>
+              <li>
+                <b>Pause / cancel</b> any running process from this list — click the row to open
+                its trace, then use the controls in the right panel.
+              </li>
+            </ul>
+          </section>
+
+          <section className="mt-5">
+            <p className="lm-micro mb-2">Where to look next</p>
+            <p className="lm-body" style={{ color: "hsl(0 0% 100% / 0.7)" }}>
+              <Link href="/graphs" className="lm-explainer__link">Task graphs</Link> shows the DAG view of multi-step work.{" "}
+              <Link href="/analytics" className="lm-explainer__link">Analytics</Link> aggregates success rate, median duration,
+              and per-tool usage.{" "}
+              <Link href="/audit" className="lm-explainer__link">Audit log</Link> is the ground truth for every action.
+            </p>
+          </section>
+        </div>
+      )}
+
+      <style jsx>{`
+        .lm-explainer {
+          border: 1px solid hsl(0 0% 100% / 0.08);
+          border-radius: 14px;
+          background: hsl(0 0% 100% / 0.025);
+          overflow: hidden;
+          transition: background var(--lm-dur-micro) var(--lm-ease-micro);
+        }
+        .lm-explainer[data-open="true"] { background: hsl(0 0% 100% / 0.035); }
+        .lm-explainer__head {
+          display: flex; align-items: center; gap: 10px;
+          width: 100%;
+          padding: 14px 18px;
+          background: transparent; border: none;
+          text-align: left;
+          cursor: pointer;
+        }
+        .lm-explainer__head:hover { background: hsl(0 0% 100% / 0.03); }
+        .lm-explainer__body {
+          padding: 4px 18px 20px;
+          border-top: 1px solid hsl(0 0% 100% / 0.05);
+        }
+        .lm-explainer__list {
+          display: flex; flex-direction: column; gap: 8px;
+          padding-left: 0; list-style: none;
+        }
+        .lm-explainer__list li {
+          padding-left: 14px;
+          position: relative;
+          font-size: 13px; line-height: 21px;
+          color: hsl(0 0% 100% / 0.78);
+        }
+        .lm-explainer__list li::before {
+          content: ""; position: absolute; left: 0; top: 9px;
+          width: 4px; height: 4px; border-radius: 9999px;
+          background: hsl(0 0% 100% / 0.35);
+        }
+        .lm-explainer__list code {
+          font-family: ui-monospace, SF Mono, monospace;
+          font-size: 12px;
+          padding: 1px 5px;
+          background: hsl(0 0% 100% / 0.06);
+          border-radius: 4px;
+        }
+        .lm-explainer__link {
+          color: hsl(0 0% 100% / 0.96);
+          text-decoration: none;
+          border-bottom: 1px solid hsl(0 0% 100% / 0.18);
+          transition: border-color var(--lm-dur-micro) var(--lm-ease-micro);
+        }
+        .lm-explainer__link:hover { border-color: hsl(0 0% 100% / 0.6); }
+      `}</style>
     </div>
   );
 }

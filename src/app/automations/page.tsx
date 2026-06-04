@@ -8,8 +8,11 @@ const TABS = ["Scheduled Tasks", "Monitors", "Workflows"];
 export default function AutomationsPage() {
   const [tab, setTab] = useState("Scheduled Tasks");
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <h1 className="text-xl font-semibold mb-3">Automations</h1>
+    <div className="mx-auto max-w-5xl px-10 py-14">
+      <div className="mb-10">
+        <p className="lm-micro mb-2">Automations</p>
+        <h1 className="lm-display">When Sora acts on her own</h1>
+      </div>
       <div className="flex gap-2 mb-4">
         {TABS.map((t) => (
           <button key={t} onClick={() => setTab(t)}

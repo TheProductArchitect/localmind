@@ -9,7 +9,7 @@ const configMigrations: Migration[] = [
       db.exec(`
         CREATE TABLE settings (
           id INTEGER PRIMARY KEY CHECK (id = 1),
-          assistant_name TEXT NOT NULL DEFAULT 'Assistant',
+          assistant_name TEXT NOT NULL DEFAULT 'Sora',
           personality TEXT NOT NULL DEFAULT 'Friendly',
           theme TEXT NOT NULL DEFAULT 'system',
           locale TEXT NOT NULL DEFAULT 'en-US',
@@ -532,17 +532,28 @@ configMigrations.push({
     // Seed five built-in blocks per persona. Content is left empty — the
     // assembler generates it at runtime from settings/permissions/tools/memory.
     const personas = ["general", "devpm"];
-    const builtins = ["identity", "permissions", "tools", "memory", "date_context"];
+    // v2: only the three blocks that genuinely belong in every turn's prompt
+    // ship enabled by default. `memory` and `date_context` still exist as
+    // blocks the user can re-enable from the editor, but Sora gets the same
+    // information on demand via the `memory` and `time` tools — no need to
+    // pay tokens for it on every single turn.
+    const builtins = [
+      { name: "identity",     enabled: 1 },
+      { name: "permissions",  enabled: 1 },
+      { name: "tools",        enabled: 1 },
+      { name: "memory",       enabled: 0 },
+      { name: "date_context", enabled: 0 },
+    ];
     const ins = db.prepare(`
       INSERT INTO system_prompt_blocks
         (block_id, persona_id, block_type, block_name, content, enabled, sort_order, condition_json, created_at, updated_at)
-      VALUES (?, ?, 'builtin', ?, '', 1, ?, NULL,
+      VALUES (?, ?, 'builtin', ?, '', ?, ?, NULL,
         CAST(strftime('%s','now') AS INTEGER) * 1000,
         CAST(strftime('%s','now') AS INTEGER) * 1000)
     `);
     for (const p of personas) {
-      builtins.forEach((name, i) => {
-        ins.run(`blk-${p}-${name}`, `persona-${p}`, name, i);
+      builtins.forEach((b, i) => {
+        ins.run(`blk-${p}-${b.name}`, `persona-${p}`, b.name, b.enabled, i);
       });
     }
 
@@ -569,6 +580,165 @@ configMigrations.push({
       ALTER TABLE long_running_jobs ADD COLUMN conversation_id TEXT;
       ALTER TABLE long_running_jobs ADD COLUMN current_iteration INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE long_running_jobs ADD COLUMN process_id TEXT;
+    `);
+  },
+});
+
+// ---- V8 migration: V6 federation foundation ----
+//
+// All schema needed for the federated task-graph runtime ships in one
+// migration so partial states cannot exist. Tables introduced here:
+//
+//   - node_identity         : this machine's Ed25519 identity (single row).
+//   - fleet_peers           : paired peer machines + their public keys.
+//   - node_clock            : monotonic Lamport counter (single row).
+//   - fleet_audit_links     : cross-references between local and peer audit rows.
+//   - knowledge_share_policy: per-document share policy (private / fleet-readable / fleet-queryable).
+//   - task_graphs           : a goal with cost budget, status, originating node.
+//   - task_nodes            : individual steps with contracts, input hash, cache key.
+//   - tool_call_cache       : content-addressed cache of tool outputs keyed by (tool_name, tool_version, input_hash).
+//
+// Existing V5/V6 tables are untouched — V6 task graphs add to the model, they
+// do not replace anything yet. The V6.7 migration later compiles chat /
+// workflow / long-running-job to graphs without breaking those rows.
+configMigrations.push({
+  version: 8,
+  up: (db) => {
+    db.exec(`
+      CREATE TABLE node_identity (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        node_id TEXT NOT NULL,
+        pubkey_pem TEXT NOT NULL,
+        privkey_path TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE fleet_peers (
+        peer_node_id TEXT PRIMARY KEY,
+        pubkey_pem TEXT NOT NULL,
+        label TEXT,
+        primary_addr TEXT,
+        paired_at INTEGER NOT NULL,
+        last_seen_at INTEGER,
+        capabilities_json TEXT NOT NULL DEFAULT '{}',
+        policy_json TEXT NOT NULL DEFAULT '{}',
+        trusted INTEGER NOT NULL DEFAULT 1
+      );
+
+      CREATE TABLE node_clock (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        counter INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO node_clock (id, counter) VALUES (1, 0);
+
+      CREATE TABLE fleet_audit_links (
+        local_audit_id INTEGER NOT NULL,
+        peer_node_id TEXT NOT NULL,
+        peer_audit_id INTEGER NOT NULL,
+        signature TEXT NOT NULL,
+        direction TEXT NOT NULL CHECK (direction IN ('outbound','inbound')),
+        lamport INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (local_audit_id, peer_node_id, peer_audit_id, direction)
+      );
+      CREATE INDEX idx_fleet_audit_peer ON fleet_audit_links(peer_node_id, peer_audit_id);
+
+      CREATE TABLE knowledge_share_policy (
+        document_id TEXT PRIMARY KEY,
+        policy TEXT NOT NULL DEFAULT 'private'
+          CHECK (policy IN ('private','fleet-readable','fleet-queryable')),
+        granted_peers_json TEXT NOT NULL DEFAULT '[]',
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE task_graphs (
+        graph_id TEXT PRIMARY KEY,
+        owner_user_id TEXT,
+        originating_node_id TEXT NOT NULL,
+        root_goal TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending','running','completed','failed','cancelled','halted_budget')),
+        cost_budget_json TEXT NOT NULL DEFAULT '{}',
+        cost_actual_json TEXT NOT NULL DEFAULT '{}',
+        parent_audit_id INTEGER,
+        created_at INTEGER NOT NULL,
+        completed_at INTEGER
+      );
+      CREATE INDEX idx_graphs_status ON task_graphs(status, created_at DESC);
+      CREATE INDEX idx_graphs_owner ON task_graphs(owner_user_id, created_at DESC);
+
+      CREATE TABLE task_nodes (
+        node_id TEXT PRIMARY KEY,
+        graph_id TEXT NOT NULL,
+        parent_ids TEXT NOT NULL DEFAULT '[]',
+        depends_on TEXT NOT NULL DEFAULT '[]',
+        agent_spec_json TEXT NOT NULL,
+        input_json TEXT NOT NULL,
+        input_hash TEXT NOT NULL,
+        contract_json TEXT NOT NULL,
+        placement_json TEXT NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending','scheduled','running','done','cached','failed','cancelled','refuted','peer_lost')),
+        output_json TEXT,
+        output_hash TEXT,
+        cache_hit_of_node_id TEXT,
+        executing_node_id TEXT,
+        cost_actual_json TEXT NOT NULL DEFAULT '{}',
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        verification_node_id TEXT,
+        process_id TEXT,
+        started_at INTEGER,
+        completed_at INTEGER
+      );
+      CREATE INDEX idx_nodes_graph_status ON task_nodes(graph_id, status);
+      CREATE INDEX idx_nodes_input_hash ON task_nodes(input_hash, status);
+      CREATE INDEX idx_nodes_executing ON task_nodes(executing_node_id, status);
+
+      -- Content-addressed cache of tool outputs. Invalidates when the tool's
+      -- declared version changes (decision: tool version field busts cache).
+      CREATE TABLE tool_call_cache (
+        cache_key TEXT PRIMARY KEY,
+        tool_name TEXT NOT NULL,
+        tool_version TEXT NOT NULL,
+        input_hash TEXT NOT NULL,
+        output_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        cost_actual_json TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL,
+        last_hit_at INTEGER NOT NULL,
+        hit_count INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX idx_cache_tool ON tool_call_cache(tool_name, tool_version);
+      CREATE INDEX idx_cache_recent ON tool_call_cache(last_hit_at DESC);
+    `);
+  },
+});
+
+// v2: agent_mode — a global overlay that shapes how Sora interprets every
+// permission tier. "auto" trusts the agent fully; "plan" forbids mutations
+// until the user steps out of plan mode; "ask" is the default — Sora may
+// read freely but confirms every mutation. Memory reads are always allowed
+// regardless of mode (the LLM "owns" its memory).
+configMigrations.push({
+  version: 9,
+  up: (db) => {
+    db.exec("ALTER TABLE settings ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'ask';");
+  },
+});
+
+// v10: disable the `memory` and `date_context` builtin blocks on every
+// existing persona. They're now served on-demand via the `memory` and
+// `time` tools — keeping them in the prompt was paying tokens for stale
+// data on every single turn.
+configMigrations.push({
+  version: 10,
+  up: (db) => {
+    db.exec(`
+      UPDATE system_prompt_blocks
+      SET enabled = 0
+      WHERE block_type = 'builtin'
+        AND block_name IN ('memory', 'date_context');
     `);
   },
 });

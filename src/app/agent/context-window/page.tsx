@@ -155,10 +155,10 @@ export default function ContextWindowPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-6 max-w-4xl space-y-4">
-      <div className="flex items-center gap-2">
-        <Gauge className="h-5 w-5" />
-        <h1 className="text-xl font-semibold">Context Window</h1>
+    <div className="mx-auto max-w-4xl px-10 py-14 space-y-6">
+      <div className="mb-2">
+        <p className="lm-micro mb-2">Agent · context</p>
+        <h1 className="lm-display">How much Sora can hold</h1>
       </div>
 
       {/* Persona selector */}

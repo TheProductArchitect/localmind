@@ -123,6 +123,11 @@ export const spreadsheetTool: Tool = {
     const op = String(i.operation || "");
     return op === "read_spreadsheet" || op === "summarise_spreadsheet" ? "read_files" : "write_files";
   },
+  version: "1",
+  cacheable: (i) => {
+    const op = String(i.operation || "");
+    return op === "read_spreadsheet" || op === "summarise_spreadsheet";
+  },
   preview: (i) => {
     const op = String(i.operation || "");
     const f = String(i.path || "(no path)");

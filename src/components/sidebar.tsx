@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import {
   MessageSquare, Shield, ScrollText, Box, Activity, Settings as SettingsIcon,
   Plug, BookOpen, Workflow, Users, Code2, Sun, Sparkles, Gauge, Network,
-  Database, Package, Route,
+  Database, Package, Route, Wifi, BarChart3,
 } from "lucide-react";
 
 type NavItem = { href: string; label: string; icon: React.ComponentType<{ className?: string }> };
@@ -26,6 +26,8 @@ const GROUPS: NavGroup[] = [
     title: "Automation",
     items: [
       { href: "/orchestration", label: "Orchestration", icon: Network },
+      { href: "/graphs", label: "Task Graphs", icon: Workflow },
+      { href: "/fleet", label: "Fleet", icon: Wifi },
       { href: "/automations", label: "Automations", icon: Workflow },
       { href: "/mcp", label: "MCP Servers", icon: Plug },
       { href: "/plugins", label: "Plugins", icon: Package },
@@ -52,6 +54,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { href: "/models", label: "Models", icon: Box },
       { href: "/system", label: "System", icon: Activity },
+      { href: "/analytics", label: "Analytics", icon: BarChart3 },
       { href: "/settings", label: "Settings", icon: SettingsIcon },
     ],
   },

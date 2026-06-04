@@ -29,6 +29,35 @@ try {
   logger.warn("long-running job resume skipped", { error: (e as Error).message });
 }
 
+// V6 fleet foundation: lazily generates the node Ed25519 keypair on first boot,
+// loads it on subsequent boots, and caches the KeyObjects so signed envelopes
+// don't touch disk per call. A failure here is non-fatal but loud — federation
+// won't work without an identity, but single-machine LocalMind still does.
+try {
+  const { getNodeIdentity } = require("./lib/fleet/identity") as typeof import("./lib/fleet/identity");
+  const id = getNodeIdentity();
+  logger.info(`fleet identity ready (node_id=${id.node_id})`);
+} catch (e) {
+  logger.error("fleet identity init failed", { error: (e as Error).message });
+}
+
+// V6.1 transport: start the fleet HTTPS sidecar + heartbeat loop. Both gated
+// on openssl being available (we shell out to generate the TLS cert on first
+// boot). If it's missing, the rest of LocalMind still runs in single-node mode.
+try {
+  const { startFleetServer } = require("./lib/fleet/server") as typeof import("./lib/fleet/server");
+  const { startHeartbeat } = require("./lib/fleet/heartbeat") as typeof import("./lib/fleet/heartbeat");
+  // Fire and forget — server boots in <50ms once the cert is on disk.
+  startFleetServer().then((r) => {
+    logger.info(`fleet listener up on :${r.port} (cert ${r.cert_fingerprint.slice(0, 16)}…)`);
+    startHeartbeat();
+  }).catch((e) => {
+    logger.warn("fleet listener could not start", { error: (e as Error).message });
+  });
+} catch (e) {
+  logger.warn("fleet transport init skipped", { error: (e as Error).message });
+}
+
 // Catch any promise rejection or exception that escapes normal handling.
 process.on("unhandledRejection", (reason: any) => {
   logger.error("unhandledRejection", { reason: reason?.message || String(reason) });

@@ -2,109 +2,467 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * LocalMind v2 — monochrome canvas with white glow as the single accent.
+ *
+ * Two parallel token systems coexist during the migration:
+ *
+ *   1. shadcn HSL slots (--background, --foreground, --primary, ...) keep
+ *      legacy pages working by remapping them to the new dark palette.
+ *      Tailwind classes like `bg-background` and `text-muted-foreground`
+ *      continue to resolve without page edits.
+ *
+ *   2. v2 explicit tokens (--lm-canvas, --lm-surface-1, --lm-text-1, ...)
+ *      are the canonical names for the new shell, components, and pages.
+ *
+ * Once every page is on the new shell, the shadcn slots can be retired.
+ */
+
 @layer base {
   :root {
-    /* Quiet Workstation — layered paper-light surfaces */
-    --background: 240 20% 98%;
-    --foreground: 240 10% 9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 9%;
-    --primary: 240 9% 12%;
-    --primary-foreground: 0 0% 99%;
-    --secondary: 240 5% 96%;
-    --secondary-foreground: 240 6% 12%;
-    --muted: 240 5% 96%;
-    /* Darkened for WCAG AA 4.5:1 contrast on the light background. */
-    --muted-foreground: 240 4% 42%;
-    --accent: 240 5% 95%;
-    --accent-foreground: 240 6% 12%;
-    /* Refined indigo, reserved for focus + active states */
-    --brand: 243 75% 59%;
-    --brand-foreground: 0 0% 100%;
-    --brand-soft: 243 100% 97%;
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 99%;
-    --border: 240 8% 90%;
-    --input: 240 8% 89%;
-    --ring: 243 75% 59%;
+    /* === v2 explicit tokens === */
+    --lm-canvas: 234 22% 4%;             /* #07070A — absolute black with hint of blue */
+    --lm-canvas-up: 234 18% 6%;          /* one step up for elevation */
+    --lm-surface-1: 0 0% 100% / 0.04;
+    --lm-surface-2: 0 0% 100% / 0.07;
+    --lm-hairline: 0 0% 100% / 0.08;
+    --lm-hairline-strong: 0 0% 100% / 0.14;
+    --lm-text-1: 0 0% 100% / 0.96;
+    --lm-text-2: 0 0% 100% / 0.62;
+    --lm-text-3: 0 0% 100% / 0.38;
+    --lm-glow: 0 0% 100% / 0.92;
+    --lm-glow-soft: 0 0% 100% / 0.32;
+    --lm-danger: 0 100% 68%;
+
+    --lm-radius-card: 0px;
+    --lm-radius-control: 14px;
+    --lm-radius-pill: 9999px;
+
+    --lm-ease-micro: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --lm-dur-micro: 150ms;
+    --lm-dur-macro: 280ms;
+
+    /* === shadcn HSL slots, remapped to the v2 palette === */
+    --background: 234 22% 4%;
+    --foreground: 0 0% 96%;
+    --card: 234 18% 6%;
+    --card-foreground: 0 0% 96%;
+    --popover: 234 18% 7%;
+    --popover-foreground: 0 0% 96%;
+    --primary: 0 0% 96%;
+    --primary-foreground: 234 22% 4%;
+    --secondary: 234 14% 10%;
+    --secondary-foreground: 0 0% 92%;
+    --muted: 234 14% 10%;
+    --muted-foreground: 0 0% 62%;
+    --accent: 234 14% 12%;
+    --accent-foreground: 0 0% 96%;
+    --brand: 0 0% 96%;
+    --brand-foreground: 234 22% 4%;
+    --brand-soft: 0 0% 100% / 0.08;
+    --destructive: 0 90% 64%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 100% / 0.08;
+    --input: 0 0% 100% / 0.10;
+    --ring: 0 0% 100% / 0.40;
     --radius: 0.75rem;
   }
+
+  /*
+   * .dark mirrors :root because v2 is dark-by-design. The class is preserved
+   * so any `dark:` Tailwind variants in legacy components still match — they
+   * just resolve to the same value as the default.
+   */
   .dark {
-    --background: 240 10% 5%;
-    --foreground: 0 0% 98%;
-    --card: 240 9% 8%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 9% 8%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 6% 10%;
-    --secondary: 240 5% 14%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 5% 14%;
-    /* Lightened for WCAG AA 4.5:1 contrast on the dark background. */
-    --muted-foreground: 240 5% 68%;
-    --accent: 240 5% 15%;
-    --accent-foreground: 0 0% 98%;
-    --brand: 243 80% 70%;
-    --brand-foreground: 240 10% 6%;
-    --brand-soft: 243 40% 18%;
-    --destructive: 0 62.8% 45%;
+    --background: 234 22% 4%;
+    --foreground: 0 0% 96%;
+    --card: 234 18% 6%;
+    --card-foreground: 0 0% 96%;
+    --popover: 234 18% 7%;
+    --popover-foreground: 0 0% 96%;
+    --primary: 0 0% 96%;
+    --primary-foreground: 234 22% 4%;
+    --secondary: 234 14% 10%;
+    --secondary-foreground: 0 0% 92%;
+    --muted: 234 14% 10%;
+    --muted-foreground: 0 0% 62%;
+    --accent: 234 14% 12%;
+    --accent-foreground: 0 0% 96%;
+    --brand: 0 0% 96%;
+    --brand-foreground: 234 22% 4%;
+    --brand-soft: 0 0% 100% / 0.08;
+    --destructive: 0 90% 64%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 5% 16%;
-    --input: 240 5% 18%;
-    --ring: 243 80% 70%;
-    --radius: 0.75rem;
+    --border: 0 0% 100% / 0.08;
+    --input: 0 0% 100% / 0.10;
+    --ring: 0 0% 100% / 0.40;
   }
 }
 
 @layer base {
   * { @apply border-border; }
+  html, body { background: hsl(var(--background)); }
   body {
-    @apply bg-background text-foreground antialiased;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    @apply text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
     text-rendering: optimizeLegibility;
+    color-scheme: dark;
   }
 
-  /* WCAG: visible focus indicator on every interactive element. */
+  /* The page surface — a single, very large radial that hints at depth without
+   * being decorative. Sits behind everything and never animates.
+   */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      radial-gradient(60% 50% at 50% 0%, hsl(0 0% 100% / 0.035), transparent 60%),
+      radial-gradient(80% 60% at 50% 100%, hsl(0 0% 100% / 0.025), transparent 60%);
+  }
+
+  /* Focus ring — a soft white halo, never a solid color. */
   a:focus-visible,
   button:focus-visible,
   input:focus-visible,
   textarea:focus-visible,
   select:focus-visible,
   [tabindex]:focus-visible {
-    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+    outline: none;
+    box-shadow: 0 0 0 1px hsl(0 0% 100% / 0.16), 0 0 0 4px hsl(0 0% 100% / 0.06);
+    border-radius: var(--lm-radius-control);
   }
 
-  /* Refined, unobtrusive scrollbars */
+  /* Hairline scrollbars */
   * {
     scrollbar-width: thin;
-    scrollbar-color: hsl(240 5% 80%) transparent;
+    scrollbar-color: hsl(0 0% 100% / 0.12) transparent;
   }
-  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
   *::-webkit-scrollbar-track { background: transparent; }
   *::-webkit-scrollbar-thumb {
-    background-color: hsl(240 5% 80%);
+    background-color: hsl(0 0% 100% / 0.10);
     border-radius: 9999px;
-    border: 3px solid transparent;
+    border: 2px solid transparent;
     background-clip: content-box;
   }
-  *::-webkit-scrollbar-thumb:hover { background-color: hsl(240 5% 68%); }
-  .dark *::-webkit-scrollbar-thumb { background-color: hsl(240 5% 24%); }
-  .dark *::-webkit-scrollbar-thumb:hover { background-color: hsl(240 5% 32%); }
+  *::-webkit-scrollbar-thumb:hover { background-color: hsl(0 0% 100% / 0.18); }
+
+  /* Selection */
+  ::selection { background: hsl(0 0% 100% / 0.18); color: hsl(0 0% 100%); }
 }
 
+@layer components {
+  /* Glass surface — used on cards, drawers, popovers. */
+  .lm-surface-1 {
+    background: hsl(0 0% 100% / 0.04);
+    border: 1px solid hsl(0 0% 100% / 0.08);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+  }
+  .lm-surface-2 {
+    background: hsl(0 0% 100% / 0.07);
+    border: 1px solid hsl(0 0% 100% / 0.10);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+  }
+
+  /* The one accent: white glow on text. Used very sparingly. */
+  .lm-glow {
+    color: hsl(0 0% 100%);
+    text-shadow:
+      0 0 12px hsl(0 0% 100% / 0.55),
+      0 0 32px hsl(0 0% 100% / 0.22);
+  }
+
+  /* A single hairline divider with a soft luminance gradient — Zara line. */
+  .lm-hairline {
+    height: 1px;
+    background: linear-gradient(
+      to right,
+      transparent,
+      hsl(0 0% 100% / 0.14) 50%,
+      transparent
+    );
+  }
+
+  /* Type ramp — only three sizes. */
+  .lm-display { font-size: 28px; line-height: 34px; letter-spacing: -0.02em; font-weight: 480; }
+  .lm-body    { font-size: 14px; line-height: 22px; letter-spacing: -0.005em; font-weight: 420; }
+  .lm-micro   { font-size: 11px; line-height: 16px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 500; color: hsl(0 0% 100% / 0.38); }
+
+  /* === v2 utility classes — shared across all redesigned pages === */
+
+  .lm-input {
+    background: hsl(0 0% 100% / 0.04);
+    border: 1px solid hsl(0 0% 100% / 0.10);
+    border-radius: 12px;
+    padding: 8px 12px;
+    color: hsl(0 0% 100% / 0.96);
+    font-size: 13px;
+    letter-spacing: -0.005em;
+    outline: none;
+    transition: border-color var(--lm-dur-micro) var(--lm-ease-micro);
+  }
+  .lm-input:focus { border-color: hsl(0 0% 100% / 0.24); }
+  .lm-input:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .lm-action {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px;
+    background: hsl(0 0% 100%);
+    color: hsl(234 22% 4%);
+    border-radius: 12px;
+    font-size: 12.5px; letter-spacing: -0.005em; font-weight: 500;
+    transition: box-shadow var(--lm-dur-micro) var(--lm-ease-micro),
+                opacity   var(--lm-dur-micro) var(--lm-ease-micro);
+    border: none;
+  }
+  .lm-action:hover:not(:disabled) { box-shadow: 0 0 16px hsl(0 0% 100% / 0.35); }
+  .lm-action:disabled { opacity: 0.35; cursor: not-allowed; }
+  .lm-action--ghost {
+    background: transparent;
+    color: hsl(0 0% 100% / 0.85);
+    border: 1px solid hsl(0 0% 100% / 0.10);
+  }
+  .lm-action--ghost:hover:not(:disabled) { background: hsl(0 0% 100% / 0.05); box-shadow: none; }
+
+  .lm-icon-btn {
+    width: 36px; height: 36px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: hsl(0 0% 100% / 0.04);
+    border: 1px solid hsl(0 0% 100% / 0.08);
+    border-radius: 12px;
+    color: hsl(0 0% 100% / 0.75);
+    transition: background var(--lm-dur-micro) var(--lm-ease-micro);
+  }
+  .lm-icon-btn:hover { background: hsl(0 0% 100% / 0.08); }
+
+  .lm-chip {
+    display: inline-flex; align-items: center;
+    padding: 2px 8px;
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: hsl(0 0% 100% / 0.7);
+    border: 1px solid hsl(0 0% 100% / 0.12);
+    border-radius: 9999px;
+  }
+  .lm-chip[data-tone="ok"]   { color: hsl(0 0% 100%);   border-color: hsl(0 0% 100% / 0.3); }
+  .lm-chip[data-tone="fail"] { color: hsl(0 100% 78%);  border-color: hsl(0 90% 64% / 0.4); }
+
+  .lm-row__del {
+    color: hsl(0 0% 100% / 0.3);
+    background: none; border: none;
+    opacity: 0;
+    transition: opacity var(--lm-dur-micro) var(--lm-ease-micro),
+                color   var(--lm-dur-micro) var(--lm-ease-micro);
+  }
+  .lm-row:hover .lm-row__del,
+  .lm-peer:hover .lm-row__del { opacity: 1; }
+  .lm-row__del:hover { color: hsl(0 100% 78%); }
+
+  /* System-prompt editor: tool toggle tiles + block headers. Promoted to
+   * globals.css because styled-jsx in the same file was hitting a known
+   * panic with this particular CSS shape on the swc compiler. */
+  .lm-tool-tile {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid hsl(0 0% 100% / 0.07);
+    border-radius: 12px;
+    background: hsl(0 0% 100% / 0.025);
+    cursor: pointer;
+    transition: background var(--lm-dur-micro) var(--lm-ease-micro),
+                border-color var(--lm-dur-micro) var(--lm-ease-micro);
+  }
+  .lm-tool-tile:hover { background: hsl(0 0% 100% / 0.04); }
+  .lm-tool-tile[data-on="true"] {
+    background: hsl(0 0% 100% / 0.05);
+    border-color: hsl(0 0% 100% / 0.16);
+  }
+  .lm-tool-tile input { margin-top: 4px; }
+  .lm-tool-tile__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+  .lm-block {
+    border: 1px solid hsl(0 0% 100% / 0.06);
+    border-radius: 12px;
+    background: hsl(0 0% 100% / 0.025);
+    transition: background var(--lm-dur-micro) var(--lm-ease-micro),
+                border-color var(--lm-dur-micro) var(--lm-ease-micro);
+  }
+  .lm-block:hover { border-color: hsl(0 0% 100% / 0.10); }
+  .lm-block[data-disabled="true"] { opacity: 0.5; }
+  .lm-block__head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px;
+  }
+  .lm-block__toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px;
+    border-radius: 6px;
+    background: transparent; border: none;
+    color: hsl(0 0% 100% / 0.6);
+  }
+  .lm-block__toggle:hover { background: hsl(0 0% 100% / 0.06); color: hsl(0 0% 100%); }
+  .lm-block__body {
+    padding: 4px 14px 14px 38px;
+    display: flex; flex-direction: column; gap: 12px;
+    border-top: 1px solid hsl(0 0% 100% / 0.05);
+  }
+
+  /* Segmented pill tabs — used by /knowledge, /access, and other pages
+   * that surface tabbed UIs inside a page shell. */
+  .lm-tabs {
+    display: inline-flex; flex-wrap: wrap; gap: 2px;
+    padding: 4px;
+    border: 1px solid hsl(0 0% 100% / 0.08);
+    border-radius: var(--lm-radius-control);
+    background: hsl(0 0% 100% / 0.03);
+  }
+  .lm-tab {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px;
+    border-radius: 10px;
+    font-size: 12px; letter-spacing: -0.005em;
+    color: hsl(0 0% 100% / 0.55);
+    background: transparent; border: none;
+    transition: background var(--lm-dur-micro) var(--lm-ease-micro),
+                color      var(--lm-dur-micro) var(--lm-ease-micro);
+  }
+  .lm-tab:hover { color: hsl(0 0% 100% / 0.9); }
+  .lm-tab.is-active {
+    background: hsl(0 0% 100% / 0.08);
+    color: hsl(0 0% 100%);
+    box-shadow: 0 0 0 1px hsl(0 0% 100% / 0.06) inset;
+  }
+
+  /* Settings side nav — in-page section buttons (top) and external page links
+   * (bottom Agent / Governance / Observability clusters). Must live in
+   * globals because next/link renders an <a> outside the parent component's
+   * styled-jsx scope, so scoped classes wouldn't apply to admin links. */
+  .lm-settings-link {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 10px;
+    font-size: 13px;
+    letter-spacing: -0.005em;
+    color: hsl(0 0% 100% / 0.6);
+    background: transparent;
+    border: none;
+    text-align: left;
+    text-decoration: none;
+    line-height: 18px;
+    transition: background var(--lm-dur-micro) var(--lm-ease-micro),
+                color      var(--lm-dur-micro) var(--lm-ease-micro);
+  }
+  .lm-settings-link:hover { color: hsl(0 0% 100% / 0.96); background: hsl(0 0% 100% / 0.04); }
+  .lm-settings-link.is-active {
+    color: hsl(0 0% 100%);
+    background: hsl(0 0% 100% / 0.07);
+    box-shadow: 0 0 0 1px hsl(0 0% 100% / 0.06) inset;
+  }
+  .lm-settings-link.is-external {
+    color: hsl(0 0% 100% / 0.5);
+    font-size: 12.5px;
+    padding: 6px 10px;
+  }
+  .lm-settings-link.is-external:hover { color: hsl(0 0% 100% / 0.92); }
+
+  /* Add-block chip — small "+ name" pill used in the system-prompt editor
+   * to surface disabled built-ins and custom-block creators. */
+  .lm-add-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 10px;
+    font-size: 11.5px; letter-spacing: -0.005em;
+    color: hsl(0 0% 100% / 0.7);
+    background: hsl(0 0% 100% / 0.03);
+    border: 1px solid hsl(0 0% 100% / 0.10);
+    border-radius: 9999px;
+    transition: background var(--lm-dur-micro) var(--lm-ease-micro),
+                color      var(--lm-dur-micro) var(--lm-ease-micro);
+  }
+  .lm-add-chip:hover { background: hsl(0 0% 100% / 0.07); color: hsl(0 0% 100%); }
+
+  /* Transport explainer (fleet page) — a collapsible "how they connect"
+   * tile. Uses the same dot bullet pattern as the orchestration explainer. */
+  .lm-transport {
+    background: hsl(0 0% 100% / 0.025);
+    border: 1px solid hsl(0 0% 100% / 0.07);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: background var(--lm-dur-micro) var(--lm-ease-micro);
+  }
+  .lm-transport[data-open="true"] { background: hsl(0 0% 100% / 0.035); }
+  .lm-transport__head {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%;
+    padding: 12px 18px;
+    background: transparent; border: none;
+    text-align: left;
+    cursor: pointer;
+  }
+  .lm-transport__head:hover { background: hsl(0 0% 100% / 0.03); }
+  .lm-transport__list {
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 4px 18px 16px;
+    list-style: none; margin: 0;
+    border-top: 1px solid hsl(0 0% 100% / 0.05);
+  }
+  .lm-transport__list li {
+    padding-left: 14px;
+    position: relative;
+    font-size: 12.5px; line-height: 19px;
+    color: hsl(0 0% 100% / 0.78);
+  }
+  .lm-transport__list li {
+    padding-top: 8px;
+  }
+  .lm-transport__list li::before {
+    content: ""; position: absolute; left: 0; top: 16px;
+    width: 4px; height: 4px; border-radius: 9999px;
+    background: hsl(0 0% 100% / 0.32);
+  }
+  .lm-transport__list code {
+    font-family: ui-monospace, SF Mono, monospace;
+    font-size: 11.5px;
+    padding: 1px 5px;
+    background: hsl(0 0% 100% / 0.06);
+    border-radius: 4px;
+  }
+}
+
+/* Markdown inside chat messages */
 .markdown pre {
-  @apply bg-muted rounded-md p-3 overflow-x-auto text-sm my-2;
+  background: hsl(0 0% 100% / 0.05);
+  border: 1px solid hsl(0 0% 100% / 0.08);
+  border-radius: 10px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font-size: 13px;
+  margin: 8px 0;
 }
 .markdown code {
-  @apply bg-muted px-1 py-0.5 rounded text-sm;
+  background: hsl(0 0% 100% / 0.06);
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 0.92em;
 }
-.markdown pre code { @apply bg-transparent p-0; }
-.markdown h1, .markdown h2, .markdown h3 { @apply font-semibold mt-3 mb-1; }
-.markdown ul { @apply list-disc pl-5 my-2; }
-.markdown ol { @apply list-decimal pl-5 my-2; }
-.markdown p { @apply my-2; }
-.markdown table { @apply border-collapse my-2; }
-.markdown th, .markdown td { @apply border border-border px-2 py-1; }
+.markdown pre code { background: transparent; padding: 0; }
+.markdown h1, .markdown h2, .markdown h3 { font-weight: 580; margin-top: 14px; margin-bottom: 6px; letter-spacing: -0.01em; }
+.markdown ul { list-style: disc; padding-left: 20px; margin: 8px 0; }
+.markdown ol { list-style: decimal; padding-left: 20px; margin: 8px 0; }
+.markdown p  { margin: 8px 0; }
+.markdown table { border-collapse: collapse; margin: 10px 0; }
+.markdown th, .markdown td { border: 1px solid hsl(0 0% 100% / 0.10); padding: 6px 10px; }
+
+/* Motion respect */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

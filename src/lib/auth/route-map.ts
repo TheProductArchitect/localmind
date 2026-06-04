@@ -29,6 +29,7 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   // --- Chat & conversations ---
   { path: "/api/chat", methods: ["POST"], role: "authenticated" },
   { path: "/api/chat/confirm", methods: ["POST"], role: "authenticated" },
+  { path: "/api/chat/resume", methods: ["GET", "POST"], role: "authenticated" },
   { path: "/api/conversations", methods: "ALL", role: "authenticated" },
   { path: "/api/conversations/search", methods: "ALL", role: "authenticated" },
   { path: "/api/conversations/*", methods: "ALL", role: "authenticated" },
@@ -153,6 +154,44 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/agent/routing-rules", methods: ["GET"], role: "authenticated" },
   { path: "/api/agent/routing-rules", methods: ["POST"], role: "owner" },
   { path: "/api/agent/routing-rules/*", methods: ["PATCH", "DELETE"], role: "owner" },
+
+  // --- V6.0 fleet foundation ---
+  // identity endpoint is owner-readable (it's part of the pairing flow — only
+  // the owner should be able to display the QR). The mTLS peer endpoints will
+  // ship in V6.1 with their own middleware that pre-empts the JWT check.
+  { path: "/api/fleet/identity", methods: ["GET"], role: "owner" },
+  { path: "/api/fleet/debug-envelope", methods: ["GET"], role: "owner" },
+  { path: "/api/fleet/debug-loopback", methods: ["GET"], role: "owner" },
+  { path: "/api/fleet/debug-pairing", methods: ["GET"], role: "owner" },
+  { path: "/api/fleet/debug-graph", methods: ["GET"], role: "owner" },
+  { path: "/api/fleet/debug-delegate", methods: ["GET"], role: "owner" },
+  { path: "/api/fleet/debug-placement", methods: ["GET"], role: "owner" },
+  { path: "/api/fleet/debug-knowledge", methods: ["GET"], role: "owner" },
+  { path: "/api/fleet/debug-tool-cache", methods: ["GET"], role: "owner" },
+  { path: "/api/fleet/debug-peer-knowledge", methods: ["GET"], role: "owner" },
+  { path: "/api/fleet/debug-voice-pi-mcp", methods: ["GET"], role: "owner" },
+  { path: "/api/fleet/debug-sora", methods: ["GET"], role: "owner" },
+  { path: "/api/fleet/debug-orchestration", methods: ["GET"], role: "owner" },
+  { path: "/api/fleet/debug-governor", methods: ["GET"], role: "owner" },
+  { path: "/api/fleet/debug-loop-guard", methods: ["GET"], role: "owner" },
+  { path: "/api/analytics", methods: ["GET"], role: "authenticated" },
+  { path: "/api/pulse", methods: ["GET"], role: "authenticated" },
+  { path: "/api/tools", methods: ["GET"], role: "authenticated" },
+
+  // V6.8: Task graphs UI surface.
+  { path: "/api/graphs", methods: ["GET"], role: "authenticated" },
+  { path: "/api/graphs/*", methods: ["GET", "DELETE"], role: "authenticated" },
+  { path: "/api/knowledge/share-policy", methods: ["GET"], role: "owner" },
+  { path: "/api/knowledge/share-policy/*", methods: ["GET", "PUT", "DELETE"], role: "owner" },
+  { path: "/api/knowledge/peer-search", methods: ["POST"], role: "authenticated" },
+  { path: "/api/audit/*", methods: ["GET"], role: "authenticated" },
+
+  // V6.2: Pairing flow + peers CRUD. All gated owner — fleet management is
+  // an admin operation by design.
+  { path: "/api/fleet/pair/start", methods: ["POST"], role: "owner" },
+  { path: "/api/fleet/pair/accept", methods: ["POST"], role: "owner" },
+  { path: "/api/fleet/peers", methods: ["GET"], role: "owner" },
+  { path: "/api/fleet/peers/*", methods: ["GET", "PATCH", "DELETE"], role: "owner" },
 ];
 
 const RANK: Record<RouteRole, number> = { public: 0, authenticated: 1, member: 2, owner: 3 };

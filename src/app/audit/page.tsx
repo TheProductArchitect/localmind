@@ -1,11 +1,22 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Button, Input, Badge, EmptyState } from "@/components/ui";
+import { toast } from "@/components/toast";
 
 type Row = {
   id: number; timestamp: number; action_type: string; tool_name: string;
   input: string; output_summary: string | null; status: string;
   approved_by: string; conversation_id: string | null;
+};
+
+type PeerVerification = {
+  peer_node_id: string;
+  direction: "inbound" | "outbound";
+  peer_audit_id: number;
+  ok: boolean;
+  chain_ok?: boolean;
+  reason?: string;
+  row_excerpt?: { action_type: string; tool_name: string; status: string; timestamp: number };
 };
 
 const TOOLS = ["", "filesystem", "web_search", "memory", "calendar", "email", "mac_automation", "browser"];
@@ -19,6 +30,7 @@ export default function AuditPage() {
   const [page, setPage] = useState(0);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [verify, setVerify] = useState<string | null>(null);
+  const [peerVerifications, setPeerVerifications] = useState<Record<number, { loading: boolean; data?: PeerVerification[]; note?: string }>>({});
   const PAGE = 50;
 
   async function load() {
@@ -37,13 +49,36 @@ export default function AuditPage() {
     setVerify(j.ok ? "Integrity verified — hash chain is unbroken." : `Tampering detected at row ${j.firstBadId}.`);
   }
 
+  async function verifyPeerChain(rowId: number) {
+    setPeerVerifications((cur) => ({ ...cur, [rowId]: { loading: true } }));
+    try {
+      const r = await fetch(`/api/audit/${rowId}/verify-peer`);
+      const j = await r.json();
+      setPeerVerifications((cur) => ({
+        ...cur,
+        [rowId]: { loading: false, data: j.verifications ?? [], note: j.note },
+      }));
+      if (!j.verifications?.length && j.note) {
+        toast(j.note);
+      }
+    } catch (e) {
+      setPeerVerifications((cur) => ({
+        ...cur,
+        [rowId]: { loading: false, note: (e as Error).message || "peer verify failed" },
+      }));
+    }
+  }
+
   const statusVariant = (s: string) =>
     s === "allowed" ? "success" : s === "denied" ? "destructive" : s === "failed" ? "destructive" : "outline";
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <div className="flex items-center gap-2 mb-4">
-        <h1 className="text-xl font-semibold">Audit Log</h1>
+    <div className="mx-auto max-w-6xl px-10 py-14">
+      <div className="flex items-end justify-between gap-6 mb-10">
+        <div>
+          <p className="lm-micro mb-2">Audit</p>
+          <h1 className="lm-display">Every action, traceable</h1>
+        </div>
         <div className="ml-auto flex gap-2 flex-wrap">
           <Input placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && load()} className="w-40 h-8" />
@@ -96,6 +131,60 @@ export default function AuditPage() {
                     <p className="font-medium">Output</p>
                     <pre className="overflow-x-auto whitespace-pre-wrap">{r.output_summary || "(none)"}</pre>
                   </div>
+                  {/* V6.4 cross-references — for rows linked to a peer's audit, show
+                      a button that verifies their chain over /api/audit/[id]/verify-peer. */}
+                  <div className="flex items-center gap-2 border-t pt-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={peerVerifications[r.id]?.loading}
+                      onClick={() => verifyPeerChain(r.id)}
+                    >
+                      {peerVerifications[r.id]?.loading ? "Verifying…" : "Show peer chain"}
+                    </Button>
+                    <span className="text-muted-foreground">
+                      Fetches the peer's audit row and confirms their hash chain is intact.
+                    </span>
+                  </div>
+                  {peerVerifications[r.id] && !peerVerifications[r.id].loading && (
+                    <div className="space-y-1">
+                      {peerVerifications[r.id].note && (
+                        <p className="text-muted-foreground italic">{peerVerifications[r.id].note}</p>
+                      )}
+                      {peerVerifications[r.id].data?.length === 0 && !peerVerifications[r.id].note && (
+                        <p className="text-muted-foreground italic">No peer cross-references on this row.</p>
+                      )}
+                      {peerVerifications[r.id].data?.map((v) => (
+                        <div
+                          key={`${v.peer_node_id}-${v.peer_audit_id}-${v.direction}`}
+                          className="rounded border bg-card px-2 py-1.5 flex items-start gap-2"
+                        >
+                          <Badge variant={v.ok ? (v.chain_ok !== false ? "success" : "warning") : "destructive"}>
+                            {v.direction}
+                          </Badge>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-mono text-[11px]">
+                              peer {v.peer_node_id.slice(0, 12)}… row #{v.peer_audit_id}
+                            </div>
+                            {v.row_excerpt && (
+                              <div className="text-muted-foreground">
+                                {v.row_excerpt.action_type} / {v.row_excerpt.tool_name} ({v.row_excerpt.status})
+                              </div>
+                            )}
+                            {!v.ok && v.reason && (
+                              <div className="text-destructive">{v.reason}</div>
+                            )}
+                            {v.ok && v.chain_ok === false && (
+                              <div className="text-amber-600">peer reports their chain is broken</div>
+                            )}
+                            {v.ok && v.chain_ok && (
+                              <div className="text-green-600">peer chain intact</div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

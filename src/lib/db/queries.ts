@@ -26,7 +26,10 @@ export type Settings = {
   auto_capture: number;
   api_token_hash: string | null;
   context_window: number;
+  agent_mode: AgentMode;
 };
+
+export type AgentMode = "auto" | "plan" | "ask";
 
 export function getSettings(): Settings {
   return getConfigDb().prepare("SELECT * FROM settings WHERE id=1").get() as Settings;

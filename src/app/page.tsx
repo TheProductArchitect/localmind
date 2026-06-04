@@ -1,14 +1,39 @@
 "use client";
+
+/**
+ * Chat — the gravitational center of LocalMind v2.
+ *
+ * Layout, in order from left to right:
+ *
+ *   [ Rail (in layout) ]  [ Conversations strip ]  [ Thread column ]  [ Sora rail ]
+ *
+ * Conversations strip is a quiet glass panel — no titles or chrome, just
+ * starred-or-recent chat names. The thread column is a centered 720px-max
+ * stream with hairline separation between turns. The Sora rail on the right
+ * carries the live <Orb/> whose state mirrors the streaming events:
+ *
+ *   idle      — not streaming
+ *   thinking  — streaming, no tool in flight
+ *   tool      — a tool call is running
+ *   spawn     — a `spawn_subagent*` tool is running (N satellites = subagent count)
+ *   suspended — loop guard has paused the conversation
+ *   error     — last event was an error (briefly)
+ *
+ * All streaming logic is preserved verbatim from the previous shell; only the
+ * presentation and the orb wiring are new.
+ */
+
 import { useEffect, useRef, useState, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Button, Input, Textarea, EmptyState } from "@/components/ui";
+import { Textarea } from "@/components/ui";
 import { ToolCallCard, type ToolCallState } from "@/components/chat/tool-call-card";
 import { ConfirmationCard, type ConfirmationState } from "@/components/chat/confirmation-card";
 import { MicButton, SpeakerButton, speak } from "@/components/chat/voice";
 import { toast } from "@/components/toast";
-import { Plus, Send, Trash2, Star, Download, RefreshCw, Copy, Volume2 } from "lucide-react";
+import { Orb, type OrbState } from "@/components/orb";
+import { Plus, Send, Trash2, Star, Copy, RefreshCw, Volume2, Download } from "lucide-react";
 
 type Conversation = { id: string; title: string; updated_at: number; starred: number };
 type ThreadItem =
@@ -29,6 +54,14 @@ function ChatInner() {
   const [model, setModel] = useState<string | null>(null);
   const [autoRead, setAutoRead] = useState(false);
   const [persona, setPersona] = useState("general");
+  const [agentMode, setAgentMode] = useState<"auto" | "plan" | "ask">("ask");
+
+  // v2 — orb live state. activeTools tracks tool calls still in flight so we
+  // can swing between "thinking" (none) and "tool"/"spawn" (one or more).
+  const [activeTools, setActiveTools] = useState<Record<string, string>>({});
+  const [orbErrorUntil, setOrbErrorUntil] = useState(0);
+  const [suspendedNotice, setSuspendedNotice] = useState<{ reason: string; tool: string } | null>(null);
+
   const threadRef = useRef<HTMLDivElement>(null);
 
   const loadConversations = useCallback(async () => {
@@ -42,10 +75,23 @@ function ChatInner() {
       .then((r) => r.json())
       .then((j) => {
         if (j.settings && !j.settings.onboarded) window.location.href = "/onboarding";
-        else setModel(j.settings?.active_model || null);
+        else {
+          setModel(j.settings?.active_model || null);
+          setAgentMode((j.settings?.agent_mode as "auto" | "plan" | "ask") || "ask");
+        }
       });
     loadConversations();
   }, [loadConversations]);
+
+  async function changeMode(next: "auto" | "plan" | "ask") {
+    setAgentMode(next);
+    await fetch("/api/settings", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent_mode: next }),
+    });
+    toast(`Mode → ${next}`, "success");
+  }
 
   useEffect(() => {
     if (searchParams.get("new") === "1") newConversation();
@@ -56,9 +102,20 @@ function ChatInner() {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
   }, [thread]);
 
+  // Auto-fade error state on the orb 1.5s after it fires.
+  useEffect(() => {
+    if (!orbErrorUntil) return;
+    const ms = orbErrorUntil - Date.now();
+    if (ms <= 0) return;
+    const t = setTimeout(() => setOrbErrorUntil(0), ms);
+    return () => clearTimeout(t);
+  }, [orbErrorUntil]);
+
+  // === Conversation CRUD ===
   async function openConversation(id: string) {
     setActiveId(id);
     setError(null);
+    setSuspendedNotice(null);
     const r = await fetch(`/api/conversations/${id}`);
     const j = await r.json();
     const items: ThreadItem[] = [];
@@ -68,14 +125,18 @@ function ChatInner() {
       else if (m.role === "tool") {
         try {
           const p = JSON.parse(m.content);
-          items.push({
-            kind: "tool",
-            tc: { id: p.id, toolName: p.name, status: p.status, input: p.input, result: { status: p.status, output: p.output } },
-          });
+          items.push({ kind: "tool", tc: { id: p.id, toolName: p.name, status: p.status, input: p.input, result: { status: p.status, output: p.output } } });
         } catch {}
       }
     }
     setThread(items);
+
+    // Check if this conversation is currently suspended.
+    fetch(`/api/chat/resume?conversation_id=${id}`)
+      .then((r) => r.json()).catch(() => null)
+      .then((j) => {
+        if (j?.suspended) setSuspendedNotice({ reason: j.reason ?? "Suspended", tool: j.tool ?? "" });
+      });
   }
 
   async function newConversation() {
@@ -84,6 +145,7 @@ function ChatInner() {
     await loadConversations();
     setActiveId(j.conversation.id);
     setThread([]);
+    setSuspendedNotice(null);
   }
 
   async function deleteConversation(id: string) {
@@ -106,6 +168,21 @@ function ChatInner() {
     loadConversations();
   }
 
+  async function resumeSuspended() {
+    if (!activeId) return;
+    const r = await fetch("/api/chat/resume", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversation_id: activeId }),
+    });
+    if (r.ok) {
+      setSuspendedNotice(null);
+      toast("Conversation resumed.");
+    } else {
+      toast("Could not resume — check the audit log.", "error");
+    }
+  }
+
   async function decide(toolCallId: string, decision: "allow" | "deny", pin?: string) {
     setThread((t) => t.filter((i) => !(i.kind === "confirmation" && i.c.toolCallId === toolCallId)));
     const r = await fetch("/api/chat/confirm", {
@@ -119,9 +196,11 @@ function ChatInner() {
     }
   }
 
+  // === Streaming ===
   async function streamChat(convId: string, body: any) {
     setStreaming(true);
     setError(null);
+    setActiveTools({});
     let lastEventId = 0;
     let gotDone = false;
     let attempt = 0;
@@ -169,24 +248,18 @@ function ChatInner() {
         try {
           await runOnce();
           if (gotDone) break;
-          // Stream ended without `done` — reconnect and replay.
-          if (attempt >= 4) {
-            setError("Your connection was interrupted. The response may be incomplete — use Regenerate.");
-            break;
-          }
+          if (attempt >= 4) { setError("Your connection was interrupted. Use Regenerate to retry."); break; }
           setError("Reconnecting…");
           await new Promise((r) => setTimeout(r, 1000));
         } catch {
-          if (attempt >= 4) {
-            setError("Connection lost. Make sure LocalMind and Ollama are running.");
-            break;
-          }
+          if (attempt >= 4) { setError("Connection lost. Make sure LocalMind and Ollama are running."); break; }
           await new Promise((r) => setTimeout(r, 1000));
         }
       }
       if (gotDone) setError(null);
     } finally {
       setStreaming(false);
+      setActiveTools({});
       loadConversations();
     }
   }
@@ -208,7 +281,6 @@ function ChatInner() {
   async function regenerate() {
     if (!activeId || streaming) return;
     setThread((t) => {
-      // remove trailing assistant/tool/confirmation items after last user
       let lastUser = -1;
       for (let i = t.length - 1; i >= 0; i--) if (t[i].kind === "user") { lastUser = i; break; }
       const kept = lastUser >= 0 ? t.slice(0, lastUser + 1) : t;
@@ -218,6 +290,17 @@ function ChatInner() {
   }
 
   function handleEvent(ev: any) {
+    if (ev.type === "tool_call_start") {
+      setActiveTools((m) => ({ ...m, [ev.toolCallId]: ev.toolName }));
+    } else if (ev.type === "tool_call_result") {
+      setActiveTools((m) => { const n = { ...m }; delete n[ev.toolCallId]; return n; });
+    } else if (ev.type === "loop_suspended") {
+      setSuspendedNotice({ reason: ev.reason ?? "Loop detected.", tool: ev.tool ?? "" });
+    } else if (ev.type === "error") {
+      setError(ev.message);
+      setOrbErrorUntil(Date.now() + 1500);
+    }
+
     setThread((t) => {
       const next = [...t];
       const lastAssistant = () => {
@@ -250,108 +333,166 @@ function ChatInner() {
           const idx = lastAssistant();
           if (idx >= 0) speak((next[idx] as any).content);
         }
-      } else if (ev.type === "error") {
-        setError(ev.message);
       }
       return next;
     });
   }
 
-  const visible = conversations.filter((c) =>
-    !search || c.title.toLowerCase().includes(search.toLowerCase())
-  );
+  // Derive the orb state from current activity.
+  const orbState: OrbState = (() => {
+    if (suspendedNotice) return "suspended";
+    if (orbErrorUntil > Date.now()) return "error";
+    const tools = Object.values(activeTools);
+    if (tools.some((t) => t.startsWith("spawn_subagent"))) return "spawn";
+    if (tools.length > 0) return "tool";
+    if (streaming) return "thinking";
+    return "idle";
+  })();
+  const spawnCount = Object.values(activeTools).filter((t) => t.startsWith("spawn_subagent")).length || 3;
+
+  const visible = conversations.filter((c) => !search || c.title.toLowerCase().includes(search.toLowerCase()));
   const lastAssistantHasContent =
-    thread.length > 0 && thread[thread.length - 1].kind === "assistant" &&
-    (thread[thread.length - 1] as any).content;
+    thread.length > 0 && thread[thread.length - 1].kind === "assistant" && (thread[thread.length - 1] as any).content;
 
   return (
-    <div className="flex h-full">
-      <div className="w-60 shrink-0 border-r flex flex-col bg-muted/20">
-        <div className="p-2 space-y-2">
-          <Button className="w-full" onClick={newConversation}>
-            <Plus className="h-4 w-4" /> New conversation
-          </Button>
-          <Input placeholder="Search conversations…" value={search}
-            onChange={(e) => setSearch(e.target.value)} className="h-8" />
-        </div>
-        <div className="flex-1 overflow-y-auto px-2">
+    <div className="lm-chat">
+      {/* Conversations strip */}
+      <aside className="lm-conv">
+        <button onClick={newConversation} className="lm-conv__new" data-pulse="true">
+          <Plus className="h-3.5 w-3.5" />
+          <span>New</span>
+        </button>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search…"
+          className="lm-conv__search"
+        />
+        <div className="lm-conv__list">
           {visible.length === 0 && (
-            <p className="text-xs text-muted-foreground p-2">No conversations.</p>
+            <p className="lm-body px-1" style={{ color: "hsl(0 0% 100% / 0.35)" }}>No conversations.</p>
           )}
           {visible.map((c) => (
             <div
               key={c.id}
-              className={`group flex items-center rounded-md px-2 py-1.5 text-sm cursor-pointer ${
-                activeId === c.id ? "bg-accent" : "hover:bg-accent/50"
-              }`}
               onClick={() => openConversation(c.id)}
+              className={`lm-conv__row ${activeId === c.id ? "is-active" : ""}`}
+              data-pulse="true"
             >
-              <button onClick={(e) => { e.stopPropagation(); toggleStar(c.id, c.starred); }}>
-                <Star className={`h-3.5 w-3.5 mr-1 ${c.starred ? "fill-amber-400 text-amber-400" : "text-muted-foreground"}`} />
+              <button
+                onClick={(e) => { e.stopPropagation(); toggleStar(c.id, c.starred); }}
+                aria-label={c.starred ? "Unstar" : "Star"}
+                className="lm-conv__star"
+              >
+                <Star className={`h-3.5 w-3.5 ${c.starred ? "fill-white" : ""}`} style={{ color: c.starred ? "white" : "hsl(0 0% 100% / 0.3)" }} />
               </button>
-              <span className="truncate flex-1">{c.title}</span>
-              <button className="opacity-0 group-hover:opacity-100"
-                onClick={(e) => { e.stopPropagation(); deleteConversation(c.id); }}>
-                <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="lm-conv__title">{c.title}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); deleteConversation(c.id); }}
+                aria-label="Delete"
+                className="lm-conv__del"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
               </button>
             </div>
           ))}
         </div>
-      </div>
+      </aside>
 
-      <div className="flex-1 flex flex-col">
-        <div className="border-b px-4 py-2 flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Model:</span>
-          <span className="font-medium">{model || "none selected"}</span>
-          <select
-            value={persona}
-            onChange={(e) => setPersona(e.target.value)}
-            aria-label="Select assistant persona"
-            className="ml-2 h-7 rounded border bg-background px-2 text-xs"
-          >
-            <option value="general">General assistant</option>
-            <option value="devpm">DevPM</option>
-          </select>
-          <button
-            onClick={() => setAutoRead((a) => !a)}
-            className={`ml-2 inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs ${autoRead ? "bg-accent" : "text-muted-foreground"}`}
-          >
-            <Volume2 className="h-3 w-3" /> Auto-read {autoRead ? "on" : "off"}
-          </button>
+      {/* Thread column */}
+      <section className="lm-thread">
+        <header className="lm-thread__head">
+          <div className="flex items-center gap-3">
+            <span className="lm-micro">Model</span>
+            <span className="lm-body" style={{ color: "hsl(0 0% 100% / 0.92)" }}>{model || "—"}</span>
+            <span className="lm-thread__sep" />
+            <select
+              value={persona}
+              onChange={(e) => setPersona(e.target.value)}
+              aria-label="Persona"
+              className="lm-thread__select"
+              data-pulse="false"
+            >
+              <option value="general">General</option>
+              <option value="devpm">DevPM</option>
+            </select>
+            <button
+              onClick={() => setAutoRead((a) => !a)}
+              className="lm-thread__toggle"
+              data-active={autoRead}
+            >
+              <Volume2 className="h-3 w-3" />
+              <span>Auto-read</span>
+            </button>
+            <span className="lm-thread__sep" />
+            <div className="lm-mode" role="group" aria-label="Agent mode">
+              {(["auto", "plan", "ask"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => changeMode(m)}
+                  className="lm-mode__seg"
+                  data-active={agentMode === m}
+                  data-pulse="true"
+                  title={
+                    m === "auto" ? "Auto — Sora may act without confirmation" :
+                    m === "plan" ? "Plan — read-only; mutations require leaving plan" :
+                    "Ask — confirms before mutations"
+                  }
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
           {activeId && (
-            <a className="ml-auto" href={`/api/conversations/${activeId}/export`}>
-              <Button size="sm" variant="ghost"><Download className="h-3.5 w-3.5" /> Export</Button>
+            <a href={`/api/conversations/${activeId}/export`} className="lm-thread__export" data-pulse="true">
+              <Download className="h-3.5 w-3.5" />
+              <span className="lm-micro">Export</span>
             </a>
           )}
-        </div>
+        </header>
 
-        <div ref={threadRef} className="flex-1 overflow-y-auto p-6">
-          {thread.length === 0 && (
-            <EmptyState
-              title="Start a conversation"
-              hint="Ask anything, or try: “What files are in my approved folders?” or “Search the web for the latest on Apple Silicon.”"
-            />
-          )}
-          <div className="max-w-3xl mx-auto">
+        {suspendedNotice && (
+          <div className="lm-suspend" role="alert">
+            <span className="lm-micro" style={{ color: "hsl(0 0% 100% / 0.9)" }}>Suspended</span>
+            <span className="lm-body" style={{ color: "hsl(0 0% 100% / 0.7)" }}>
+              {suspendedNotice.reason}
+            </span>
+            <button onClick={resumeSuspended} className="lm-suspend__btn" data-pulse="true">
+              <span className="lm-glow">Resume</span>
+            </button>
+          </div>
+        )}
+
+        <div ref={threadRef} className="lm-thread__scroll">
+          <div className="mx-auto" style={{ maxWidth: 720 }}>
+            {thread.length === 0 && (
+              <div className="lm-empty">
+                <Orb state="idle" size={120} />
+                <p className="lm-display mt-10">Ask anything.</p>
+                <p className="lm-body mt-2" style={{ color: "hsl(0 0% 100% / 0.5)" }}>
+                  Everything runs on this machine. Nothing leaves the box.
+                </p>
+              </div>
+            )}
             {thread.map((item, i) => {
               if (item.kind === "user")
                 return (
-                  <div key={i} className="my-3 flex justify-end">
-                    <div className="bg-primary text-primary-foreground rounded-lg px-3 py-2 text-sm max-w-[80%] whitespace-pre-wrap">
-                      {item.content}
-                    </div>
+                  <div key={i} className="lm-turn lm-turn--user">
+                    <div className="lm-bubble">{item.content}</div>
                   </div>
                 );
               if (item.kind === "assistant")
                 return item.content ? (
-                  <div key={i} className="group my-3">
-                    <div className="markdown text-sm">
+                  <div key={i} className="lm-turn lm-turn--assistant group">
+                    <div className="markdown">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.content}</ReactMarkdown>
                     </div>
-                    <div className="opacity-0 group-hover:opacity-100 flex items-center gap-2 mt-1">
+                    <div className="lm-turn__actions">
                       <button
-                        className="text-xs text-muted-foreground flex items-center gap-1"
                         onClick={() => { navigator.clipboard.writeText(item.content); toast("Copied"); }}
+                        className="lm-turn__action"
+                        data-pulse="true"
                       >
                         <Copy className="h-3 w-3" /> Copy
                       </button>
@@ -359,53 +500,321 @@ function ChatInner() {
                     </div>
                   </div>
                 ) : null;
-              if (item.kind === "tool") return <ToolCallCard key={i} tc={item.tc} />;
+              if (item.kind === "tool") return <div key={i} className="lm-turn"><ToolCallCard tc={item.tc} /></div>;
               if (item.kind === "confirmation")
-                return <ConfirmationCard key={i} c={item.c} onDecide={(d, p) => decide(item.c.toolCallId, d, p)} />;
+                return <div key={i} className="lm-turn"><ConfirmationCard c={item.c} onDecide={(d, p) => decide(item.c.toolCallId, d, p)} /></div>;
               return null;
             })}
             {!streaming && lastAssistantHasContent && (
-              <button
-                onClick={regenerate}
-                className="text-xs text-muted-foreground flex items-center gap-1 mt-2"
-              >
+              <button onClick={regenerate} className="lm-regen" data-pulse="true">
                 <RefreshCw className="h-3 w-3" /> Regenerate
               </button>
             )}
-            {error && (
-              <div className="my-3 rounded-md border border-destructive bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {error}
-              </div>
-            )}
+            {error && <div className="lm-error">{error}</div>}
           </div>
         </div>
 
-        <div className="border-t p-3">
-          <div className="max-w-3xl mx-auto flex gap-2">
+        <footer className="lm-composer">
+          <div className="mx-auto flex items-end gap-2" style={{ maxWidth: 720 }}>
             <Textarea
               rows={1}
-              placeholder="Message LocalMind…  (Enter to send, Shift+Enter for newline)"
+              placeholder="Message Sora…"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-              }}
-              className="resize-none"
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+              className="lm-composer__input"
+              data-pulse="false"
             />
             <MicButton onText={(t) => setInput(t)} />
-            <Button onClick={send} disabled={streaming || !input.trim()}>
+            <button
+              onClick={send}
+              disabled={streaming || !input.trim()}
+              className="lm-composer__send"
+              aria-label="Send"
+              data-pulse="true"
+            >
               <Send className="h-4 w-4" />
-            </Button>
+            </button>
           </div>
+        </footer>
+      </section>
+
+      {/* Sora rail (right) */}
+      <aside className="lm-sora">
+        <div className="lm-sora__top">
+          <Orb state={orbState} size={56} satellites={spawnCount} ariaLabel={`Sora ${orbState}`} />
+          <p className="lm-micro mt-4 text-center">Sora</p>
+          <p className="lm-body mt-1 text-center" style={{ color: "hsl(0 0% 100% / 0.5)", fontSize: 11 }}>
+            {orbStateLabel(orbState)}
+          </p>
         </div>
-      </div>
+        {Object.entries(activeTools).length > 0 && (
+          <div className="lm-sora__tools">
+            <p className="lm-micro mb-2">In flight</p>
+            {Object.entries(activeTools).map(([id, name]) => (
+              <div key={id} className="lm-sora__tool">{name}</div>
+            ))}
+          </div>
+        )}
+      </aside>
+
+      <style jsx>{`
+        .lm-chat { display: grid; grid-template-columns: 240px 1fr 220px; height: 100%; }
+        @media (max-width: 1100px) { .lm-chat { grid-template-columns: 200px 1fr 0; } .lm-sora { display: none; } }
+
+        /* === Conversations strip === */
+        .lm-conv {
+          display: flex; flex-direction: column;
+          border-right: 1px solid hsl(0 0% 100% / 0.06);
+          background: hsl(234 22% 4% / 0.4);
+          backdrop-filter: blur(14px);
+          padding: 16px 10px;
+          gap: 8px;
+          overflow: hidden;
+        }
+        .lm-conv__new {
+          display: inline-flex; align-items: center; justify-content: center;
+          gap: 6px; padding: 8px 10px;
+          background: hsl(0 0% 100% / 0.04);
+          border: 1px solid hsl(0 0% 100% / 0.08);
+          border-radius: 12px;
+          color: hsl(0 0% 100% / 0.9);
+          font-size: 12px; letter-spacing: -0.005em;
+          transition: background var(--lm-dur-micro) var(--lm-ease-micro);
+        }
+        .lm-conv__new:hover { background: hsl(0 0% 100% / 0.08); }
+        .lm-conv__search {
+          background: transparent;
+          border: 1px solid hsl(0 0% 100% / 0.08);
+          border-radius: 10px;
+          padding: 6px 10px;
+          color: hsl(0 0% 100% / 0.9);
+          font-size: 12px;
+          outline: none;
+        }
+        .lm-conv__search:focus { border-color: hsl(0 0% 100% / 0.2); }
+        .lm-conv__list { flex: 1; overflow-y: auto; }
+        .lm-conv__row {
+          display: grid;
+          grid-template-columns: 16px 1fr 16px;
+          align-items: center;
+          gap: 8px;
+          padding: 7px 6px;
+          border-radius: 8px;
+          cursor: pointer;
+          color: hsl(0 0% 100% / 0.72);
+          font-size: 12.5px;
+        }
+        .lm-conv__row:hover { background: hsl(0 0% 100% / 0.04); }
+        .lm-conv__row.is-active { background: hsl(0 0% 100% / 0.06); color: hsl(0 0% 100% / 0.96); }
+        .lm-conv__star { display: inline-flex; }
+        .lm-conv__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .lm-conv__del { opacity: 0; color: hsl(0 0% 100% / 0.4); }
+        .lm-conv__row:hover .lm-conv__del { opacity: 1; }
+
+        /* === Thread === */
+        .lm-thread { display: flex; flex-direction: column; min-width: 0; height: 100%; }
+        .lm-thread__head {
+          display: flex; align-items: center; justify-content: space-between;
+          padding: 14px 28px;
+          border-bottom: 1px solid hsl(0 0% 100% / 0.06);
+        }
+        .lm-thread__sep { width: 1px; height: 14px; background: hsl(0 0% 100% / 0.10); margin: 0 4px; }
+        .lm-thread__select, .lm-thread__toggle, .lm-thread__export {
+          font-size: 11.5px; letter-spacing: -0.005em;
+          color: hsl(0 0% 100% / 0.7);
+          background: transparent;
+          border: 1px solid hsl(0 0% 100% / 0.08);
+          border-radius: 8px; padding: 4px 10px;
+          display: inline-flex; align-items: center; gap: 6px;
+          transition: background var(--lm-dur-micro) var(--lm-ease-micro);
+        }
+        .lm-thread__toggle[data-active="true"] {
+          background: hsl(0 0% 100% / 0.06); color: hsl(0 0% 100% / 0.96);
+        }
+        .lm-thread__select:hover, .lm-thread__toggle:hover, .lm-thread__export:hover {
+          background: hsl(0 0% 100% / 0.06);
+        }
+        .lm-thread__select option { background: hsl(234 18% 8%); }
+
+        /* Agent mode — segmented control. Auto state gets a soft glow so the
+           user is always aware Sora is operating with full autonomy. */
+        .lm-mode {
+          display: inline-flex; align-items: center;
+          padding: 2px;
+          border: 1px solid hsl(0 0% 100% / 0.08);
+          border-radius: 9999px;
+          background: hsl(0 0% 100% / 0.03);
+        }
+        .lm-mode__seg {
+          padding: 3px 10px;
+          font-size: 11px; letter-spacing: 0.02em;
+          text-transform: uppercase;
+          color: hsl(0 0% 100% / 0.5);
+          border-radius: 9999px;
+          background: transparent;
+          border: none;
+          transition: background var(--lm-dur-micro) var(--lm-ease-micro),
+                      color      var(--lm-dur-micro) var(--lm-ease-micro),
+                      box-shadow var(--lm-dur-micro) var(--lm-ease-micro);
+        }
+        .lm-mode__seg:hover { color: hsl(0 0% 100% / 0.9); }
+        .lm-mode__seg[data-active="true"] {
+          background: hsl(0 0% 100% / 0.10);
+          color: hsl(0 0% 100%);
+        }
+        /* Auto-on flag — soft glow nudges the eye that Sora is unsupervised. */
+        .lm-mode__seg[data-active="true"]:first-child {
+          box-shadow: 0 0 14px hsl(0 0% 100% / 0.35);
+        }
+
+        .lm-thread__scroll { flex: 1; overflow-y: auto; padding: 40px 28px 60px; }
+
+        .lm-empty {
+          display: flex; flex-direction: column; align-items: center;
+          padding: 60px 0;
+        }
+
+        .lm-turn { padding: 14px 0; }
+        .lm-turn--user { display: flex; justify-content: flex-end; }
+        .lm-turn--user .lm-bubble {
+          max-width: 80%;
+          padding: 10px 14px;
+          border-radius: 14px 14px 4px 14px;
+          background: hsl(0 0% 100% / 0.94);
+          color: hsl(234 22% 4%);
+          font-size: 14px; letter-spacing: -0.005em;
+          white-space: pre-wrap;
+        }
+        .lm-turn--assistant { padding-right: 24px; }
+        .lm-turn__actions {
+          display: flex; align-items: center; gap: 10px;
+          margin-top: 8px;
+          opacity: 0;
+          transition: opacity var(--lm-dur-micro) var(--lm-ease-micro);
+        }
+        .lm-turn--assistant:hover .lm-turn__actions { opacity: 1; }
+        .lm-turn__action {
+          display: inline-flex; align-items: center; gap: 4px;
+          font-size: 11px; color: hsl(0 0% 100% / 0.4);
+        }
+        .lm-turn__action:hover { color: hsl(0 0% 100% / 0.8); }
+
+        .lm-regen {
+          display: inline-flex; align-items: center; gap: 6px;
+          font-size: 11px; color: hsl(0 0% 100% / 0.5);
+          margin-top: 8px;
+        }
+        .lm-regen:hover { color: hsl(0 0% 100% / 0.9); }
+
+        .lm-error {
+          margin: 12px 0;
+          padding: 10px 14px;
+          border: 1px solid hsl(0 100% 70% / 0.3);
+          border-radius: 10px;
+          background: hsl(0 100% 50% / 0.05);
+          color: hsl(0 100% 82%);
+          font-size: 13px;
+        }
+
+        /* === Suspended banner === */
+        .lm-suspend {
+          display: flex; align-items: center; gap: 14px;
+          margin: 16px 28px 0;
+          padding: 10px 14px;
+          border: 1px solid hsl(0 0% 100% / 0.18);
+          border-radius: 10px;
+          background: hsl(0 0% 100% / 0.03);
+        }
+        .lm-suspend__btn {
+          margin-left: auto;
+          padding: 4px 12px;
+          border-radius: 8px;
+          background: hsl(0 0% 100% / 0.08);
+          border: 1px solid hsl(0 0% 100% / 0.16);
+          font-size: 12px;
+          color: hsl(0 0% 100% / 0.96);
+        }
+        .lm-suspend__btn:hover { background: hsl(0 0% 100% / 0.14); }
+
+        /* === Composer === */
+        .lm-composer {
+          padding: 18px 28px 22px;
+          border-top: 1px solid hsl(0 0% 100% / 0.06);
+        }
+        .lm-composer :global(.lm-composer__input) {
+          flex: 1;
+          background: hsl(0 0% 100% / 0.04);
+          border: 1px solid hsl(0 0% 100% / 0.10);
+          border-radius: 14px;
+          padding: 12px 14px;
+          color: hsl(0 0% 100% / 0.96);
+          font-size: 14px; line-height: 22px;
+          resize: none;
+          outline: none;
+          min-height: 46px;
+          max-height: 200px;
+        }
+        .lm-composer :global(.lm-composer__input:focus) {
+          border-color: hsl(0 0% 100% / 0.24);
+          background: hsl(0 0% 100% / 0.06);
+        }
+        .lm-composer__send {
+          width: 46px; height: 46px;
+          display: inline-flex; align-items: center; justify-content: center;
+          background: hsl(0 0% 100%);
+          color: hsl(234 22% 4%);
+          border-radius: 14px;
+          transition: opacity var(--lm-dur-micro) var(--lm-ease-micro);
+        }
+        .lm-composer__send:disabled { opacity: 0.3; }
+        .lm-composer__send:not(:disabled):hover {
+          box-shadow: 0 0 20px hsl(0 0% 100% / 0.4);
+        }
+
+        /* === Sora rail === */
+        .lm-sora {
+          border-left: 1px solid hsl(0 0% 100% / 0.06);
+          background: hsl(234 22% 4% / 0.4);
+          backdrop-filter: blur(14px);
+          padding: 28px 16px;
+          display: flex; flex-direction: column;
+          gap: 24px;
+          overflow-y: auto;
+        }
+        .lm-sora__top { display: flex; flex-direction: column; align-items: center; padding-top: 12px; }
+        .lm-sora__tools {
+          border-top: 1px solid hsl(0 0% 100% / 0.06);
+          padding-top: 14px;
+        }
+        .lm-sora__tool {
+          padding: 6px 10px;
+          font-size: 11px;
+          color: hsl(0 0% 100% / 0.8);
+          border: 1px solid hsl(0 0% 100% / 0.10);
+          border-radius: 8px;
+          margin-bottom: 6px;
+          font-family: "SF Mono", ui-monospace, monospace;
+        }
+      `}</style>
     </div>
   );
 }
 
+function orbStateLabel(s: OrbState): string {
+  return {
+    idle: "Idle",
+    thinking: "Thinking…",
+    tool: "Running a tool",
+    spawn: "Coordinating",
+    suspended: "Suspended",
+    error: "Recovering",
+  }[s];
+}
+
 export default function ChatPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading…</div>}>
+    <Suspense fallback={<div className="p-6 lm-body" style={{ color: "hsl(0 0% 100% / 0.5)" }}>Loading…</div>}>
       <ChatInner />
     </Suspense>
   );

@@ -9,6 +9,11 @@ export const memoryTool: Tool = {
     if (i.operation === "delete") return `Forget memory item: ${i.key}`;
     return "Read all memory";
   },
+  version: "1",
+  // Reads are cacheable; writes/deletes mutate state so they must always run.
+  // A cached read goes stale when a subsequent write happens, but LRU
+  // eviction bounds the window and most read sequences are within one turn.
+  cacheable: (i) => i.operation === "read",
   definition: {
     name: "memory",
     description:

@@ -51,8 +51,11 @@ export default function DevPmPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-6 space-y-4">
-      <h1 className="text-xl font-semibold">DevPM</h1>
+    <div className="mx-auto max-w-5xl px-10 py-14 space-y-6">
+      <div className="mb-2">
+        <p className="lm-micro mb-2">DevPM</p>
+        <h1 className="lm-display">Codebases Sora knows</h1>
+      </div>
       <p className="text-sm text-muted-foreground">
         Register codebases so the DevPM persona (switch to it in the chat toolbar) is aware of them.
       </p>

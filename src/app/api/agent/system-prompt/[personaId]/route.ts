@@ -3,7 +3,7 @@ import { z } from "zod";
 import { currentUser } from "@/lib/auth/identity";
 import { getPersona } from "@/lib/db/personas";
 import { listBlocks, replaceBlocks, type BlockInput } from "@/lib/db/system-prompt-blocks";
-import { assembleSystemPrompt } from "@/lib/agent/assemble-system-prompt";
+import { assembleSystemPrompt, renderBuiltinPublic } from "@/lib/agent/assemble-system-prompt";
 
 export const runtime = "nodejs";
 
@@ -18,6 +18,20 @@ export async function GET(req: NextRequest, { params }: { params: { personaId: s
       userName: user?.display_name,
     });
     return NextResponse.json(result);
+  }
+
+  // ?defaults=1 — return the auto-rendered text for every built-in block so
+  // the editor can show the user what would be sent if they leave the block
+  // un-overridden, and let them copy it as a starting point for customization.
+  if (req.nextUrl.searchParams.get("defaults") === "1") {
+    const user = currentUser(req);
+    const ctx = { userId: user?.id, userName: user?.display_name };
+    const builtinNames = ["identity", "permissions", "tools", "memory", "date_context"];
+    const defaults: Record<string, string> = {};
+    for (const name of builtinNames) {
+      defaults[name] = renderBuiltinPublic(name, params.personaId, ctx);
+    }
+    return NextResponse.json({ defaults });
   }
 
   return NextResponse.json({ persona, blocks: listBlocks(params.personaId) });

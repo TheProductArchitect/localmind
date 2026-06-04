@@ -24,6 +24,8 @@ export const datastoreTool: Tool = {
     if (i.operation === "delete") return `Delete record ${i.record_id} from "${i.table}"`;
     return `Datastore: ${i.operation}`;
   },
+  version: "1",
+  cacheable: (i) => i.operation === "get" || i.operation === "list_tables",
   definition: {
     name: "datastore",
     description:

@@ -9,6 +9,11 @@ import { knowledgeTool } from "./knowledge";
 import { devpmTool } from "./devpm";
 import { datastoreTool } from "./datastore";
 import { spreadsheetTool } from "./spreadsheet";
+import { peerKnowledgeTool } from "./peer-knowledge";
+import { piCodeTool } from "./pi-code";
+import { spawnSubagentTool, spawnSubagentsParallelTool } from "./subagent";
+import { checkResourcesTool } from "./check-resources";
+import { timeTool } from "./time";
 import { getMcpTools } from "./mcp";
 import type { Tool } from "./types";
 
@@ -24,6 +29,12 @@ const BUILTIN: Tool[] = [
   devpmTool,
   datastoreTool,
   spreadsheetTool,
+  peerKnowledgeTool,
+  piCodeTool,
+  checkResourcesTool,
+  timeTool,
+  spawnSubagentTool,
+  spawnSubagentsParallelTool,
 ];
 
 export function listBuiltinTools(): Tool[] {

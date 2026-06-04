@@ -55,6 +55,55 @@ else
   say "⚙️  PM2 already installed."
 fi
 
+# 4b. pi-coding-agent (https://pi.dev) — wraps as the `pi_code` agent tool.
+if ! command -v pi >/dev/null 2>&1; then
+  say "🥧  Installing pi-coding-agent..."
+  npm install -g --ignore-scripts @earendil-works/pi-coding-agent >> "$LOG" 2>&1 \
+    || say "⚠️  pi-coding-agent install failed — pi_code agent tool will surface a clear setup error until you re-run install."
+else
+  say "🥧  pi-coding-agent already installed."
+fi
+
+# 4c. Voice — whisper.cpp + ffmpeg for local press-to-talk transcription.
+if ! command -v whisper-cli >/dev/null 2>&1; then
+  say "🎙️  Installing whisper.cpp..."
+  brew install whisper-cpp >> "$LOG" 2>&1 \
+    || say "⚠️  whisper.cpp install failed — the mic button will fall back to a clear error message."
+else
+  say "🎙️  whisper.cpp already installed."
+fi
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  say "🎬 Installing ffmpeg (for STT audio conversion)..."
+  brew install ffmpeg >> "$LOG" 2>&1 \
+    || say "⚠️  ffmpeg install failed — STT will surface a clear error until ffmpeg is on PATH."
+else
+  say "🎬 ffmpeg already installed."
+fi
+
+# 4d. Whisper model — base.en is ~150MB and balances speed/quality on Apple Silicon.
+MODELS_DIR="$LOG_DIR/models"
+WHISPER_MODEL="$MODELS_DIR/ggml-base.en.bin"
+if [ ! -f "$WHISPER_MODEL" ]; then
+  say "🧠 Downloading Whisper base.en model (~150MB, one-time)..."
+  mkdir -p "$MODELS_DIR"
+  curl -fsSL "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin" \
+    -o "$WHISPER_MODEL" 2>>"$LOG" \
+    && say "✅ Whisper model installed at $WHISPER_MODEL." \
+    || say "⚠️  Whisper model download failed — set up later via 'curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin -o $WHISPER_MODEL'."
+fi
+
+# 4e. Python openai/whisper for batch STT — heavier, higher-quality, GPU-aware.
+# Optional — only attempted if Python + pip are available. The /api/voice/stt-batch
+# endpoint detects whether `whisper` is on PATH and surfaces a clear hint otherwise.
+if command -v python3 >/dev/null 2>&1 && command -v pip3 >/dev/null 2>&1; then
+  if ! command -v whisper >/dev/null 2>&1; then
+    say "🎙️  Installing openai/whisper for batch transcription (will take a minute)..."
+    pip3 install -q --user --upgrade openai-whisper >> "$LOG" 2>&1 \
+      && say "✅ openai/whisper installed (CPU mode by default; GPU auto-detected if torch+CUDA available)." \
+      || say "⚠️  openai/whisper install failed — batch STT will surface an install hint until 'pip3 install --user openai-whisper' completes."
+  fi
+fi
+
 # 5. Copy app files
 say "📦 Copying LocalMind to $APP_DIR..."
 mkdir -p "$APP_DIR"

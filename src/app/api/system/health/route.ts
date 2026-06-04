@@ -16,9 +16,15 @@ function diskUsage(): { used: number; total: number } {
 }
 
 async function ollamaStatus(): Promise<string> {
+  // Hit the real `/api/tags` endpoint and verify the response shape (a
+  // `models` array). A port that responds but isn't ollama — a stale proxy,
+  // an HTTP error body, an upgraded WebSocket — should read as stopped.
   try {
-    const r = await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(2000) });
-    return r.ok ? "running" : "error";
+    const r = await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(1500) });
+    if (!r.ok) return "stopped";
+    const j = (await r.json().catch(() => null)) as { models?: unknown } | null;
+    if (j && Array.isArray(j.models)) return "running";
+    return "stopped";
   } catch {
     return "stopped";
   }

@@ -54,6 +54,61 @@ else
   say "⚙️  PM2 already installed."
 fi
 
+# 3b. pi-coding-agent (https://pi.dev) — wraps as the `pi_code` agent tool.
+if ! command -v pi >/dev/null 2>&1; then
+  say "🥧  Installing pi-coding-agent..."
+  need_sudo npm install -g --ignore-scripts @earendil-works/pi-coding-agent >> "$LOG" 2>&1 \
+    || say "⚠️  pi-coding-agent install failed — pi_code agent tool will surface a clear setup error until you re-run install."
+else
+  say "🥧  pi-coding-agent already installed."
+fi
+
+# 3c. Voice: ffmpeg from apt is always available; whisper.cpp ships no
+# apt package, so we build from source via cmake. Skip both if cmake is
+# unavailable — the STT route will surface a clear error.
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  say "🎬 Installing ffmpeg..."
+  need_sudo apt-get install -y ffmpeg >> "$LOG" 2>&1 \
+    || say "⚠️  ffmpeg install failed — voice features will surface a clear error."
+fi
+if ! command -v whisper-cli >/dev/null 2>&1; then
+  if command -v cmake >/dev/null 2>&1 && command -v g++ >/dev/null 2>&1; then
+    say "🎙️  Building whisper.cpp from source (~3 minutes)..."
+    BUILD_DIR="/tmp/whisper-cpp-build"
+    rm -rf "$BUILD_DIR"
+    git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git "$BUILD_DIR" >> "$LOG" 2>&1 \
+      && ( cd "$BUILD_DIR" && cmake -B build >> "$LOG" 2>&1 && cmake --build build --config Release -j >> "$LOG" 2>&1 \
+        && need_sudo cp "build/bin/whisper-cli" /usr/local/bin/whisper-cli >> "$LOG" 2>&1 ) \
+      && say "✅ whisper.cpp built and installed." \
+      || say "⚠️  whisper.cpp build failed — voice features will surface a clear error. See $LOG."
+  else
+    say "⚠️  cmake or g++ not available — skipping whisper.cpp. Install build-essential cmake and re-run."
+  fi
+fi
+
+# 3d. Whisper model — base.en is ~150MB and balances speed/quality.
+MODELS_DIR="$LOG_DIR/models"
+WHISPER_MODEL="$MODELS_DIR/ggml-base.en.bin"
+if [ ! -f "$WHISPER_MODEL" ]; then
+  say "🧠 Downloading Whisper base.en model (~150MB, one-time)..."
+  mkdir -p "$MODELS_DIR"
+  curl -fsSL "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin" \
+    -o "$WHISPER_MODEL" 2>>"$LOG" \
+    && say "✅ Whisper model installed at $WHISPER_MODEL." \
+    || say "⚠️  Whisper model download failed — set up later."
+fi
+
+# 3e. openai/whisper for batch / higher-quality / GPU. GPU users benefit most
+# since the Python whisper uses torch + CUDA automatically when available.
+if command -v python3 >/dev/null 2>&1 && command -v pip3 >/dev/null 2>&1; then
+  if ! command -v whisper >/dev/null 2>&1; then
+    say "🎙️  Installing openai/whisper for batch transcription..."
+    pip3 install -q --user --upgrade openai-whisper >> "$LOG" 2>&1 \
+      && say "✅ openai/whisper installed." \
+      || say "⚠️  openai/whisper install failed — batch STT will surface an install hint until 'pip3 install --user openai-whisper' completes."
+  fi
+fi
+
 # 4. Copy app files
 say "📦 Copying LocalMind to $APP_DIR..."
 mkdir -p "$APP_DIR"

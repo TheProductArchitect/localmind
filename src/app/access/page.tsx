@@ -1,29 +1,61 @@
 "use client";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Button, Card, Input, Badge, EmptyState } from "@/components/ui";
 import { toast } from "@/components/toast";
 import { startRegistration } from "@simplewebauthn/browser";
 
-const TABS = ["Users", "Sessions", "My Passkeys"];
+type AccessTab = "Sessions" | "Passkeys" | "Users";
 
 export default function AccessPage() {
-  const [tab, setTab] = useState("Users");
   const [me, setMe] = useState<any>(null);
-  useEffect(() => { fetch("/api/auth/me").then((r) => r.json()).then((j) => setMe(j.user)); }, []);
+  const [settings, setSettings] = useState<{ require_login?: number; guest_mode?: number } | null>(null);
+  const [tab, setTab] = useState<AccessTab>("Sessions");
+
+  useEffect(() => {
+    fetch("/api/auth/me").then((r) => r.json()).then((j) => setMe(j.user));
+    fetch("/api/settings").then((r) => r.json()).then((j) => setSettings(j.settings || {})).catch(() => setSettings({}));
+  }, []);
+
+  // "Login disabled" mode: require_login=0 means the box runs without auth.
+  // In that case Users + Sessions are essentially empty by design — surface
+  // a clear explanation and hide the noisy tabs.
+  const loginRequired = !!settings?.require_login;
+  const tabs: AccessTab[] = loginRequired ? ["Sessions", "Passkeys", "Users"] : ["Sessions", "Passkeys"];
+
   return (
-    <div className="h-full overflow-y-auto p-6">
-      <h1 className="text-xl font-semibold mb-3">Access Control</h1>
-      <div className="flex gap-2 mb-4">
-        {TABS.map((t) => (
-          <button key={t} onClick={() => setTab(t)}
-            className={`rounded-full px-3 py-1 text-sm border ${tab === t ? "bg-primary text-primary-foreground" : "hover:bg-accent"}`}>
-            {t}
-          </button>
-        ))}
+    <div className="mx-auto max-w-5xl px-10 py-14">
+      <div className="mb-10">
+        <p className="lm-micro mb-2">Access</p>
+        <h1 className="lm-display">{loginRequired ? "Users & sessions" : "Sessions"}</h1>
+        {!loginRequired && (
+          <p className="lm-body mt-3 max-w-xl" style={{ color: "hsl(0 0% 100% / 0.55)" }}>
+            Login isn&apos;t required on this box — anyone with local access can use Sora.
+            Multi-user accounts only matter when you turn login on in{" "}
+            <Link href="/settings" className="underline" style={{ borderBottom: "1px solid hsl(0 0% 100% / 0.4)" }}>
+              Settings → Network
+            </Link>.
+          </p>
+        )}
       </div>
-      {tab === "Users" && <UsersTab isOwner={me?.role === "owner"} />}
-      {tab === "Sessions" && <SessionsTab />}
-      {tab === "My Passkeys" && <PasskeysTab />}
+
+      {settings && (
+        <>
+          <div className="lm-tabs mb-8">
+            {tabs.map((t) => {
+              const active = tab === t;
+              return (
+                <button key={t} onClick={() => setTab(t)} className={`lm-tab ${active ? "is-active" : ""}`} data-pulse="true">
+                  {t}
+                </button>
+              );
+            })}
+          </div>
+          {tab === "Sessions" && <SessionsTab />}
+          {tab === "Passkeys" && <PasskeysTab />}
+          {tab === "Users"    && <UsersTab isOwner={me?.role === "owner"} />}
+        </>
+      )}
     </div>
   );
 }

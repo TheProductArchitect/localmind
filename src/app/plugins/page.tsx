@@ -131,10 +131,12 @@ export default function PluginsPage() {
   ) || [];
 
   return (
-    <div className="h-full overflow-y-auto p-6 max-w-5xl space-y-4">
-      <div className="flex items-center gap-2">
-        <Package className="h-5 w-5" />
-        <h1 className="text-xl font-semibold flex-1">Plugin Marketplace</h1>
+    <div className="mx-auto max-w-5xl px-10 py-14 space-y-6">
+      <div className="flex items-end justify-between gap-6 mb-2">
+        <div>
+          <p className="lm-micro mb-2">Plugins</p>
+          <h1 className="lm-display">Extend Sora</h1>
+        </div>
         <input
           placeholder="Search plugins…"
           value={filter}

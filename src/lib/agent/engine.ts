@@ -27,6 +27,7 @@ export type SSEEvent =
   | { type: "confirmation_timeout"; toolCallId: string }
   | { type: "done"; conversationId: string; title: string; tokenCount: number }
   | { type: "context_compressed" }
+  | { type: "loop_suspended"; tool: string; repeats: number; reason: string }
   | { type: "error"; message: string; code: string };
 
 const MAX_ITERATIONS = 12;
@@ -73,11 +74,38 @@ export async function* runAgent(
   conversationId: string,
   userMessage: string,
   signal: AbortSignal,
-  opts?: { regenerate?: boolean; channelMode?: boolean; systemPrefix?: string }
+  opts?: {
+    regenerate?: boolean;
+    channelMode?: boolean;
+    systemPrefix?: string;
+    /** Merged into the spawned agent_processes row's metadata. Used by
+     *  spawn_subagent / spawn_subagents_parallel to tag children with
+     *  { kind: "subagent", batch_size, free_ram_gb_at_start }. */
+    processMetadata?: Record<string, unknown>;
+    /** Overrides the default display name (first user message) — useful for
+     *  subagents which want descriptive labels in the orchestration page. */
+    processDisplayName?: string;
+  }
 ): AsyncGenerator<SSEEvent> {
   const settings = getSettings();
   if (!settings.active_model) {
     yield { type: "error", message: "No AI model is selected. Pull a model from the Model Manager first.", code: "no_model" };
+    return;
+  }
+
+  // V6.10 loop-guard: if this conversation was previously suspended for
+  // looping behaviour, refuse to start until the user explicitly resumes.
+  // This is structurally enforced — the model can't talk past it because
+  // it's checked before any LLM call happens.
+  const { isSuspended } = await import("./loop-guard");
+  const suspendCheck = isSuspended(conversationId);
+  if (suspendCheck.suspended) {
+    yield {
+      type: "loop_suspended",
+      tool: suspendCheck.tool ?? "(unknown)",
+      repeats: suspendCheck.repeats ?? 0,
+      reason: suspendCheck.reason ?? "Conversation was suspended due to a tool-call loop.",
+    };
     return;
   }
 
@@ -122,16 +150,25 @@ export async function* runAgent(
 
   // ---- Orchestration: register this chat as an agent process. ----
   const firstUserText = history.find((m) => m.role === "user")?.content || userMessage;
-  const processDisplay = firstUserText.slice(0, 80).replace(/\s+/g, " ").trim() || "Chat";
+  const processDisplay = opts?.processDisplayName || firstUserText.slice(0, 80).replace(/\s+/g, " ").trim() || "Chat";
+  // Subagent spawns pass metadata with `kind: "subagent"` etc. The kind drives
+  // both the process_type used here AND the agent_name shown in the
+  // orchestration page, so the same field controls every downstream classifier.
+  const spawnedKind = (opts?.processMetadata as { kind?: string } | undefined)?.kind;
+  const isSubagent = spawnedKind === "subagent";
   let processId = "";
   safeProcessHook(() => {
     processId = startProcess({
-      process_type: "chat",
+      process_type: isSubagent ? "long_running_job" : "chat",
       display_name: processDisplay,
       owner_user_id: convOwner || null,
-      agent_name: "Main",
+      agent_name: isSubagent ? "Subagent" : "Main",
       persona_id: "persona-general",
-      metadata: { conversation_id: conversationId, model: settings.active_model },
+      metadata: {
+        conversation_id: conversationId,
+        model: settings.active_model,
+        ...(opts?.processMetadata ?? {}),
+      },
     });
   });
 
@@ -301,9 +338,39 @@ export async function* runAgent(
         }
 
         try {
+          // V6.10 loop guard — check BEFORE dispatching. If this exact
+          // (tool, input) has fired MAX_REPEATS times within the window,
+          // suspend the conversation and bail out. The check is cheap
+          // (one DB read + a small in-memory ring buffer).
+          const { checkAndRecord } = await import("./loop-guard");
+          const loopCheck = checkAndRecord({
+            conversation_id: conversationId,
+            tool_name: call.name,
+            input: call.arguments,
+          });
+          if (!loopCheck.ok) {
+            logComplete(auditId, "denied", `Loop guard tripped: ${loopCheck.reason}`);
+            yield {
+              type: "loop_suspended",
+              tool: loopCheck.tool,
+              repeats: loopCheck.repeats,
+              reason: loopCheck.reason,
+            };
+            // End the generator — the suspension persists in the DB and
+            // a future runAgent on this conversation will hit the boot
+            // check at the top of this function until the user resumes.
+            return;
+          }
+
           const timeoutMs = call.name === "browser" ? BROWSER_TOOL_TIMEOUT_MS : TOOL_TIMEOUT_MS;
+          // V6.7: route through the tool-call cache wrapper so idempotent
+          // reads (web_search, knowledge.search, memory.read, filesystem.read,
+          // etc.) return cached output when (tool_name, tool_version,
+          // input_hash) is a known good match. Side-effectful ops and tools
+          // that don't opt in via `cacheable()` go straight through.
+          const { executeWithCache } = await import("./tool-cache-wrapper");
           const result = await withTimeout(
-            tool.execute(call.arguments, {
+            executeWithCache(tool, call.arguments, {
               conversationId,
               approvedDirs: JSON.parse(settings.approved_dirs || "[]"),
             }),
@@ -389,13 +456,26 @@ export { nanoid };
 export async function runAgentCollect(
   conversationId: string,
   message: string,
-  opts?: { systemPrefix?: string }
+  opts?: {
+    systemPrefix?: string;
+    /** Optional metadata merged into the agent_processes row created for this
+     *  run. Used by subagent.ts to tag spawned children with
+     *  { kind: "subagent", batch_size, free_ram_gb_at_start } so the analytics
+     *  rollup can attribute work to its spawn pattern. */
+    processMetadata?: Record<string, unknown>;
+    /** Optional display name for the spawned agent_processes row. Useful for
+     *  the orchestration page to distinguish "Subagent (research)" from
+     *  "Subagent (writer)". */
+    processDisplayName?: string;
+  }
 ): Promise<string> {
   const controller = new AbortController();
   let text = "";
   for await (const ev of runAgent(conversationId, message, controller.signal, {
     channelMode: true,
     systemPrefix: opts?.systemPrefix,
+    processMetadata: opts?.processMetadata,
+    processDisplayName: opts?.processDisplayName,
   })) {
     if (ev.type === "text_chunk") text += ev.delta;
     if (ev.type === "error") return ev.message;

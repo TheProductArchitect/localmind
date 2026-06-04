@@ -71,9 +71,12 @@ export default function SystemPage() {
   const [tab, setTab] = useState("Health");
 
   return (
-    <div className="h-full overflow-y-auto p-6 space-y-4">
-      <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold">System Dashboard</h1>
+    <div className="mx-auto max-w-5xl px-10 py-14 space-y-6">
+      <div className="flex items-end justify-between gap-6 mb-2">
+        <div>
+          <p className="lm-micro mb-2">System</p>
+          <h1 className="lm-display">Pulse of the machine</h1>
+        </div>
         <div className="flex gap-2">
           {["Health", "Performance"].map((t) => (
             <button key={t} onClick={() => setTab(t)}

@@ -7,6 +7,10 @@ export const knowledgeTool: Tool = {
   classify: (i) => (i.operation === "create_note" ? "memory_write" : "memory_read"),
   preview: (i) =>
     i.operation === "create_note" ? `Create note: ${i.title}` : `Search knowledge base: ${i.query}`,
+  version: "1",
+  // search + list_notes are deterministic reads over the indexed corpus.
+  // create_note mutates state so it never caches.
+  cacheable: (i) => i.operation === "search" || i.operation === "list_notes",
   definition: {
     name: "knowledge_base",
     description:
