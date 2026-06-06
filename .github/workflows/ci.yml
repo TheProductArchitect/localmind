@@ -33,8 +33,19 @@ jobs:
       - name: Run Type Check (if you have explicitly set one)
         run: npx tsc --noEmit
         
-      - name: Run Isolation Checks
-        run: npm run test:isolation
-        
       - name: Build Application
         run: npm run build
+        
+      - name: Start Application in Background
+        run: npm run start &
+        
+      - name: Wait for server to boot
+        run: |
+          for i in {1..30}; do
+            curl -s http://localhost:3000 > /dev/null && break
+            echo "Waiting for Next.js to start..."
+            sleep 2
+          done
+          
+      - name: Run Isolation Checks
+        run: npm run test:isolation
