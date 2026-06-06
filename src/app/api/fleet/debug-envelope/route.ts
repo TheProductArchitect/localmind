@@ -17,6 +17,7 @@ import { getNodeIdentity, exportPublicKey } from "@/lib/fleet/identity";
 import { peek } from "@/lib/fleet/clock";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   const me = getNodeIdentity();
