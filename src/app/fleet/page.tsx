@@ -294,7 +294,7 @@ export default function FleetPage() {
                     <span className="lm-micro ml-auto" style={{ textTransform: "none", letterSpacing: 0 }}>
                       last seen {ageOf(p.last_seen_at)}
                     </span>
-                    <button onClick={() => unpair(p.peer_node_id)} className="lm-row__del" aria-label="Unpair" data-pulse="true">
+                    <button onClick={() => unpair(p.peer_node_id)} className="lm-row__del" aria-label="Unpair" data-pulse="true" data-pulse-action="destructive">
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>

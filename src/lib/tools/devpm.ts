@@ -5,10 +5,24 @@ import {
 } from "../db/devpm";
 import type { Tool } from "./types";
 import { runInSandbox, SandboxUnavailableError } from "./sandbox";
+import { isDestructiveCommand } from "../agent/permission-guard";
 
 export const devpmTool: Tool = {
   actionType: "read_files",
-  classify: (i) => (i.operation === "run_command" ? "open_applications" : i.operation === "create_task" ? "memory_write" : "read_files"),
+  classify: (i) => {
+    if (i.operation === "run_command") {
+      // run_command resolves to a NAMED command registered for the codebase,
+      // but the named command is itself a shell string — if that string
+      // contains an rm-style action, treat the whole call as destructive
+      // so the user has to sign off in auto mode too.
+      if (typeof i.command === "string" && isDestructiveCommand(i.command)) {
+        return "destructive_shell";
+      }
+      return "open_applications";
+    }
+    if (i.operation === "create_task") return "memory_write";
+    return "read_files";
+  },
   forcedTier: undefined,
   preview: (i) => {
     if (i.operation === "run_command") return `Run command "${i.command}" in codebase ${i.codebase}`;

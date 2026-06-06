@@ -174,9 +174,13 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/fleet/debug-orchestration", methods: ["GET"], role: "owner" },
   { path: "/api/fleet/debug-governor", methods: ["GET"], role: "owner" },
   { path: "/api/fleet/debug-loop-guard", methods: ["GET"], role: "owner" },
+  { path: "/api/fleet/debug-sanitize", methods: ["GET"], role: "owner" },
+  { path: "/api/agent/memory/*", methods: "ALL", role: "authenticated" },
+  { path: "/api/agent/critic/*", methods: ["GET"], role: "authenticated" },
   { path: "/api/analytics", methods: ["GET"], role: "authenticated" },
   { path: "/api/pulse", methods: ["GET"], role: "authenticated" },
   { path: "/api/tools", methods: ["GET"], role: "authenticated" },
+  { path: "/api/integrations", methods: ["GET"], role: "authenticated" },
 
   // V6.8: Task graphs UI surface.
   { path: "/api/graphs", methods: ["GET"], role: "authenticated" },

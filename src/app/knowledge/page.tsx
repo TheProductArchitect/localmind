@@ -726,7 +726,7 @@ function BigSearch({ value, onChange, placeholder, onSubmit, busy }:
         onKeyDown={(e) => e.key === "Enter" && onSubmit()}
         placeholder={placeholder}
       />
-      <button onClick={onSubmit} disabled={busy || !value.trim()} className="lm-action" data-pulse="true">
+      <button onClick={onSubmit} disabled={busy || !value.trim()} className="lm-action" data-pulse="true" data-pulse-action="search">
         {busy ? "…" : "Search"}
       </button>
       <style jsx>{`

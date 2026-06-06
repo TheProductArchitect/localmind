@@ -1,117 +1,46 @@
 "use client";
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Button, Card, Input, Badge } from "@/components/ui";
 import { toast } from "@/components/toast";
 import {
-  Settings as SettingsIcon, Wrench, Wifi, Plug2, MessagesSquare, Lock, Archive,
-  Shield, ScrollText, BarChart3, Activity, Users, Sparkles, Code2, ChevronRight,
+  RefreshCw, ExternalLink, CheckCircle2, AlertCircle,
 } from "lucide-react";
+import { SETTINGS_SECTIONS, type SettingsSectionId } from "@/components/settings-sidebar";
 
-const SECTIONS = [
-  { id: "General",          Icon: SettingsIcon },
-  { id: "Tools",            Icon: Wrench },
-  { id: "Network",          Icon: Wifi },
-  { id: "Providers",        Icon: Plug2 },
-  { id: "Communications",   Icon: MessagesSquare },
-  { id: "Data & Privacy",   Icon: Lock },
-  { id: "Backup",           Icon: Archive },
-] as const;
+type SectionId = SettingsSectionId;
 
-type SectionId = (typeof SECTIONS)[number]["id"];
+function SettingsBody() {
+  const params = useSearchParams();
+  const raw = params.get("section");
+  const section: SectionId = (
+    SETTINGS_SECTIONS.find((s) => s.id === raw)?.id ?? "General"
+  );
 
-// Deep links to admin pages — grouped so the side nav reads as discrete
-// clusters rather than one long flat list. Each link routes AWAY from the
-// settings shell, so they're visually quieter than the in-page section
-// buttons and carry an explicit external chevron.
-const ADMIN_GROUPS: { title: string; links: { href: string; label: string; Icon: React.ComponentType<{ className?: string }> }[] }[] = [
-  {
-    title: "Agent",
-    links: [
-      { href: "/agent/system-prompt",  label: "System prompt",   Icon: Sparkles },
-      { href: "/agent/context-window", label: "Context window",  Icon: Sparkles },
-      { href: "/agent/routing",        label: "Model routing",   Icon: Sparkles },
-    ],
-  },
-  {
-    title: "Governance",
-    links: [
-      { href: "/permissions", label: "Permissions", Icon: Shield },
-      { href: "/access",      label: "Users & roles", Icon: Users },
-      { href: "/audit",       label: "Audit log",   Icon: ScrollText },
-    ],
-  },
-  {
-    title: "Observability",
-    links: [
-      { href: "/system",    label: "System health", Icon: Activity },
-      { href: "/analytics", label: "Analytics",     Icon: BarChart3 },
-      { href: "/devpm",     label: "DevPM",         Icon: Code2 },
-    ],
-  },
-];
-
-export default function SettingsPage() {
-  const [section, setSection] = useState<SectionId>("General");
   return (
-    <div className="flex h-full">
-      <aside
-        className="w-60 shrink-0 overflow-y-auto py-10 px-5"
-        style={{
-          borderRight: "1px solid hsl(0 0% 100% / 0.06)",
-          background: "hsl(234 22% 4% / 0.4)",
-          backdropFilter: "blur(14px)",
-        }}
-      >
-        <p className="lm-micro mb-4">Settings</p>
-        <nav className="space-y-0.5">
-          {SECTIONS.map(({ id, Icon }) => {
-            const active = section === id;
-            return (
-              <button
-                key={id}
-                onClick={() => setSection(id)}
-                className={`lm-settings-link ${active ? "is-active" : ""}`}
-                data-pulse="true"
-              >
-                <Icon className="h-3.5 w-3.5" />
-                <span>{id}</span>
-              </button>
-            );
-          })}
-        </nav>
-
-        {ADMIN_GROUPS.map((g) => (
-          <div key={g.title} className="mt-8">
-            <p className="lm-micro mb-2" style={{ color: "hsl(0 0% 100% / 0.3)" }}>{g.title}</p>
-            <nav className="space-y-0.5">
-              {g.links.map(({ href, label, Icon }) => (
-                <Link key={href} href={href} className="lm-settings-link is-external" data-pulse="true">
-                  <Icon className="h-3.5 w-3.5" />
-                  <span>{label}</span>
-                  <ChevronRight className="h-3 w-3 ml-auto" style={{ color: "hsl(0 0% 100% / 0.2)" }} />
-                </Link>
-              ))}
-            </nav>
-          </div>
-        ))}
-      </aside>
-
-      <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-2xl px-10 py-14">
-          <p className="lm-micro mb-2">{section}</p>
-          <h1 className="lm-display mb-10">{sectionTitle(section)}</h1>
-          {section === "General"        && <GeneralSection />}
-          {section === "Tools"          && <ToolsSection />}
+    <div className="flex-1 overflow-y-auto">
+      <div className="mx-auto max-w-2xl px-10 py-14">
+        <p className="lm-micro mb-2">{section}</p>
+        <h1 className="lm-display mb-10">{sectionTitle(section)}</h1>
+        {section === "General"        && <GeneralSection />}
+        {section === "Tools"          && <ToolsSection />}
           {section === "Network"        && <NetworkSection />}
           {section === "Providers"      && <ProvidersSection />}
           {section === "Communications" && <CommsSection />}
+          {section === "Integrations"   && <IntegrationsSection />}
           {section === "Data & Privacy" && <DataSection />}
           {section === "Backup"         && <BackupSection />}
-        </div>
       </div>
-
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  // useSearchParams must live inside a Suspense boundary in the App Router.
+  return (
+    <Suspense fallback={null}>
+      <SettingsBody />
+    </Suspense>
   );
 }
 
@@ -122,9 +51,141 @@ function sectionTitle(id: SectionId): string {
     "Network":        "Where Sora can be reached",
     "Providers":      "External model providers",
     "Communications": "Channels and notifications",
+    "Integrations":   "Open source you're standing on",
     "Data & Privacy": "Your data, your rules",
     "Backup":         "Save and restore",
   }[id];
+}
+
+/* ============================================================ */
+/* Integrations                                                 */
+/* ============================================================ */
+
+type OssEntry = {
+  name: string;
+  purpose: string;
+  license: string;
+  repo: string;
+  source: "system" | "npm";
+  version?: string;
+  detected?: boolean;
+  latest?: string;
+  outdated?: boolean;
+};
+type IntegrationsResp = {
+  system: OssEntry[];
+  npm: OssEntry[];
+  summary: {
+    total: number;
+    detected: number;
+    outdated_count: number;
+    checked_for_updates: boolean;
+    checked_at: number | null;
+  };
+};
+
+function IntegrationsSection() {
+  const [data, setData] = useState<IntegrationsResp | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [checking, setChecking] = useState(false);
+
+  async function load(check = false) {
+    if (check) setChecking(true);
+    else setLoading(true);
+    try {
+      const r = await fetch(`/api/integrations${check ? "?check=1" : ""}`);
+      const j = (await r.json()) as IntegrationsResp;
+      setData(j);
+    } finally {
+      setChecking(false);
+      setLoading(false);
+    }
+  }
+  useEffect(() => { load(false); }, []);
+
+  if (loading) {
+    return <p className="lm-body" style={{ color: "hsl(0 0% 100% / 0.4)" }}>Loading…</p>;
+  }
+  if (!data) return null;
+
+  return (
+    <div className="space-y-6">
+      <Card className="p-4 flex items-center gap-4">
+        <div className="flex-1">
+          <p className="lm-body" style={{ color: "hsl(0 0% 100% / 0.92)", fontWeight: 500 }}>
+            {data.summary.detected} of {data.summary.total} integrations detected on this machine
+          </p>
+          <p className="lm-micro mt-1" style={{ textTransform: "none", letterSpacing: 0 }}>
+            {data.summary.checked_for_updates
+              ? data.summary.outdated_count > 0
+                ? `${data.summary.outdated_count} library can be updated`.replace("1 library can", "1 library can").replace(/^(\d+) library/, (m, n) => Number(n) === 1 ? `${n} library` : `${n} libraries`)
+                : "Everything is up to date."
+              : "Click below to check for available updates."}
+          </p>
+        </div>
+        <Button size="sm" variant="outline" onClick={() => load(true)} disabled={checking}>
+          <RefreshCw className={`h-3.5 w-3.5 ${checking ? "animate-spin" : ""}`} />
+          {checking ? "Checking…" : "Check for updates"}
+        </Button>
+      </Card>
+
+      <IntegrationGroup
+        title="System tools"
+        hint="Installed alongside LocalMind by the install script (or your package manager)."
+        entries={data.system}
+      />
+      <IntegrationGroup
+        title="npm libraries"
+        hint="Load-bearing dependencies. Run `npm install` to apply available updates after reviewing."
+        entries={data.npm}
+        showUpdates
+      />
+    </div>
+  );
+}
+
+function IntegrationGroup({
+  title, hint, entries, showUpdates,
+}: { title: string; hint: string; entries: OssEntry[]; showUpdates?: boolean }) {
+  return (
+    <section>
+      <div className="mb-3">
+        <p className="lm-micro">{title}</p>
+        <p className="lm-micro mt-1" style={{ textTransform: "none", letterSpacing: 0, color: "hsl(0 0% 100% / 0.55)" }}>
+          {hint}
+        </p>
+      </div>
+      <div className="space-y-2">
+        {entries.map((e) => (
+          <div key={e.name} className="lm-int">
+            <div className="lm-int__main">
+              <div className="flex items-center gap-2">
+                <p className="lm-body" style={{ color: "hsl(0 0% 100% / 0.96)", fontWeight: 500 }}>{e.name}</p>
+                {e.detected ? (
+                  <CheckCircle2 className="h-3.5 w-3.5" style={{ color: "hsl(0 0% 100% / 0.5)" }} aria-label="Detected" />
+                ) : (
+                  <AlertCircle className="h-3.5 w-3.5" style={{ color: "hsl(40 100% 70% / 0.7)" }} aria-label="Not detected" />
+                )}
+                {showUpdates && e.outdated && <Badge variant="warning">update available</Badge>}
+              </div>
+              <p className="lm-micro mt-1" style={{ textTransform: "none", letterSpacing: 0, color: "hsl(0 0% 100% / 0.55)" }}>
+                {e.purpose}
+              </p>
+            </div>
+            <div className="lm-int__meta">
+              <span className="lm-chip" style={{ fontFamily: "ui-monospace,monospace" }}>
+                {e.version || "—"}{e.outdated && e.latest ? ` → ${e.latest}` : ""}
+              </span>
+              <span className="lm-micro" style={{ textTransform: "none", letterSpacing: 0 }}>{e.license}</span>
+              <a href={e.repo} target="_blank" rel="noreferrer noopener" className="lm-int__repo" data-pulse="true">
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function useSettings() {

@@ -743,6 +743,159 @@ configMigrations.push({
   },
 });
 
+// v12: per-agent memory. Each persona gets its own scoped lessons store.
+// Writers are restricted to user / sora / system (the critic). The agent
+// itself reads its memory at spawn time and cannot write — that's the whole
+// safety property: the agent's behavior is shaped by observers, not by
+// itself. `status` is 'committed' (active, injected into the agent's
+// system prompt) or 'proposed' (queued for sora/user review, NOT yet
+// injected). The critic writes proposed by default.
+configMigrations.push({
+  version: 12,
+  up: (db) => {
+    db.exec(`
+      CREATE TABLE agent_memory (
+        memory_id TEXT PRIMARY KEY,
+        persona_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('lesson','warning','preference','fact')),
+        content TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'committed'
+          CHECK (status IN ('committed','proposed','retired')),
+        created_by TEXT NOT NULL CHECK (created_by IN ('user','sora','system')),
+        confidence REAL NOT NULL DEFAULT 1.0,
+        source_subagent_process_id TEXT,
+        created_at INTEGER NOT NULL,
+        retired_at INTEGER
+      );
+      CREATE INDEX idx_agent_memory_persona_status
+        ON agent_memory(persona_id, status, created_at DESC);
+
+      CREATE TABLE agent_critic_queue (
+        process_id TEXT PRIMARY KEY,
+        persona_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        enqueued_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending','reviewing','done','failed','skipped')),
+        completed_at INTEGER,
+        rating INTEGER,
+        critic_output TEXT
+      );
+      CREATE INDEX idx_critic_queue_status ON agent_critic_queue(status, enqueued_at);
+    `);
+  },
+});
+
+// Backfill-only stub above; the real schema setup is happy on a fresh DB.
+// (This sentinel comment keeps version 11 below visually adjacent to v12.)
+// v11: seed Sora's default agent roster. Sora herself is the single persona
+// the user talks to; these are the specialised SUB-agents she can summon via
+// spawn_subagent. Each carries a narrow tool surface so the orchestrator's
+// "narrow tool surface = focused subagent" rule is enforced by default.
+configMigrations.push({
+  version: 11,
+  up: (db) => {
+    const NOW = Date.now();
+    const upsert = db.prepare(`
+      INSERT INTO personas (persona_id, name, description, model_name, enabled_tools, permission_profile_id, created_at, updated_at)
+      VALUES (?, ?, ?, NULL, ?, 'normal', ?, ?)
+      ON CONFLICT(persona_id) DO UPDATE SET
+        description = excluded.description,
+        enabled_tools = excluded.enabled_tools,
+        updated_at = excluded.updated_at
+    `);
+
+    type Seed = { id: string; name: string; description: string; tools: string[] };
+    const SEEDS: Seed[] = [
+      {
+        id: "persona-sora",
+        name: "Sora",
+        description: "The lead assistant you talk to. Orchestrates work, decides when to handle a task directly and when to summon a specialised agent. Always confirms destructive actions, never deletes without permission.",
+        tools: [
+          "memory", "knowledge_base", "web_search", "time", "filesystem",
+          "calendar", "email", "browser", "peer_knowledge", "datastore",
+          "spreadsheet", "check_resources", "spawn_subagent", "spawn_subagents_parallel",
+        ],
+      },
+      {
+        id: "agent-writer",
+        name: "Writer",
+        description: "Drafts, edits, and rewrites prose, emails, docs, posts. Optimised for tone, clarity, structure. Has no shell or file-write access — returns text for Sora to land.",
+        tools: ["memory", "knowledge_base", "web_search", "time"],
+      },
+      {
+        id: "agent-coder",
+        name: "Coder",
+        description: "Implements code changes across multiple files. Delegates large refactors to the pi.dev coding agent; for small edits uses filesystem directly. Cannot delete files (Sora signs off).",
+        tools: ["filesystem", "devpm_codebase", "pi_code", "memory", "web_search"],
+      },
+      {
+        id: "agent-researcher",
+        name: "Researcher",
+        description: "Searches the web, reads documents, queries paired peers, and returns a synthesised brief with sources. Read-only; never writes or sends.",
+        tools: ["web_search", "browser", "knowledge_base", "peer_knowledge", "memory", "time"],
+      },
+      {
+        id: "agent-scheduler",
+        name: "Scheduler",
+        description: "Owns calendar + cron + automation creation. Knows about timezones, can read existing schedules and propose new ones for Sora to confirm before they're created.",
+        tools: ["calendar", "time", "memory", "datastore"],
+      },
+      {
+        id: "agent-summarizer",
+        name: "Summarizer",
+        description: "Distills long content — meeting transcripts, document stacks, conversation threads — into structured summaries with action items.",
+        tools: ["memory", "knowledge_base", "time"],
+      },
+      {
+        id: "agent-reviewer",
+        name: "Reviewer",
+        description: "Reads diffs and proposals, surfaces correctness issues, security smells, and unclear edge cases. Does not write code — only feedback.",
+        tools: ["filesystem", "devpm_codebase", "memory", "web_search"],
+      },
+      {
+        id: "agent-librarian",
+        name: "Librarian",
+        description: "Manages the knowledge base — ingests new notes, organises tags, finds duplicates, links related items. Never deletes; surfaces candidates for Sora to confirm.",
+        tools: ["knowledge_base", "memory", "datastore", "time"],
+      },
+      {
+        id: "agent-analyst",
+        name: "Analyst",
+        description: "Works with structured data — spreadsheets, datastore tables, CSVs. Computes aggregates, finds outliers, produces small reports.",
+        tools: ["datastore", "spreadsheet", "knowledge_base", "memory", "time"],
+      },
+      {
+        id: "agent-comms",
+        name: "Comms",
+        description: "Drafts outbound messages (email, SMS, WhatsApp). Always returns drafts for Sora to confirm before send — never sends directly.",
+        tools: ["email", "memory", "knowledge_base", "time"],
+      },
+    ];
+
+    for (const s of SEEDS) {
+      upsert.run(s.id, s.name, s.description, JSON.stringify(s.tools), NOW, NOW);
+    }
+
+    // Make sure the new Sora persona has the standard built-in prompt blocks.
+    const builtins = [
+      { name: "identity",     enabled: 1 },
+      { name: "permissions",  enabled: 1 },
+      { name: "tools",        enabled: 1 },
+      { name: "memory",       enabled: 0 },
+      { name: "date_context", enabled: 0 },
+    ];
+    const insBlock = db.prepare(`
+      INSERT OR IGNORE INTO system_prompt_blocks
+        (block_id, persona_id, block_type, block_name, content, enabled, sort_order, condition_json, created_at, updated_at)
+      VALUES (?, ?, 'builtin', ?, '', ?, ?, NULL, ?, ?)
+    `);
+    builtins.forEach((b, i) => {
+      insBlock.run(`blk-sora-${b.name}`, "persona-sora", b.name, b.enabled, i, NOW, NOW);
+    });
+  },
+});
+
 const knowledgeMigrations: Migration[] = [
   {
     version: 1,

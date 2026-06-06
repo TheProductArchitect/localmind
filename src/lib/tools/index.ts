@@ -14,6 +14,8 @@ import { piCodeTool } from "./pi-code";
 import { spawnSubagentTool, spawnSubagentsParallelTool } from "./subagent";
 import { checkResourcesTool } from "./check-resources";
 import { timeTool } from "./time";
+import { requestToolAccessTool } from "./request-tool-access";
+import { agentMemoryAdminTool } from "./agent-memory-admin";
 import { getMcpTools } from "./mcp";
 import type { Tool } from "./types";
 
@@ -33,6 +35,8 @@ const BUILTIN: Tool[] = [
   piCodeTool,
   checkResourcesTool,
   timeTool,
+  requestToolAccessTool,
+  agentMemoryAdminTool,
   spawnSubagentTool,
   spawnSubagentsParallelTool,
 ];

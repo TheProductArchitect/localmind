@@ -35,6 +35,18 @@ type Style = {
   segmentRatio: number;   // bright dash as fraction of perimeter
   strokeWidth: number;
   intensity: number;      // 0..1, modulates opacity + glow
+  // Visual tone — "white" for nearly all interactions; "danger" tints the
+  // light red for destructive actions; "warm" is a soft amber for slow
+  // confirmations like Save. Tones never become the dominant visual; they
+  // just shift the glow color while the line itself stays bright.
+  tone?: "white" | "danger" | "warm";
+  // Motion pattern — how the bright segment moves along the path:
+  //   "trace"   — single trail traces the perimeter once (default)
+  //   "double"  — two trails chase each other a half-perimeter apart
+  //              (used for "save" / "confirm" — feels solid)
+  //   "burst"   — three short trails leave the start corner together
+  //              and fan out (used for spawn / parallel actions)
+  pattern?: "trace" | "double" | "burst";
 };
 
 type PathSpec = {
@@ -51,6 +63,11 @@ type Pulse = {
   paths: PathSpec[];
   style: Style;
   startOffset: number;   // 0..1 — where on the (combined) path the trail begins
+  // The element the pulse is tracing. If this element gets removed from the
+  // DOM mid-animation (page navigation, modal close, row delete), the pulse
+  // is anchored to a position that no longer holds anything — so we cancel
+  // the pulse instead of leaving a ghost line hanging in space.
+  triggerRef: WeakRef<HTMLElement>;
 };
 
 const MAX_PULSES = 8;
@@ -60,12 +77,27 @@ const PULSE_SELECTOR =
   "button, a[href], [role='button'], [role='link'], [role='menuitem'], [data-pulse='true']";
 const SUPPRESS_SELECTOR = "input, textarea, select, [data-pulse='false']";
 
+// Surface presets — picked automatically by classifyStyle() based on the
+// element's visual weight (bg alpha, border, has-icon, etc).
 const STYLE_PRESETS: Record<string, Style> = {
   primary: { durationMs: 1300, segmentRatio: 0.34, strokeWidth: 1.6, intensity: 1.0  },
   ghost:   { durationMs: 1050, segmentRatio: 0.28, strokeWidth: 1.2, intensity: 0.78 },
   icon:    { durationMs:  900, segmentRatio: 0.42, strokeWidth: 1.1, intensity: 0.85 },
   rail:    { durationMs:  780, segmentRatio: 0.35, strokeWidth: 1.0, intensity: 0.72 },
   subtle:  { durationMs:  900, segmentRatio: 0.25, strokeWidth: 1.0, intensity: 0.55 },
+};
+
+// Action presets — opted into per-button via `data-pulse-action="..."`.
+// These OVERLAY the surface preset, adding semantic motion that hints at
+// what the button is for, not just what it looks like.
+const ACTION_PRESETS: Record<string, Partial<Style>> = {
+  send:        { durationMs: 1500, segmentRatio: 0.45, intensity: 1.0, pattern: "trace" },
+  save:        { durationMs: 1100, segmentRatio: 0.20, intensity: 0.92, pattern: "double", tone: "warm" },
+  destructive: { durationMs:  900, segmentRatio: 0.30, intensity: 1.0, tone: "danger" },
+  search:      { durationMs: 1200, segmentRatio: 0.38, intensity: 0.88 },
+  spawn:       { durationMs: 1400, segmentRatio: 0.18, intensity: 0.95, pattern: "burst" },
+  confirm:     { durationMs: 1100, segmentRatio: 0.22, intensity: 0.95, pattern: "double" },
+  cancel:      { durationMs:  700, segmentRatio: 0.22, intensity: 0.55 },
 };
 
 function parseRgbaAlpha(css: string): number {
@@ -82,25 +114,47 @@ function parseRgbaAlpha(css: string): number {
 }
 
 function classifyStyle(trigger: HTMLElement): Style {
+  // 1) Start with the surface preset (auto-detected, or explicit override).
+  let base: Style;
   const explicit = trigger.getAttribute("data-pulse-style");
-  if (explicit && STYLE_PRESETS[explicit]) return STYLE_PRESETS[explicit];
+  if (explicit && STYLE_PRESETS[explicit]) {
+    base = { ...STYLE_PRESETS[explicit] };
+  } else if (trigger.classList.contains("lm-rail-link")) {
+    base = { ...STYLE_PRESETS.rail };
+  } else {
+    const computed = window.getComputedStyle(trigger);
+    const bgAlpha = parseRgbaAlpha(computed.backgroundColor);
+    const hasBorder =
+      parseFloat(computed.borderTopWidth) > 0 &&
+      !computed.borderTopColor.includes("rgba(0, 0, 0, 0)");
+    const hasOwnText = (trigger.textContent || "").trim().length > 0;
+    const onlySvg = !hasOwnText && !!trigger.querySelector("svg");
 
-  // Rail items expose this className from the Rail component.
-  if (trigger.classList.contains("lm-rail-link")) return STYLE_PRESETS.rail;
+    if (bgAlpha >= 0.6) base = { ...STYLE_PRESETS.primary };
+    else if (bgAlpha >= 0.05 || hasBorder) base = { ...STYLE_PRESETS.ghost };
+    else if (onlySvg) base = { ...STYLE_PRESETS.icon };
+    else base = { ...STYLE_PRESETS.subtle };
+  }
 
-  const computed = window.getComputedStyle(trigger);
-  const bgAlpha = parseRgbaAlpha(computed.backgroundColor);
-  const hasBorder =
-    parseFloat(computed.borderTopWidth) > 0 &&
-    !computed.borderTopColor.includes("rgba(0, 0, 0, 0)");
+  // 2) Overlay the action preset, if any. Actions are semantic ("send",
+  //    "save", "destructive") and shape motion/tone independent of how
+  //    the button is styled.
+  const action = trigger.getAttribute("data-pulse-action");
+  if (action && ACTION_PRESETS[action]) {
+    base = { ...base, ...ACTION_PRESETS[action] };
+  }
+  return base;
+}
 
-  const hasOwnText = (trigger.textContent || "").trim().length > 0;
-  const onlySvg = !hasOwnText && !!trigger.querySelector("svg");
-
-  if (bgAlpha >= 0.6) return STYLE_PRESETS.primary;
-  if (bgAlpha >= 0.05 || hasBorder) return STYLE_PRESETS.ghost;
-  if (onlySvg) return STYLE_PRESETS.icon;
-  return STYLE_PRESETS.subtle;
+function strokeColor(tone: Style["tone"]): string {
+  if (tone === "danger") return "hsl(0 100% 78%)";
+  if (tone === "warm")   return "hsl(38 100% 78%)";
+  return "white";
+}
+function glowColor(tone: Style["tone"]): string {
+  if (tone === "danger") return "hsl(0 100% 60%";
+  if (tone === "warm")   return "hsl(38 100% 60%";
+  return "hsl(0 0% 100%";
 }
 
 /** Returns a rounded-rect "d" string in local coords (0..w, 0..h). */
@@ -226,6 +280,29 @@ export function EdgePulse() {
   const idRef = useRef(0);
   const lastFireRef = useRef(0);
 
+  // Cancel any pulse whose source element has detached from the DOM. We
+  // poll on rAF rather than per-pulse setTimeout/MutationObserver because
+  // (a) animations are short-lived (max ~1.5s), (b) we want a single
+  // consolidated state update per frame, and (c) rAF naturally pauses when
+  // the tab is hidden. The check is cheap — at most MAX_PULSES (8) calls
+  // to .deref() + .isConnected per frame.
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      setPulses((cur) => {
+        if (cur.length === 0) return cur;
+        const alive = cur.filter((p) => {
+          const el = p.triggerRef.deref();
+          return el && el.isConnected;
+        });
+        return alive.length === cur.length ? cur : alive;
+      });
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
   useEffect(() => {
     function onClick(e: MouseEvent) {
       const target = e.target as HTMLElement | null;
@@ -283,6 +360,7 @@ export function EdgePulse() {
         // an icon doesn't shift the trail start — the trace is about the
         // shape, not the click coordinate.
         startOffset: 0,
+        triggerRef: new WeakRef(trigger),
       };
 
       setPulses((prev) => {
@@ -321,39 +399,63 @@ export function EdgePulse() {
 
 function PulseGroup({ pulse }: { pulse: Pulse }) {
   const { originX, originY, paths, style } = pulse;
+  const pattern = style.pattern ?? "trace";
+
+  // Pattern unpacks into one OR more concurrent strokes per path. They share
+  // the same dasharray geometry but enter at staggered phases so they read as
+  // a "double" / "burst" without any extra DOM machinery.
+  const phases =
+    pattern === "double" ? [0, 0.5]
+    : pattern === "burst" ? [0, 0.18, 0.36]
+    : [0];
+
   return (
     <g transform={`translate(${originX},${originY})`}>
-      {paths.map((p, i) => (
-        <PulseStroke key={i} index={pulse.id * 100 + i} d={p.d} length={p.approxLength} style={style} />
-      ))}
+      {paths.flatMap((p, i) =>
+        phases.map((phase, j) => (
+          <PulseStroke
+            key={`${i}-${j}`}
+            index={pulse.id * 100 + i * 10 + j}
+            d={p.d}
+            length={p.approxLength}
+            style={style}
+            phase={phase}
+          />
+        ))
+      )}
     </g>
   );
 }
 
 function PulseStroke({
-  index, d, length, style,
-}: { index: number; d: string; length: number; style: Style }) {
+  index, d, length, style, phase,
+}: { index: number; d: string; length: number; style: Style; phase: number }) {
   const segmentLen = Math.max(8, length * style.segmentRatio);
-  const fromOffset = length;
-  const toOffset = 0;
+  // `phase` offsets the trail's starting position along the path so multiple
+  // strokes in "double"/"burst" patterns appear to chase each other.
+  const fromOffset = length + phase * length;
+  const toOffset = phase * length;
   const animName = `lm-trace-${index}`;
   const glow = style.intensity;
   const a = (v: number) => Math.min(1, v * style.intensity);
+  const stroke = strokeColor(style.tone);
+  const glowHsl = glowColor(style.tone);
 
   return (
     <>
       <path
         d={d}
         fill="none"
-        stroke="white"
+        stroke={stroke}
         strokeWidth={style.strokeWidth}
         strokeLinecap="round"
         strokeLinejoin="round"
         style={{
           strokeDasharray: `${segmentLen} ${length - segmentLen}`,
           strokeDashoffset: fromOffset,
-          filter: `drop-shadow(0 0 ${3 + glow * 4}px hsl(0 0% 100% / ${0.45 * glow})) drop-shadow(0 0 ${8 + glow * 8}px hsl(0 0% 100% / ${0.22 * glow}))`,
+          filter: `drop-shadow(0 0 ${3 + glow * 4}px ${glowHsl} / ${0.5 * glow})) drop-shadow(0 0 ${8 + glow * 8}px ${glowHsl} / ${0.22 * glow}))`,
           animation: `${animName} ${style.durationMs}ms cubic-bezier(0.4, 0, 0.2, 1) forwards`,
+          animationDelay: `${phase * 60}ms`,
           opacity: 0,
         }}
       />

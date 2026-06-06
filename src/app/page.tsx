@@ -30,7 +30,7 @@ import remarkGfm from "remark-gfm";
 import { Textarea } from "@/components/ui";
 import { ToolCallCard, type ToolCallState } from "@/components/chat/tool-call-card";
 import { ConfirmationCard, type ConfirmationState } from "@/components/chat/confirmation-card";
-import { MicButton, SpeakerButton, speak } from "@/components/chat/voice";
+import { MicButton, SpeakerButton, ConversationButton, speak } from "@/components/chat/voice";
 import { toast } from "@/components/toast";
 import { Orb, type OrbState } from "@/components/orb";
 import { Plus, Send, Trash2, Star, Copy, RefreshCw, Volume2, Download } from "lucide-react";
@@ -53,8 +53,20 @@ function ChatInner() {
   const [search, setSearch] = useState("");
   const [model, setModel] = useState<string | null>(null);
   const [autoRead, setAutoRead] = useState(false);
-  const [persona, setPersona] = useState("general");
+  // Sora is now the only "lead" persona for chat. Sub-agents (Writer, Coder,
+  // Researcher, etc.) are summoned by Sora via spawn_subagent. The legacy
+  // `persona` value is preserved so the backend keeps routing to the right
+  // assembled prompt, but the UI no longer exposes a selector.
+  const [persona] = useState("general");
   const [agentMode, setAgentMode] = useState<"auto" | "plan" | "ask">("ask");
+
+  // Conversation-mode handshake with <ConversationButton/>. When streaming
+  // ends and `conversationActive` is on, we hand the latest assistant reply
+  // over via `assistantToSpeak`; the button reads it and clears it back via
+  // `clearAssistantToSpeak`, then the loop resumes.
+  const [conversationActive, setConversationActive] = useState(false);
+  const [assistantToSpeak, setAssistantToSpeak] = useState<string | null>(null);
+  const lastSpokenRef = useRef<string | null>(null);
 
   // v2 — orb live state. activeTools tracks tool calls still in flight so we
   // can swing between "thinking" (none) and "tool"/"spawn" (one or more).
@@ -261,7 +273,40 @@ function ChatInner() {
       setStreaming(false);
       setActiveTools({});
       loadConversations();
+      // Conversation-mode handoff: once streaming has stopped, hand the
+      // latest assistant turn over to <ConversationButton/> for TTS. We
+      // read from a ref-style closure of the latest thread state.
+      if (conversationActive) {
+        setThread((current) => {
+          for (let i = current.length - 1; i >= 0; i--) {
+            const it = current[i];
+            if (it.kind === "assistant" && it.content && it.content !== lastSpokenRef.current) {
+              lastSpokenRef.current = it.content;
+              setAssistantToSpeak(it.content);
+              break;
+            }
+          }
+          return current;
+        });
+      }
     }
+  }
+
+  // ConversationButton delivers a complete utterance here. We seed the
+  // composer with it for visibility (so the user sees what we heard), then
+  // immediately send. The button itself manages turn-taking state.
+  async function sendUtterance(text: string) {
+    const cleaned = text.trim();
+    if (!cleaned || streaming) return;
+    setInput("");
+    let convId = activeId;
+    if (!convId) {
+      const r = await fetch("/api/conversations", { method: "POST" });
+      convId = (await r.json()).conversation.id;
+      setActiveId(convId);
+    }
+    setThread((t) => [...t, { kind: "user", content: cleaned }, { kind: "assistant", content: "" }]);
+    streamChat(convId!, { message: cleaned, persona });
   }
 
   async function send() {
@@ -389,6 +434,7 @@ function ChatInner() {
               <span className="lm-conv__title">{c.title}</span>
               <button
                 onClick={(e) => { e.stopPropagation(); deleteConversation(c.id); }}
+                data-pulse-action="destructive"
                 aria-label="Delete"
                 className="lm-conv__del"
               >
@@ -406,16 +452,11 @@ function ChatInner() {
             <span className="lm-micro">Model</span>
             <span className="lm-body" style={{ color: "hsl(0 0% 100% / 0.92)" }}>{model || "—"}</span>
             <span className="lm-thread__sep" />
-            <select
-              value={persona}
-              onChange={(e) => setPersona(e.target.value)}
-              aria-label="Persona"
-              className="lm-thread__select"
-              data-pulse="false"
-            >
-              <option value="general">General</option>
-              <option value="devpm">DevPM</option>
-            </select>
+            <span className="lm-micro">Lead</span>
+            <span className="lm-body" style={{ color: "hsl(0 0% 100% / 0.92)" }}>Sora</span>
+            <a href="/agents" className="lm-micro" style={{ textTransform: "none", letterSpacing: 0, color: "hsl(0 0% 100% / 0.45)" }} data-pulse="true">
+              · agents
+            </a>
             <button
               onClick={() => setAutoRead((a) => !a)}
               className="lm-thread__toggle"
@@ -424,6 +465,16 @@ function ChatInner() {
               <Volume2 className="h-3 w-3" />
               <span>Auto-read</span>
             </button>
+            <ConversationButton
+              isAssistantBusy={streaming}
+              assistantSay={conversationActive ? assistantToSpeak : null}
+              onActiveChange={(active) => {
+                setConversationActive(active);
+                if (!active) setAssistantToSpeak(null);
+              }}
+              onUtterance={sendUtterance}
+              onAssistantSpoken={() => setAssistantToSpeak(null)}
+            />
             <span className="lm-thread__sep" />
             <div className="lm-mode" role="group" aria-label="Agent mode">
               {(["auto", "plan", "ask"] as const).map((m) => (
@@ -532,6 +583,7 @@ function ChatInner() {
               className="lm-composer__send"
               aria-label="Send"
               data-pulse="true"
+              data-pulse-action="send"
             >
               <Send className="h-4 w-4" />
             </button>
@@ -550,10 +602,28 @@ function ChatInner() {
         </div>
         {Object.entries(activeTools).length > 0 && (
           <div className="lm-sora__tools">
-            <p className="lm-micro mb-2">In flight</p>
-            {Object.entries(activeTools).map(([id, name]) => (
-              <div key={id} className="lm-sora__tool">{name}</div>
-            ))}
+            <div className="flex items-center justify-between mb-2">
+              <p className="lm-micro">In flight</p>
+              <a href="/agents" className="lm-micro" style={{ textTransform: "none", letterSpacing: 0, color: "hsl(0 0% 100% / 0.45)" }} data-pulse="true">
+                See all →
+              </a>
+            </div>
+            {Object.entries(activeTools).map(([id, name]) => {
+              const isSpawn = name.startsWith("spawn_subagent");
+              return (
+                <div key={id} className="lm-sora__agent lm-agent-card--enter" data-spawn={isSpawn}>
+                  <Orb state="thinking" size={20} />
+                  <div className="flex-1 min-w-0">
+                    <p style={{ fontSize: 12, color: "hsl(0 0% 100% / 0.92)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>
+                      {name.replace(/^spawn_subagent(s_parallel)?$/, isSpawn && name.endsWith("parallel") ? "spawning batch…" : "spawning…")}
+                    </p>
+                    <p className="lm-micro" style={{ textTransform: "none", letterSpacing: 0, fontSize: 10, color: "hsl(0 0% 100% / 0.4)" }}>
+                      {isSpawn ? "subagent" : "tool"}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </aside>
@@ -795,6 +865,18 @@ function ChatInner() {
           border-radius: 8px;
           margin-bottom: 6px;
           font-family: "SF Mono", ui-monospace, monospace;
+        }
+        .lm-sora__agent {
+          display: flex; align-items: center; gap: 10px;
+          padding: 8px 10px;
+          background: hsl(0 0% 100% / 0.03);
+          border: 1px solid hsl(0 0% 100% / 0.08);
+          border-radius: 10px;
+          margin-bottom: 6px;
+        }
+        .lm-sora__agent[data-spawn="true"] {
+          background: hsl(0 0% 100% / 0.05);
+          border-color: hsl(0 0% 100% / 0.16);
         }
       `}</style>
     </div>

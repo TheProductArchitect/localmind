@@ -6,6 +6,7 @@ import { EdgePulse } from "@/components/edge-pulse";
 import { Toaster } from "@/components/toast";
 import { CommandPalette } from "@/components/command-palette";
 import { DiskBanner } from "@/components/disk-banner";
+import { SettingsSidebar } from "@/components/settings-sidebar";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -31,6 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <DiskBanner />
           <div className="flex flex-1 overflow-hidden">
             <Rail />
+            <SettingsSidebar />
             <main className="flex-1 overflow-auto relative pb-16 md:pb-0">{children}</main>
           </div>
         </div>

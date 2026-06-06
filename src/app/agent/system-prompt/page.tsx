@@ -258,7 +258,7 @@ export default function SystemPromptPage() {
               toggle to enable, override built-ins by typing your own version.
             </p>
           </div>
-          <Button onClick={save} disabled={saving || loading}>
+          <Button onClick={save} disabled={saving || loading} data-pulse-action="save">
             <Save className="h-3.5 w-3.5" /> {saving ? "Saving…" : "Save"}
           </Button>
         </div>
@@ -468,7 +468,7 @@ export default function SystemPromptPage() {
             <div className="flex gap-2">
               <Button size="sm" variant="ghost" onClick={selectAllTools}>All</Button>
               <Button size="sm" variant="ghost" onClick={selectNoneTools}>None</Button>
-              <Button size="sm" onClick={saveTools} disabled={!toolsDirty}>Save tools</Button>
+              <Button size="sm" onClick={saveTools} disabled={!toolsDirty} data-pulse-action="save">Save tools</Button>
             </div>
           </header>
           {allTools.length === 0 ? (

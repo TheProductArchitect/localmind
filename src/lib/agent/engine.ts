@@ -6,6 +6,7 @@ import type { Tool } from "../tools/types";
 import { buildSystemPrompt } from "./system-prompt";
 import { classify } from "./permission-guard";
 import { logStart, logComplete } from "./audit-logger";
+import { sanitizeToolOutput, isUntrustedTool } from "./sanitize-tool-output";
 import { awaitConfirmation } from "./confirmations";
 import {
   addMessage, getMessages, getSettings, updateConversation, deleteTrailingTurn, getConversation,
@@ -85,6 +86,13 @@ export async function* runAgent(
     /** Overrides the default display name (first user message) — useful for
      *  subagents which want descriptive labels in the orchestration page. */
     processDisplayName?: string;
+    /** Whitelist of tool NAMES this agent may see. Used to give spawned
+     *  subagents a narrow surface — the persona's enabled_tools intersected
+     *  with the caller-specified allowed_tools. Tools outside this set are
+     *  hidden from the LLM's tool definitions AND refused at dispatch. The
+     *  `request_tool_access` tool is auto-added so a subagent can ask for
+     *  more access when stuck. Undefined = full registry (the main Sora chat). */
+    allowedTools?: readonly string[];
   }
 ): AsyncGenerator<SSEEvent> {
   const settings = getSettings();
@@ -141,8 +149,18 @@ export async function* runAgent(
 
   const provider = getProvider();
   const allTools = await listAllTools();
-  const toolMap = new Map<string, Tool>(allTools.map((t) => [t.definition.name, t]));
-  const toolDefs = allTools.map((t) => t.definition);
+  // Subagents get a narrow tool surface. The `request_tool_access` tool is
+  // always added to that surface so a stuck subagent can ask the parent for
+  // more — see src/lib/tools/request-tool-access.ts. The main Sora chat
+  // (no allowedTools restriction) sees the full registry.
+  const allowedSet = opts?.allowedTools
+    ? new Set<string>([...opts.allowedTools, "request_tool_access"])
+    : null;
+  const visibleTools = allowedSet
+    ? allTools.filter((t) => allowedSet.has(t.definition.name))
+    : allTools;
+  const toolMap = new Map<string, Tool>(visibleTools.map((t) => [t.definition.name, t]));
+  const toolDefs = visibleTools.map((t) => t.definition);
   let totalTokens = 0;
   let assistantText = "";
   let contextCompressed = false;
@@ -156,6 +174,9 @@ export async function* runAgent(
   // orchestration page, so the same field controls every downstream classifier.
   const spawnedKind = (opts?.processMetadata as { kind?: string } | undefined)?.kind;
   const isSubagent = spawnedKind === "subagent";
+  const subagentPersonaId =
+    (opts?.processMetadata as { persona_id?: string } | undefined)?.persona_id ?? null;
+  const subagentStartedAt = Date.now();
   let processId = "";
   safeProcessHook(() => {
     processId = startProcess({
@@ -163,7 +184,7 @@ export async function* runAgent(
       display_name: processDisplay,
       owner_user_id: convOwner || null,
       agent_name: isSubagent ? "Subagent" : "Main",
-      persona_id: "persona-general",
+      persona_id: subagentPersonaId ?? "persona-general",
       metadata: {
         conversation_id: conversationId,
         model: settings.active_model,
@@ -377,14 +398,32 @@ export async function* runAgent(
             timeoutMs,
             `Tool "${call.name}"`
           );
-          logComplete(
-            auditId,
-            result.ok ? "allowed" : "failed",
-            result.summary || result.output.slice(0, 200)
-          );
+          // Sanitize tool output before it enters the model context. For
+          // tools that gather content from outside LocalMind (web_search,
+          // browser, peer_knowledge, MCP outputs, email-read), wrap the
+          // body in <untrusted_content> tags, detect injection patterns,
+          // cap size, and neutralise chat-template tokens. Trusted tool
+          // outputs just get size-capped.
+          const sanitized = sanitizeToolOutput(call.name, result.output);
+          if (sanitized.detected.length > 0) {
+            // Record the injection attempt in the audit log so the user
+            // can see what tried to get through.
+            logComplete(
+              auditId,
+              result.ok ? "allowed" : "failed",
+              `[injection-detected:${sanitized.detected.join(",")}] ` +
+                (result.summary || result.output.slice(0, 160))
+            );
+          } else {
+            logComplete(
+              auditId,
+              result.ok ? "allowed" : "failed",
+              result.summary || result.output.slice(0, 200)
+            );
+          }
           messages.push({
             role: "tool",
-            content: result.output,
+            content: sanitized.output,
             tool_call_id: call.id,
             name: call.name,
           });
@@ -392,8 +431,12 @@ export async function* runAgent(
             conversation_id: conversationId,
             role: "tool",
             content: JSON.stringify({
-              id: call.id, name: call.name, output: result.output,
+              id: call.id, name: call.name, output: sanitized.output,
               status: result.ok ? "allowed" : "failed", input: call.arguments,
+              // Preserve the security metadata so the UI can flag it.
+              untrusted: isUntrustedTool(call.name),
+              injection_detected: sanitized.detected,
+              truncated: sanitized.truncated,
             }),
             token_count: 0,
             parent_message_id: null,
@@ -402,7 +445,7 @@ export async function* runAgent(
             type: "tool_call_result",
             toolCallId: call.id,
             status: result.ok ? "success" : "failed",
-            output: result.summary || result.output.slice(0, 500),
+            output: result.summary || sanitized.output.slice(0, 500),
           };
         } catch (e: any) {
           logComplete(auditId, "failed", e?.message || "execution error");
@@ -447,6 +490,25 @@ export async function* runAgent(
       completeProcess(processId, processOutcome);
       unregisterProcess(processId);
     });
+    if (isSubagent && subagentPersonaId && processId) {
+      try {
+        const { shouldReview, enqueueIfWorthwhile } = await import("./critic");
+        const decision = shouldReview({
+          status: processOutcome,
+          duration_ms: Date.now() - subagentStartedAt,
+          persona_id: subagentPersonaId,
+        });
+        if (decision.review) {
+          enqueueIfWorthwhile({
+            process_id: processId,
+            persona_id: subagentPersonaId,
+            reason: decision.reason,
+          });
+        }
+      } catch {
+        /* critic enqueue is best-effort */
+      }
+    }
   }
 }
 
@@ -467,6 +529,8 @@ export async function runAgentCollect(
      *  the orchestration page to distinguish "Subagent (research)" from
      *  "Subagent (writer)". */
     processDisplayName?: string;
+    /** Tool-name whitelist enforced at dispatch. See runAgent for semantics. */
+    allowedTools?: readonly string[];
   }
 ): Promise<string> {
   const controller = new AbortController();
@@ -476,6 +540,7 @@ export async function runAgentCollect(
     systemPrefix: opts?.systemPrefix,
     processMetadata: opts?.processMetadata,
     processDisplayName: opts?.processDisplayName,
+    allowedTools: opts?.allowedTools,
   })) {
     if (ev.type === "text_chunk") text += ev.delta;
     if (ev.type === "error") return ev.message;

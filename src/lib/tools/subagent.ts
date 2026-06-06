@@ -58,6 +58,7 @@
 import { createConversation, getConversation } from "../db/queries";
 import { getConvDb } from "../db";
 import { listPersonas } from "../db/personas";
+import { renderMemoryBlock } from "../db/agent-memory";
 import type { Tool } from "./types";
 
 const MAX_SUBAGENT_DEPTH = 3;
@@ -104,24 +105,37 @@ function writeDepth(conversationId: string, depth: number): void {
 
 function buildSubagentSystemPrefix(args: {
   goal: string;
+  persona_id?: string;
   persona_name?: string;
   allowed_tools?: string[];
   depth: number;
 }): string {
-  const toolHint =
-    args.allowed_tools && args.allowed_tools.length > 0
-      ? `You may use these tools: ${args.allowed_tools.join(", ")}.`
-      : "You may use any tool the orchestrator has access to.";
+  const toolList = args.allowed_tools && args.allowed_tools.length > 0
+    ? args.allowed_tools.join(", ")
+    : "(none granted)";
   const personaHint = args.persona_name ? ` Persona: ${args.persona_name}.` : "";
+  const memoryBlock = args.persona_id ? renderMemoryBlock(args.persona_id) : "";
 
   return [
     `You are a subagent spawned by Sora to handle one focused task.${personaHint}`,
     `Subagent depth: ${args.depth} / ${MAX_SUBAGENT_DEPTH}.`,
+    ...(memoryBlock ? [``, memoryBlock] : []),
     ``,
     `Goal:`,
     args.goal,
     ``,
-    toolHint,
+    `TOOL SURFACE — these are the ONLY tools available to you on this run:`,
+    `  ${toolList}`,
+    `Tools outside this list are unavailable to you. Do not try to call them;`,
+    `the engine will refuse and you'll waste a turn.`,
+    ``,
+    `If your task genuinely cannot be completed with these tools, call`,
+    `request_tool_access with the specific tool names you need and a 1-2`,
+    `sentence reason. That ends your run cleanly with a structured request the`,
+    `parent (Sora) reads — she'll decide whether to grant + re-spawn you, do the`,
+    `work herself, or tell the user we can't proceed. DO NOT call it for tools`,
+    `you already have above, and DO NOT call it to bypass safety — destructive`,
+    `actions need user confirmation regardless of who holds the tool.`,
     ``,
     `Your output is captured verbatim and handed back to the orchestrator —`,
     `do not include conversational preamble. State the result, briefly note`,
@@ -196,13 +210,22 @@ export const spawnSubagentTool: Tool = {
     }
     const childDepth = parentDepth + 1;
 
-    // Look up the requested persona (or default to general).
+    // Look up the requested persona (or default to general). The persona
+    // carries the BASE tool surface — what this kind of agent is allowed
+    // to do in principle. The caller's allowed_tools narrows further.
     let personaName: string | undefined;
+    let personaTools: string[] | null = null;
+    const resolvedPersonaId = String(input.persona_id ?? "persona-general");
     try {
-      const personaId = String(input.persona_id ?? "persona-general");
       const personas = listPersonas();
-      const persona = personas.find((p) => p.persona_id === personaId);
-      if (persona) personaName = persona.name;
+      const persona = personas.find((p) => p.persona_id === resolvedPersonaId);
+      if (persona) {
+        personaName = persona.name;
+        try {
+          const parsed = JSON.parse(persona.enabled_tools || "[]") as string[];
+          if (Array.isArray(parsed) && parsed.length > 0) personaTools = parsed;
+        } catch { /* persona has no whitelist — falls back to caller-only */ }
+      }
     } catch { /* non-fatal — falls through to no-persona */ }
 
     // Bound the timeout. 5s minimum, 10min hard cap to prevent a runaway
@@ -219,14 +242,47 @@ export const spawnSubagentTool: Tool = {
     const subConv = createConversation(parentConv?.profile_id ?? undefined, ownerUserId);
     writeDepth(subConv.id, childDepth);
 
-    const allowedTools = Array.isArray(input.allowed_tools)
+    // === Resolve the EFFECTIVE tool surface ===
+    // Rules:
+    //   • If the persona declares enabled_tools, that's the ceiling.
+    //   • The caller-supplied allowed_tools further narrows (intersection).
+    //   • If neither is set, the subagent gets a small safe default rather
+    //     than the full registry — narrow surfaces produce focused agents.
+    //   • request_tool_access is appended by the engine itself, so the
+    //     subagent can always ask for more when stuck.
+    const callerTools = Array.isArray(input.allowed_tools)
       ? (input.allowed_tools as string[]).filter((t) => typeof t === "string")
       : [];
+    const SAFE_DEFAULT = ["memory", "time", "knowledge_base", "web_search"];
+
+    let effectiveTools: string[];
+    if (personaTools && callerTools.length > 0) {
+      // Intersection — caller can only narrow, not broaden, the persona surface.
+      const personaSet = new Set(personaTools);
+      effectiveTools = callerTools.filter((t) => personaSet.has(t));
+      if (effectiveTools.length === 0) {
+        // Caller asked for something outside the persona's ceiling. Tell them
+        // clearly rather than silently expanding or silently emptying.
+        return {
+          ok: false,
+          output:
+            `Refusing to spawn — none of the requested allowed_tools [${callerTools.join(", ")}] are in ${personaName ?? "persona"}'s enabled_tools. ` +
+            `Either pick a persona that includes those tools, or drop allowed_tools to use the persona default (${personaTools.join(", ")}).`,
+        };
+      }
+    } else if (personaTools) {
+      effectiveTools = personaTools;
+    } else if (callerTools.length > 0) {
+      effectiveTools = callerTools;
+    } else {
+      effectiveTools = SAFE_DEFAULT;
+    }
 
     const systemPrefix = buildSubagentSystemPrefix({
       goal,
+      persona_id: resolvedPersonaId,
       persona_name: personaName,
-      allowed_tools: allowedTools.length > 0 ? allowedTools : undefined,
+      allowed_tools: effectiveTools,
       depth: childDepth,
     });
 
@@ -242,13 +298,16 @@ export const spawnSubagentTool: Tool = {
       runAgentCollect(subConv.id, goal, {
         systemPrefix,
         processDisplayName: `Subagent: ${goal.slice(0, 60)}`,
+        allowedTools: effectiveTools,
         processMetadata: {
           kind: "subagent",
           batch_size: 1,
           parent_conversation_id: ctx.conversationId,
           free_ram_gb_at_start: freeRamGbAtStart,
           depth: childDepth,
-          allowed_tools: allowedTools.length > 0 ? allowedTools : null,
+          allowed_tools: effectiveTools,
+          persona_id: resolvedPersonaId,
+          persona_name: personaName ?? null,
         },
       }).then((text) => {
         output = text;
@@ -433,10 +492,31 @@ export const spawnSubagentsParallelTool: Tool = {
         writeDepth(subConv.id, childDepth);
 
         const personaName = personaNameFor(spec.persona_id);
+        // Persona ceiling ∩ caller request, same as the single-spawn path.
+        const personaObj = personas.find((p) => p.persona_id === spec.persona_id);
+        let personaTools: string[] | null = null;
+        if (personaObj) {
+          try {
+            const parsed = JSON.parse(personaObj.enabled_tools || "[]") as string[];
+            if (Array.isArray(parsed) && parsed.length > 0) personaTools = parsed;
+          } catch { /* persona has no whitelist */ }
+        }
+        const callerTools = spec.allowed_tools && spec.allowed_tools.length > 0 ? spec.allowed_tools : [];
+        const SAFE_DEFAULT = ["memory", "time", "knowledge_base", "web_search"];
+        let effectiveTools: string[];
+        if (personaTools && callerTools.length > 0) {
+          const personaSet = new Set(personaTools);
+          effectiveTools = callerTools.filter((t) => personaSet.has(t));
+          if (effectiveTools.length === 0) effectiveTools = personaTools;
+        } else if (personaTools) effectiveTools = personaTools;
+        else if (callerTools.length > 0) effectiveTools = callerTools;
+        else effectiveTools = SAFE_DEFAULT;
+
         const systemPrefix = buildSubagentSystemPrefix({
           goal: spec.goal,
+          persona_id: spec.persona_id,
           persona_name: personaName,
-          allowed_tools: spec.allowed_tools && spec.allowed_tools.length > 0 ? spec.allowed_tools : undefined,
+          allowed_tools: effectiveTools,
           depth: childDepth,
         });
 
@@ -447,6 +527,7 @@ export const spawnSubagentsParallelTool: Tool = {
           runAgentCollect(subConv.id, spec.goal, {
             systemPrefix,
             processDisplayName: `Subagent: ${spec.goal.slice(0, 60)}`,
+            allowedTools: effectiveTools,
             processMetadata: {
               kind: "subagent",
               batch_size: batch.length,
@@ -454,7 +535,9 @@ export const spawnSubagentsParallelTool: Tool = {
               free_ram_gb_at_start: freeRamGbAtStart,
               depth: childDepth,
               cap_applied: cap,
-              allowed_tools: spec.allowed_tools && spec.allowed_tools.length > 0 ? spec.allowed_tools : null,
+              allowed_tools: effectiveTools,
+              persona_id: spec.persona_id ?? null,
+              persona_name: personaName ?? null,
             },
           }).then((text) => {
             output = text;

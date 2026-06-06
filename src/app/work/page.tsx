@@ -14,7 +14,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Workflow, Network, Calendar, Briefcase, ChevronRight, RefreshCw } from "lucide-react";
+import { Workflow, Network, Calendar, Briefcase, ChevronRight, RefreshCw, Users } from "lucide-react";
 
 type Kind = "graph" | "process" | "job" | "automation";
 type Row = {
@@ -147,19 +147,19 @@ export default function WorkPage() {
           <p className="lm-micro mb-2">Work</p>
           <h1 className="lm-display">Everything in motion</h1>
         </div>
-        <button
-          onClick={load}
-          className="lm-rail-link"
-          aria-label="Refresh"
-          style={{
-            display: "inline-flex", alignItems: "center", justifyContent: "center",
-            width: 38, height: 38, borderRadius: 12,
-            background: "hsl(0 0% 100% / 0.04)", border: "1px solid hsl(0 0% 100% / 0.08)",
-            color: "hsl(0 0% 100% / 0.7)",
-          }}
-        >
-          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-        </button>
+        <div className="flex items-center gap-2">
+          <Link href="/agents" className="lm-action lm-action--ghost" data-pulse="true">
+            <Users className="h-3.5 w-3.5" /> Agents
+          </Link>
+          <button
+            onClick={load}
+            aria-label="Refresh"
+            className="lm-icon-btn"
+            data-pulse="true"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
+        </div>
       </header>
 
       <div className="mb-8 flex gap-2 flex-wrap">
