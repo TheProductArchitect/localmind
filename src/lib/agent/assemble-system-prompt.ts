@@ -166,7 +166,6 @@ Requires the user's PIN: ${fmt(pin)}.`;
       // empty, the persona has the full registry available — list everything.
       // The system prompt block becomes a single source of truth: what Sora
       // can see here is exactly what she can call.
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { listBuiltinTools } = require("../tools") as typeof import("../tools");
       const enabledArr = JSON.parse(persona.enabled_tools || "[]") as string[];
       const enabledSet = enabledArr.length > 0 ? new Set(enabledArr) : null;
