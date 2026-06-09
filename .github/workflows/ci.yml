@@ -4,7 +4,20 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
-    branches: [ "main" ]
+    # Run on ALL pull requests, regardless of target branch, so a contributor
+    # opening a PR against a long-lived feature branch still gets the green/red.
+    branches: [ "**" ]
+  # Allow manual reruns from the Actions tab when chasing flakes.
+  workflow_dispatch:
+
+# Cancel in-flight runs for the same ref when a new push arrives — saves CI
+# minutes and gives faster signal on rapid pushes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   build_and_test:

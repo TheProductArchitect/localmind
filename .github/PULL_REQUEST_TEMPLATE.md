@@ -1,27 +1,33 @@
-## Description
-Please include a summary of the change and which issue is fixed. Please also include relevant motivation and context.
+<!--
+Thanks for opening a PR! Keep this terse — reviewers will read the diff,
+not the description. Use this template to tell them what to look for.
+-->
 
-Fixes # (issue)
+## What this changes
 
-## Type of change
-Please delete options that are not relevant.
+<!-- One or two sentences. What was wrong / missing, and what does this do
+about it. Link the issue: "Fixes #123" / "Closes #123". -->
 
-- [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
-- [ ] This change requires a documentation update
+## Why
 
-## How Has This Been Tested?
-Please describe the tests that you ran to verify your changes. Provide instructions so we can reproduce.
+<!-- The motivation, not the mechanics. If this fixes a bug, what was the
+user-visible symptom? If this adds a feature, who asked for it? -->
 
-- [ ] Ran local `npm run dev` and verified the feature
-- [ ] Checked that `npm run build` succeeds
-- [ ] Checked that `npm run lint` has no warnings/errors
+## How to verify
 
-## Checklist:
-- [ ] My code follows the style guidelines of this project
-- [ ] I have performed a self-review of my own code
-- [ ] I have commented my code, particularly in hard-to-understand areas
-- [ ] I have made corresponding changes to the documentation
-- [ ] My changes generate no new warnings
-- [ ] Any dependent changes have been merged and published in downstream modules
+<!-- Concrete reproducer for a reviewer. e.g. "Run `npm run dev`, open
+/agents, click X, see Y." If you added tests, this can just be "see new
+tests in __tests__/<file>". -->
+
+## Checklist
+
+- [ ] `npm run lint` passes with zero warnings
+- [ ] `npx tsc --noEmit` passes
+- [ ] `npm test` passes
+- [ ] `npm run build` passes
+- [ ] I added or updated tests for any change to safety-critical code
+      (`src/lib/auth/**`, `src/lib/agent/permission-guard.ts`,
+      `src/lib/agent/sanitize-tool-output.ts`)
+- [ ] I read [CONTRIBUTING.md](../CONTRIBUTING.md) and this PR follows it
+- [ ] No new outbound HTTP calls without an explicit user opt-in
+- [ ] No new migrations edit existing migration blocks

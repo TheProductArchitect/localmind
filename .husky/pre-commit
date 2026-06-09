@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+# Block obviously broken commits before they enter history.
+#
+# Runs:
+#   1. lint-staged → eslint on the actual staged files (fast, targeted)
+#   2. tsc --noEmit → full project typecheck (slower but catches cross-file regressions)
+#
+# To skip in an emergency: git commit --no-verify (please don't make this a habit).
+
+npx --no-install lint-staged
+npx --no-install tsc --noEmit
