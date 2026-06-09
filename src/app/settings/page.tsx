@@ -6,15 +6,20 @@ import { toast } from "@/components/toast";
 import {
   RefreshCw, ExternalLink, CheckCircle2, AlertCircle,
 } from "lucide-react";
-import { SETTINGS_SECTIONS, type SettingsSectionId } from "@/components/settings-sidebar";
+import { SETTINGS_SECTIONS, type SettingsSectionId, type HiddenSectionId } from "@/components/settings-sidebar";
 
-type SectionId = SettingsSectionId;
+// Tools is reachable via ?section=Tools but doesn't appear in the in-page
+// tab list — it's surfaced under "Context engineering" in the sidebar.
+type SectionId = SettingsSectionId | HiddenSectionId;
+const ALL_SECTION_IDS = [...SETTINGS_SECTIONS.map((s) => s.id), "Tools"] as const;
 
 function SettingsBody() {
   const params = useSearchParams();
   const raw = params.get("section");
   const section: SectionId = (
-    SETTINGS_SECTIONS.find((s) => s.id === raw)?.id ?? "General"
+    (ALL_SECTION_IDS as readonly string[]).includes(raw ?? "")
+      ? (raw as SectionId)
+      : "General"
   );
 
   return (

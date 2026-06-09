@@ -22,9 +22,12 @@ import {
   Database, Brain,
 } from "lucide-react";
 
+// In-page section tabs. Tools intentionally moved OUT of this list — it now
+// lives under the "Context engineering" group in the sidebar, alongside system
+// prompt, memory, context window, etc. The settings page still renders the
+// Tools section when reached via ?section=Tools (see settings/page.tsx).
 export const SETTINGS_SECTIONS = [
   { id: "General",          Icon: SettingsIcon },
-  { id: "Tools",            Icon: Wrench },
   { id: "Network",          Icon: Wifi },
   { id: "Providers",        Icon: Plug2 },
   { id: "Communications",   Icon: MessagesSquare },
@@ -32,6 +35,11 @@ export const SETTINGS_SECTIONS = [
   { id: "Data & Privacy",   Icon: Lock },
   { id: "Backup",           Icon: Archive },
 ] as const;
+
+// Sections reachable by URL but NOT shown in the in-page tab list — they
+// have their own entry points elsewhere in the sidebar.
+const HIDDEN_SECTION_IDS = ["Tools"] as const;
+export type HiddenSectionId = (typeof HIDDEN_SECTION_IDS)[number];
 
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]["id"];
 
@@ -56,26 +64,28 @@ const ADMIN_GROUPS: { title: string; links: { href: string; label: string; Icon:
     ],
   },
   {
-    title: "Knowledge detail",
+    // Everything that flows INTO the model on every turn lives here. Order
+    // mirrors how a prompt is composed: instructions, then capabilities,
+    // then recall, then retrieval, then the budget those things compete for,
+    // then which model receives the final composed prompt.
+    title: "Context engineering",
     links: [
-      { href: "/knowledge?tab=memory",  label: "Memory",        Icon: Brain },
-      { href: "/knowledge?tab=sharing", label: "Knowledge sharing", Icon: BookOpen },
+      { href: "/agent/system-prompt",        label: "System prompt",   Icon: Sparkles },
+      { href: "/settings?section=Tools",     label: "Tools",           Icon: Wrench },
+      { href: "/knowledge?tab=memory",       label: "Memory",          Icon: Brain },
+      { href: "/knowledge",                  label: "Knowledge base",  Icon: BookOpen },
+      { href: "/agent/context-window",       label: "Context window",  Icon: Sparkles },
+      { href: "/agent/routing",              label: "Model routing",   Icon: Sparkles },
+      { href: "/agents",                     label: "Agent memory",    Icon: Brain },
     ],
   },
   {
     title: "Fleet detail",
     links: [
-      { href: "/mcp",     label: "MCP servers", Icon: Plug },
-      { href: "/models",  label: "Models",      Icon: Box },
-      { href: "/plugins", label: "Plugins",     Icon: Package },
-    ],
-  },
-  {
-    title: "Agent config",
-    links: [
-      { href: "/agent/system-prompt",  label: "System prompt",   Icon: Sparkles },
-      { href: "/agent/context-window", label: "Context window",  Icon: Sparkles },
-      { href: "/agent/routing",        label: "Model routing",   Icon: Sparkles },
+      { href: "/mcp",                   label: "MCP servers",       Icon: Plug },
+      { href: "/models",                label: "Models",            Icon: Box },
+      { href: "/plugins",               label: "Plugins",           Icon: Package },
+      { href: "/knowledge?tab=sharing", label: "Knowledge sharing", Icon: BookOpen },
     ],
   },
   {
