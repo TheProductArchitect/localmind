@@ -18,7 +18,8 @@ import { exportToN8n } from "@/lib/graph/n8n-export";
 
 export const runtime = "nodejs";
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const graph = getGraph(params.id);
   const user = currentUser(req);
   if (!graph || !user) return NextResponse.json({ error: "Graph not found." }, { status: 404 });

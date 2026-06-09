@@ -1,9 +1,11 @@
+const path = require("path");
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: {
-    serverComponentsExternalPackages: ["better-sqlite3", "bcryptjs", "playwright", "pdfjs-dist", "mammoth", "epub2", "archiver"],
-    instrumentationHook: true,
-  },
+  // Next 15: moved out of experimental.
+  serverExternalPackages: ["better-sqlite3", "bcryptjs", "playwright", "pdfjs-dist", "mammoth", "epub2", "archiver"],
+  // Pin the workspace root so Next doesn't pick up the stray ~/package-lock.json.
+  outputFileTracingRoot: path.join(__dirname),
   webpack: (config) => {
     config.externals.push({ "better-sqlite3": "commonjs better-sqlite3" });
     return config;

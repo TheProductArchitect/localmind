@@ -16,13 +16,15 @@ function authorised(req: NextRequest, id: string) {
   return { conv, user };
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const { conv } = authorised(req, params.id);
   if (!conv) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json({ conversation: conv, messages: getMessages(params.id) });
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const { conv } = authorised(req, params.id);
   if (!conv) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const body = await req.json();

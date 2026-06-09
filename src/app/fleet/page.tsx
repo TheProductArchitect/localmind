@@ -450,7 +450,7 @@ function CapCard({ href, Icon, title, hint }:
 }
 
 function PairingPanel({ pairing, expiryRef, label, onLabelChange, onClose, onCopy }:
-  { pairing: PairingStart; expiryRef: React.RefObject<HTMLSpanElement>; label: string;
+  { pairing: PairingStart; expiryRef: React.RefObject<HTMLSpanElement | null>; label: string;
     onLabelChange: (v: string) => void; onClose: () => void; onCopy: () => void }) {
   return (
     <div className="lm-surface-1 mb-6 p-5" style={{ borderRadius: 14, borderColor: "hsl(0 0% 100% / 0.2)" }}>

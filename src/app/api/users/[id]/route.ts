@@ -5,7 +5,8 @@ import { requireRole } from "@/lib/auth/session";
 
 export const runtime = "nodejs";
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   if (!requireRole(req, "owner")) return NextResponse.json({ error: "Owner only" }, { status: 403 });
   const body = await req.json();
   const patch: any = {};
@@ -17,7 +18,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   if (!requireRole(req, "owner")) return NextResponse.json({ error: "Owner only" }, { status: 403 });
   deactivateUser(params.id);
   return NextResponse.json({ ok: true });

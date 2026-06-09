@@ -4,7 +4,8 @@ import { currentUser, isOwner } from "@/lib/auth/identity";
 
 export const runtime = "nodejs";
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const user = currentUser(req);
   const item = getMemory(params.id);
   if (!user || !item) return NextResponse.json({ error: "Not found" }, { status: 404 });

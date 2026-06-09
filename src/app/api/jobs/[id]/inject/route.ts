@@ -7,7 +7,8 @@ export const runtime = "nodejs";
 
 const Body = z.object({ message: z.string().min(1).max(2000) });
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const job = getJob(params.id);
   const user = currentUser(req);
   if (!job || !user) return NextResponse.json({ error: "Job not found." }, { status: 404 });

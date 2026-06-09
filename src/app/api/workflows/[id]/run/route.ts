@@ -4,7 +4,8 @@ import { runWorkflow } from "@/lib/workflow/executor";
 export const runtime = "nodejs";
 export const maxDuration = 600;
 
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   try {
     const result = await runWorkflow(params.id);
     return NextResponse.json(result);

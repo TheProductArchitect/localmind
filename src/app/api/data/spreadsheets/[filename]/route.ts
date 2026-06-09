@@ -50,7 +50,8 @@ function csvDecode(text: string): string[][] {
   return rows.filter((r) => !(r.length === 1 && r[0] === ""));
 }
 
-export async function GET(req: NextRequest, { params }: { params: { filename: string } }) {
+export async function GET(req: NextRequest, { params: paramsPromise }: { params: Promise<{ filename: string }> }) {
+  const params = await paramsPromise;
   // `filename` is actually a base64-url-encoded absolute path — the page sends
   // them this way to keep the URL safe even on macOS paths with spaces.
   let target: string;

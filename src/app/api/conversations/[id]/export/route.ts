@@ -3,7 +3,8 @@ import { getConversation, getMessages } from "@/lib/db/queries";
 
 export const runtime = "nodejs";
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const conv = getConversation(params.id);
   if (!conv) return new Response("Not found", { status: 404 });
   const messages = getMessages(params.id);

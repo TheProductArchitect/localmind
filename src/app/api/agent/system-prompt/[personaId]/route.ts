@@ -7,7 +7,8 @@ import { assembleSystemPrompt, renderBuiltinPublic } from "@/lib/agent/assemble-
 
 export const runtime = "nodejs";
 
-export async function GET(req: NextRequest, { params }: { params: { personaId: string } }) {
+export async function GET(req: NextRequest, { params: paramsPromise }: { params: Promise<{ personaId: string }> }) {
+  const params = await paramsPromise;
   const persona = getPersona(params.personaId);
   if (!persona) return NextResponse.json({ error: "Persona not found." }, { status: 404 });
 
@@ -51,7 +52,8 @@ const PatchBody = z.object({
   blocks: z.array(BlockSchema).max(64),
 });
 
-export async function PATCH(req: NextRequest, { params }: { params: { personaId: string } }) {
+export async function PATCH(req: NextRequest, { params: paramsPromise }: { params: Promise<{ personaId: string }> }) {
+  const params = await paramsPromise;
   if (!getPersona(params.personaId)) {
     return NextResponse.json({ error: "Persona not found." }, { status: 404 });
   }

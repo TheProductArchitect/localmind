@@ -117,7 +117,8 @@ async function startLocalmind(): Promise<Result> {
   };
 }
 
-export async function POST(_req: NextRequest, { params }: { params: { name: string; action: string } }) {
+export async function POST(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ name: string; action: string }> }) {
+  const params = await paramsPromise;
   const name = params.name as (typeof VALID_SERVICES)[number];
   const action = params.action as (typeof VALID_ACTIONS)[number];
   if (!(VALID_SERVICES as readonly string[]).includes(name) || !(VALID_ACTIONS as readonly string[]).includes(action)) {

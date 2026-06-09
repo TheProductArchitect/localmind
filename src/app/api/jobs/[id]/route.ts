@@ -15,7 +15,8 @@ function authorise(req: NextRequest, jobId: string) {
   return { job, user };
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const { job } = authorise(req, params.id);
   if (!job) return NextResponse.json({ error: "Job not found." }, { status: 404 });
   return NextResponse.json({
@@ -24,7 +25,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   });
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const { job } = authorise(req, params.id);
   if (!job) return NextResponse.json({ error: "Job not found." }, { status: 404 });
   updateJobStatus(params.id, "cancelled");

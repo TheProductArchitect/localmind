@@ -14,7 +14,8 @@ const PatchBody = z
   })
   .strict();
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   if (!getRule(params.id)) return NextResponse.json({ error: "Rule not found." }, { status: 404 });
   const parsed = PatchBody.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload." }, { status: 400 });
@@ -24,7 +25,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   return NextResponse.json({ rule: getRule(params.id) });
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const ok = deleteRule(params.id);
   return NextResponse.json({ ok });
 }

@@ -3,7 +3,8 @@ import { updateWorkflow, deleteWorkflow, getWorkflow, listWorkflowRuns } from "@
 
 export const runtime = "nodejs";
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const wf = getWorkflow(params.id);
   if (!wf) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json({
@@ -12,13 +13,15 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   });
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const body = await req.json();
   updateWorkflow(params.id, body);
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   deleteWorkflow(params.id);
   return NextResponse.json({ ok: true });
 }

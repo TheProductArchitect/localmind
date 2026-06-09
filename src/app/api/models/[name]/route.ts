@@ -3,7 +3,8 @@ import { deleteOllamaModel } from "@/lib/providers/ollama";
 
 export const runtime = "nodejs";
 
-export async function DELETE(_req: NextRequest, { params }: { params: { name: string } }) {
+export async function DELETE(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ name: string }> }) {
+  const params = await paramsPromise;
   try {
     await deleteOllamaModel(decodeURIComponent(params.name));
     return NextResponse.json({ ok: true });

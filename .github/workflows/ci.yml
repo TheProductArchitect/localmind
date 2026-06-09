@@ -37,8 +37,18 @@ jobs:
         
       - name: Build Application
         run: npm run build
-        
+
+      # The isolation test assumes a fresh database. The build step can touch
+      # SQLite via any debug/route module that pre-renders, so we wipe the
+      # data dir AND point the runtime at an isolated path before starting.
+      - name: Reset SQLite data dir for isolation test
+        run: |
+          rm -rf /tmp/localmind-ci-data
+          mkdir -p /tmp/localmind-ci-data
+
       - name: Start Application in Background
+        env:
+          LOCALMIND_DATA_DIR: /tmp/localmind-ci-data
         run: npm run start &
         
       - name: Wait for server to boot

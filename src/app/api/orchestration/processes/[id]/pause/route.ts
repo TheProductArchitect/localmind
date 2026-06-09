@@ -9,7 +9,8 @@ export const runtime = "nodejs";
 // suspends until /resume. For now we set status='paused' so the UI reflects
 // intent — full mid-iteration suspension lands when the engine's stream loop
 // is refactored to await a "resume" signal in V5.1.
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const proc = getProcess(params.id);
   const user = currentUser(req);
   if (!proc || !user) return NextResponse.json({ error: "Process not found." }, { status: 404 });

@@ -17,7 +17,8 @@ import { getPersona } from "@/lib/db/personas";
 
 export const runtime = "nodejs";
 
-export async function GET(req: NextRequest, { params }: { params: { personaId: string } }) {
+export async function GET(req: NextRequest, { params: paramsPromise }: { params: Promise<{ personaId: string }> }) {
+  const params = await paramsPromise;
   if (!getPersona(params.personaId)) {
     return NextResponse.json({ error: "Persona not found." }, { status: 404 });
   }
@@ -33,7 +34,8 @@ const PostBody = z.object({
   status: z.enum(["committed", "proposed"]).default("committed"),
 });
 
-export async function POST(req: NextRequest, { params }: { params: { personaId: string } }) {
+export async function POST(req: NextRequest, { params: paramsPromise }: { params: Promise<{ personaId: string }> }) {
+  const params = await paramsPromise;
   if (!getPersona(params.personaId)) {
     return NextResponse.json({ error: "Persona not found." }, { status: 404 });
   }
@@ -50,7 +52,8 @@ export async function POST(req: NextRequest, { params }: { params: { personaId: 
   return NextResponse.json({ memory: created });
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { personaId: string } }) {
+export async function PATCH(req: NextRequest, { params: paramsPromise }: { params: Promise<{ personaId: string }> }) {
+  const params = await paramsPromise;
   const memId = req.nextUrl.searchParams.get("id");
   if (!memId) return NextResponse.json({ error: "id is required" }, { status: 400 });
   const m = getMemory(memId);
@@ -65,7 +68,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { personaId:
   return NextResponse.json({ ok: true, memory: getMemory(memId) });
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { personaId: string } }) {
+export async function DELETE(req: NextRequest, { params: paramsPromise }: { params: Promise<{ personaId: string }> }) {
+  const params = await paramsPromise;
   const memId = req.nextUrl.searchParams.get("id");
   if (!memId) return NextResponse.json({ error: "id is required" }, { status: 400 });
   const m = getMemory(memId);
