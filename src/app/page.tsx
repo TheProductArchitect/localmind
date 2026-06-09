@@ -60,6 +60,13 @@ function ChatInner() {
   const [persona] = useState("general");
   const [agentMode, setAgentMode] = useState<"auto" | "plan" | "ask">("ask");
 
+  // Fleet chat relay — when a peer is selected, send() routes through
+  // /api/fleet/peers/[id]/chat instead of the local streaming /api/chat.
+  // The selector defaults to null = "this machine".
+  type FleetPeer = { peer_node_id: string; label: string | null };
+  const [peers, setPeers] = useState<FleetPeer[]>([]);
+  const [runOnPeer, setRunOnPeer] = useState<string | null>(null);
+
   // Conversation-mode handshake with <ConversationButton/>. When streaming
   // ends and `conversationActive` is on, we hand the latest assistant reply
   // over via `assistantToSpeak`; the button reads it and clears it back via
@@ -93,6 +100,13 @@ function ChatInner() {
         }
       });
     loadConversations();
+    // Best-effort peer fetch for the "Run on" composer selector. Failure is
+    // silent — if the user isn't an owner the endpoint 403s and we just hide
+    // the dropdown.
+    fetch("/api/fleet/peers")
+      .then((r) => (r.ok ? r.json() : { peers: [] }))
+      .then((j) => setPeers((j.peers as FleetPeer[]) || []))
+      .catch(() => setPeers([]));
   }, [loadConversations]);
 
   async function changeMode(next: "auto" | "plan" | "ask") {
@@ -320,6 +334,47 @@ function ChatInner() {
     }
     setInput("");
     setThread((t) => [...t, { kind: "user", content: text }, { kind: "assistant", content: "" }]);
+
+    // Fleet chat relay: when the user selects a peer, route the turn through
+    // /api/fleet/peers/[id]/chat instead of the local streaming endpoint. The
+    // relay is non-streaming for v1 (single response back); the executor's
+    // local permission profile + destructive-action floor still apply.
+    if (runOnPeer) {
+      try {
+        setStreaming(true);
+        const res = await fetch(`/api/fleet/peers/${runOnPeer}/chat`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ conversation_id: convId, message: text, persona_id: persona }),
+        });
+        const j = await res.json();
+        if (!res.ok) {
+          setError(j.error ?? `Peer returned ${res.status}`);
+          setThread((t) => {
+            const out = [...t];
+            for (let i = out.length - 1; i >= 0; i--) {
+              if (out[i].kind === "assistant") { out.splice(i, 1); break; }
+            }
+            return out;
+          });
+        } else {
+          setThread((t) => {
+            const out = [...t];
+            for (let i = out.length - 1; i >= 0; i--) {
+              if (out[i].kind === "assistant") { out[i] = { kind: "assistant", content: j.reply }; break; }
+            }
+            return out;
+          });
+        }
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setStreaming(false);
+        loadConversations();
+      }
+      return;
+    }
+
     streamChat(convId!, { message: text, persona });
   }
 
@@ -566,10 +621,37 @@ function ChatInner() {
         </div>
 
         <footer className="lm-composer">
+          {peers.length > 0 && (
+            <div className="mx-auto flex items-center gap-2 mb-2" style={{ maxWidth: 720 }}>
+              <span className="lm-micro" style={{ color: "hsl(0 0% 100% / 0.4)" }}>Run on</span>
+              <select
+                value={runOnPeer ?? ""}
+                onChange={(e) => setRunOnPeer(e.target.value || null)}
+                className="lm-peer-select"
+                aria-label="Choose which machine runs this turn"
+              >
+                <option value="">This machine</option>
+                {peers.map((p) => (
+                  <option key={p.peer_node_id} value={p.peer_node_id}>
+                    {p.label || p.peer_node_id.slice(0, 12)}
+                  </option>
+                ))}
+              </select>
+              {runOnPeer && (
+                <span
+                  className="lm-micro"
+                  style={{ color: "hsl(40 80% 70%)", textTransform: "none", letterSpacing: 0 }}
+                  title="This turn runs on a paired peer over a signed envelope; the peer's local permission floor applies."
+                >
+                  ↗ remote execution
+                </span>
+              )}
+            </div>
+          )}
           <div className="mx-auto flex items-end gap-2" style={{ maxWidth: 720 }}>
             <Textarea
               rows={1}
-              placeholder="Message Sora…"
+              placeholder={runOnPeer ? "Message Sora on the selected peer…" : "Message Sora…"}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
@@ -769,6 +851,17 @@ function ChatInner() {
           font-size: 11px; color: hsl(0 0% 100% / 0.4);
         }
         .lm-turn__action:hover { color: hsl(0 0% 100% / 0.8); }
+
+        .lm-peer-select {
+          background: hsl(0 0% 100% / 0.04);
+          border: 1px solid hsl(0 0% 100% / 0.12);
+          color: hsl(0 0% 100% / 0.85);
+          border-radius: 6px;
+          padding: 2px 8px;
+          font-size: 11px;
+          font-family: ui-monospace, monospace;
+        }
+        .lm-peer-select:focus { outline: 1px solid hsl(0 0% 100% / 0.3); }
 
         .lm-regen {
           display: inline-flex; align-items: center; gap: 6px;

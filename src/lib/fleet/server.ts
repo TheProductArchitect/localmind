@@ -361,6 +361,18 @@ function registerBuiltinHandlers(): void {
     }
   );
 
+  // chat-relay — peer is driving an interactive chat session on us. Capability
+  // gated (must be opted in per-peer), rate-limited, loop-guarded; the handler
+  // runs through the local engine so the destructive-action floor and
+  // permission profile still apply.
+  registerHandler<import("./handlers/chat-relay").ChatRelayRequest, import("./handlers/chat-relay").ChatRelayResponse>(
+    "chat-relay",
+    async ({ envelope, senderNodeId }) => {
+      const { handleChatRelay } = await import("./handlers/chat-relay");
+      return handleChatRelay({ envelope, senderNodeId });
+    }
+  );
+
   // audit-query — peer asks for one of our audit rows so they can verify a
   // cross-reference they recorded. The handler only releases rows the
   // requester has a recorded fleet_audit_links entry for, so this isn't

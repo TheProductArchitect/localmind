@@ -34,6 +34,7 @@ export type EnvelopeKind =
   | "knowledge-fetch"
   | "pair-request"
   | "pair-confirm"
+  | "chat-relay"
   // Response kinds — the server wraps every reply as `${request}-result`
   | "capabilities-result"
   | "capabilities-pull-result"
@@ -44,7 +45,8 @@ export type EnvelopeKind =
   | "knowledge-fetch-result"
   | "knowledge-response"
   | "pair-request-result"
-  | "pair-confirm-result";
+  | "pair-confirm-result"
+  | "chat-relay-result";
 
 export type SignedEnvelope<P = unknown> = {
   v: number;                 // envelope version
