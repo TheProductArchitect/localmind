@@ -78,5 +78,10 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
+  // Node runtime is needed so process.env is read at request time. The edge
+  // runtime inlines env vars at build, which made LOCALMIND_JWT_SECRET
+  // effectively undefined in CI prod runs even when the variable was set at
+  // job level. Requires experimental.nodeMiddleware in next.config.js.
+  runtime: "nodejs",
   matcher: ["/api/:path*"],
 };
