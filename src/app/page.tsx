@@ -63,7 +63,14 @@ function ChatInner() {
   // Fleet chat relay — when a peer is selected, send() routes through
   // /api/fleet/peers/[id]/chat instead of the local streaming /api/chat.
   // The selector defaults to null = "this machine".
-  type FleetPeer = { peer_node_id: string; label: string | null };
+  type FleetPeer = {
+    peer_node_id: string;
+    label: string | null;
+    primary_addr: string | null;
+    paired_at: number;
+    last_seen_at: number | null;
+    trusted: number;
+  };
   const [peers, setPeers] = useState<FleetPeer[]>([]);
   const [runOnPeer, setRunOnPeer] = useState<string | null>(null);
 
@@ -637,15 +644,40 @@ function ChatInner() {
                   </option>
                 ))}
               </select>
-              {runOnPeer && (
-                <span
-                  className="lm-micro"
-                  style={{ color: "hsl(40 80% 70%)", textTransform: "none", letterSpacing: 0 }}
-                  title="This turn runs on a paired peer over a signed envelope; the peer's local permission floor applies."
-                >
-                  ↗ remote execution
-                </span>
-              )}
+              {runOnPeer && (() => {
+                const p = peers.find((x) => x.peer_node_id === runOnPeer);
+                if (!p) return null;
+                const fmt = (ms: number | null) =>
+                  ms == null ? "never" : new Date(ms).toLocaleString();
+                const tooltip = [
+                  `node_id      ${p.peer_node_id}`,
+                  `label        ${p.label ?? "(unset)"}`,
+                  `address      ${p.primary_addr ?? "(unknown)"}`,
+                  `trusted      ${p.trusted ? "yes" : "no"}`,
+                  `paired       ${fmt(p.paired_at)}`,
+                  `last seen    ${fmt(p.last_seen_at)}`,
+                ].join("\n");
+                return (
+                  <>
+                    <span
+                      className="lm-micro"
+                      style={{ color: "hsl(40 80% 70%)", textTransform: "none", letterSpacing: 0 }}
+                      title="This turn runs on a paired peer over a signed envelope; the peer's local permission floor applies. Peer-relayed chats are part of a bilateral audit chain and cannot be deleted."
+                    >
+                      ↗ remote execution
+                    </span>
+                    <span
+                      role="img"
+                      aria-label={`Peer details: ${tooltip}`}
+                      title={tooltip}
+                      className="lm-peer-info"
+                      tabIndex={0}
+                    >
+                      ⓘ
+                    </span>
+                  </>
+                );
+              })()}
             </div>
           )}
           <div className="mx-auto flex items-end gap-2" style={{ maxWidth: 720 }}>
@@ -862,6 +894,25 @@ function ChatInner() {
           font-family: ui-monospace, monospace;
         }
         .lm-peer-select:focus { outline: 1px solid hsl(0 0% 100% / 0.3); }
+        .lm-peer-info {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 16px;
+          height: 16px;
+          font-size: 11px;
+          line-height: 1;
+          color: hsl(0 0% 100% / 0.5);
+          border: 1px solid hsl(0 0% 100% / 0.18);
+          border-radius: 50%;
+          cursor: help;
+          background: hsl(0 0% 100% / 0.04);
+        }
+        .lm-peer-info:hover, .lm-peer-info:focus {
+          color: hsl(0 0% 100% / 0.9);
+          border-color: hsl(0 0% 100% / 0.35);
+          outline: none;
+        }
 
         .lm-regen {
           display: inline-flex; align-items: center; gap: 6px;

@@ -13,13 +13,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  * These tests pin those defenses. Bypassing any of them is a security regression.
  */
 
+// Default fixture: a freshly-paired peer ("new" trust class). Individual
+// tests override paired_at / last_seen_at to exercise established / active /
+// idle-reconnect cases.
 const peerRecord = {
   peer_node_id: "peer-A",
   pubkey_pem: "<test-key>",
   label: "DGX Spark",
   primary_addr: "192.168.1.20:7773",
-  paired_at: 1,
-  last_seen_at: 1,
+  paired_at: Date.now() - 60_000,   // paired 1 min ago → "new"
+  last_seen_at: Date.now() - 1_000, // seen 1s ago
   capabilities_json: "{}",
   policy_json: "{}",
   trusted: 1,
@@ -61,7 +64,7 @@ vi.mock("../src/lib/agent/engine", () => ({
   runAgentCollect: vi.fn(async (_convId: string, message: string) => `Echo: ${message}`),
 }));
 
-import { handleChatRelay, markOutboundActive, clearOutboundActive, __resetChatRelayState } from "../src/lib/fleet/handlers/chat-relay";
+import { handleChatRelay, markOutboundActive, clearOutboundActive, __resetChatRelayState, classifyPeerTrust } from "../src/lib/fleet/handlers/chat-relay";
 import type { SignedEnvelope } from "../src/lib/fleet/envelope";
 
 function makeEnvelope(payload: any): SignedEnvelope<any> {
@@ -139,9 +142,29 @@ describe("chat-relay handler", () => {
     });
   });
 
-  describe("rate limit", () => {
-    it("admits up to chat_relay_rate_per_min in the window, then refuses", async () => {
-      // Limit set to 5 in the policy mock above.
+  describe("smart rate limit (trust-class aware)", () => {
+    it("classifyPeerTrust: established when paired > 7d AND seen ≤ 6h", () => {
+      const now = Date.now();
+      expect(classifyPeerTrust({ paired_at: now - 8 * 24 * 3600 * 1000, last_seen_at: now - 60_000 })).toBe("established");
+    });
+
+    it("classifyPeerTrust: active when paired > 24h AND seen ≤ 24h", () => {
+      const now = Date.now();
+      expect(classifyPeerTrust({ paired_at: now - 2 * 24 * 3600 * 1000, last_seen_at: now - 12 * 3600 * 1000 })).toBe("active");
+    });
+
+    it("classifyPeerTrust: new when freshly paired", () => {
+      const now = Date.now();
+      expect(classifyPeerTrust({ paired_at: now - 10_000, last_seen_at: now - 1000 })).toBe("new");
+    });
+
+    it("classifyPeerTrust: idle-reconnect when last seen > 24h ago", () => {
+      const now = Date.now();
+      expect(classifyPeerTrust({ paired_at: now - 10 * 24 * 3600 * 1000, last_seen_at: now - 48 * 3600 * 1000 })).toBe("idle-reconnect");
+    });
+
+    it("a 'new' peer admits up to base cap, then refuses", async () => {
+      // Default fixture is "new". Base cap = 5 (policyOverride below).
       for (let i = 0; i < 5; i++) {
         const r = await handleChatRelay({
           envelope: makeEnvelope(validPayload()),
@@ -155,6 +178,38 @@ describe("chat-relay handler", () => {
       });
       expect(sixth.ok).toBe(false);
       expect(sixth.error).toMatch(/rate limit/i);
+    });
+
+    it("an 'established' peer bypasses the rate limit entirely", async () => {
+      const now = Date.now();
+      peerRecord.paired_at = now - 8 * 24 * 3600 * 1000;
+      peerRecord.last_seen_at = now - 60_000;
+      // 50 turns must all succeed — established peers get unlimited under
+      // the user's "always connected → no rate limit" rule.
+      for (let i = 0; i < 50; i++) {
+        const r = await handleChatRelay({
+          envelope: makeEnvelope(validPayload()),
+          senderNodeId: "peer-A",
+        });
+        expect(r.ok, `turn ${i + 1}`).toBe(true);
+      }
+      // Restore for the next test
+      peerRecord.paired_at = now - 60_000;
+      peerRecord.last_seen_at = now - 1_000;
+    });
+
+    it("an 'idle-reconnect' peer is tightened to ~30% of base cap", async () => {
+      const now = Date.now();
+      peerRecord.paired_at = now - 10 * 24 * 3600 * 1000;
+      peerRecord.last_seen_at = now - 48 * 3600 * 1000;
+      // Base cap is 5; idle-reconnect cap = floor(5 * 0.3) = 1.
+      const first = await handleChatRelay({ envelope: makeEnvelope(validPayload()), senderNodeId: "peer-A" });
+      expect(first.ok).toBe(true);
+      const second = await handleChatRelay({ envelope: makeEnvelope(validPayload()), senderNodeId: "peer-A" });
+      expect(second.ok).toBe(false);
+      expect(second.error).toMatch(/idle-reconnect/);
+      peerRecord.paired_at = now - 60_000;
+      peerRecord.last_seen_at = now - 1_000;
     });
   });
 

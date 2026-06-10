@@ -92,17 +92,67 @@ export function clearOutboundActive(peerNodeId: string): void {
   outboundActivePeers.delete(peerNodeId);
 }
 
-function bumpInbound(peerNodeId: string): boolean {
+/**
+ * "Established" peers — ones we've been paired with for a while and that are
+ * actively on the network right now — bypass the rate limit. Brand-new or
+ * long-idle peers get the configured cap (and idle reconnect is tightened
+ * further since a long-quiet device suddenly waking up is the textbook
+ * compromised-machine pattern).
+ *
+ * Heuristic boundaries (intentionally simple — no ML, no scoring; the user
+ * can tune them per-peer via policy_json):
+ *
+ *   ESTABLISHED   paired > 7d  AND  last_seen ≤ 6h        → no rate limit
+ *   ACTIVE        paired > 24h AND  last_seen ≤ 24h       → 2× cap
+ *   NEW           paired ≤ 24h                            → 1× cap (default 30/min)
+ *   IDLE-RECONNECT last_seen > 24h ago                    → 0.3× cap (cooldown)
+ */
+export type PeerTrustClass = "established" | "active" | "new" | "idle-reconnect";
+
+export function classifyPeerTrust(peer: { paired_at: number; last_seen_at: number | null }): PeerTrustClass {
+  const now = Date.now();
+  const pairedAgeMs = now - peer.paired_at;
+  const seenAgeMs = peer.last_seen_at == null ? Infinity : now - peer.last_seen_at;
+  const HOUR = 60 * 60 * 1000;
+  const DAY = 24 * HOUR;
+  const WEEK = 7 * DAY;
+
+  if (seenAgeMs > DAY) return "idle-reconnect";
+  if (pairedAgeMs > WEEK && seenAgeMs <= 6 * HOUR) return "established";
+  if (pairedAgeMs > DAY && seenAgeMs <= DAY) return "active";
+  return "new";
+}
+
+function bumpInbound(peerNodeId: string): { ok: true } | { ok: false; reason: string } {
+  const peer = getPeer(peerNodeId);
+  if (!peer) return { ok: false, reason: "Unknown peer" };
+
+  const trust = classifyPeerTrust(peer);
+
+  // Established peers bypass the rate limit entirely — they're long-paired
+  // AND currently on the network, exactly the user's "always connected"
+  // scenario.
+  if (trust === "established") return { ok: true };
+
+  const baseCap = parsePeerPolicy(peer).chat_relay_rate_per_min;
+  let effectiveCap = baseCap;
+  if (trust === "active") effectiveCap = baseCap * 2;
+  else if (trust === "idle-reconnect") effectiveCap = Math.max(1, Math.floor(baseCap * 0.3));
+
   const now = Date.now();
   const entry = inboundCounters.get(peerNodeId);
   if (!entry || now - entry.windowStart > RATE_WINDOW_MS) {
     inboundCounters.set(peerNodeId, { count: 1, windowStart: now });
-    return true;
+    return { ok: true };
   }
   entry.count += 1;
-  const peer = getPeer(peerNodeId);
-  const cap = peer ? parsePeerPolicy(peer).chat_relay_rate_per_min : 30;
-  return entry.count <= cap;
+  if (entry.count > effectiveCap) {
+    return {
+      ok: false,
+      reason: `Rate limit exceeded — ${effectiveCap}/min for ${trust} peer (base ${baseCap}/min, trust class '${trust}').`,
+    };
+  }
+  return { ok: true };
 }
 
 /**
@@ -174,14 +224,15 @@ export async function handleChatRelay(args: {
     };
   }
 
-  // (3) Rate limit.
-  if (!bumpInbound(peerNodeId)) {
+  // (3) Smart rate limit. Established peers bypass; new/idle peers tighter.
+  const rateCheck = bumpInbound(peerNodeId);
+  if (!rateCheck.ok) {
     return {
       ok: false,
       executor_audit_id: 0,
       executor_conversation_id: "",
       reply: "",
-      error: `Rate limit exceeded — ${policy.chat_relay_rate_per_min} requests/min. Try again later.`,
+      error: rateCheck.reason,
     };
   }
 

@@ -25,6 +25,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       LOCALMIND_JWT_SECRET: supersecrettesting
+      # Pin every step to an isolated data dir so build, unit tests, and the
+      # isolation harness all share the SAME empty SQLite directory. Without
+      # this at job level, `next build` would seed rows into the runner's
+      # default ~/.localmind that then leaked into the isolation test.
+      LOCALMIND_DATA_DIR: /tmp/localmind-ci-data
     
     steps:
       - name: Checkout Code
@@ -51,17 +56,17 @@ jobs:
       - name: Build Application
         run: npm run build
 
-      # The isolation test assumes a fresh database. The build step can touch
-      # SQLite via any debug/route module that pre-renders, so we wipe the
-      # data dir AND point the runtime at an isolated path before starting.
+      # The build step compiles routes that import db modules, which on first
+      # touch will create schema rows in LOCALMIND_DATA_DIR. The isolation
+      # harness needs a virgin database, so we wipe the dir AFTER build and
+      # before starting the server. The job-level env var keeps every later
+      # step (server start, test runner) pointed at the same isolated path.
       - name: Reset SQLite data dir for isolation test
         run: |
           rm -rf /tmp/localmind-ci-data
           mkdir -p /tmp/localmind-ci-data
 
       - name: Start Application in Background
-        env:
-          LOCALMIND_DATA_DIR: /tmp/localmind-ci-data
         run: npm run start &
         
       - name: Wait for server to boot
