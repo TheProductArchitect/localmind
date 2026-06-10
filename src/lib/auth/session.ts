@@ -22,9 +22,17 @@ export function getAuth(req: NextRequest): Auth | null {
       const user = getUser(payload.userId);
       if (user && user.active) return { user, sessionId: req.cookies.get("lm_session")?.value || null };
     }
+    // The caller presented a token but it didn't verify (expired, tampered,
+    // signed under a different secret, or pointed at a deleted user). DO NOT
+    // fall back to localhost-owner here — that would silently swap their
+    // identity for the owner's and let any cross-user action succeed under
+    // the wrong principal. Refuse the request.
+    return null;
   }
 
-  // Fallback: localhost without login requirement → owner auto-login
+  // No token: optionally fall back to owner on localhost so the no-login
+  // single-user experience keeps working. This only kicks in when there is
+  // genuinely no auth attempt on the request.
   const s = getSettings();
   const host = req.headers.get("host") || "";
   const isLocalhost = host.startsWith("localhost") || host.startsWith("127.0.0.1");
