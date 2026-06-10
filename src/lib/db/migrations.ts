@@ -896,6 +896,24 @@ configMigrations.push({
   },
 });
 
+// v13: sharpen the General persona's display description.
+// The original seed read "Friendly, general-purpose assistant." — accurate but
+// underspecified. The persona is the one the user actually talks to (Sora);
+// her job is BOTH to do small tasks directly AND to split larger ones into
+// units she delegates to the specialist sub-personas. Naming that explicitly
+// here means the UI (persona picker, agent roster, system-prompt page) all
+// surface the dual identity, not just the prompt assembler.
+configMigrations.push({
+  version: 13,
+  up: (db) => {
+    db.prepare("UPDATE personas SET description=?, updated_at=? WHERE persona_id=?").run(
+      "Sora — general assistant and orchestrator. Handles small tasks directly; for anything that decomposes into specialised work, splits it up and delegates to the right sub-persona (Writer, Coder, Researcher, Scheduler, Summarizer, Reviewer, Librarian, Analyst, Comms).",
+      Date.now(),
+      "persona-general"
+    );
+  },
+});
+
 const knowledgeMigrations: Migration[] = [
   {
     version: 1,
