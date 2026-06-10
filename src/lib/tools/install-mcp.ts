@@ -183,7 +183,7 @@ export const installMcpServerTool: Tool = {
   definition: {
     name: "install_mcp_server",
     description:
-      "Register an MCP server with this LocalMind so its tools become available to you on the next connection sweep. Use this when the user asks you to add a new capability they've named (e.g. 'install the GitHub MCP', 'give yourself filesystem access via the official MCP'). Supports five install styles: 'npm' (npx -y <package>), 'pipx' (pipx run <package>), 'uvx' (uvx <package>), 'docker' (docker run --rm -i <image>), and 'manual' (caller specifies command + args). Requires user confirmation EVERY time — even in auto mode — because the registered launch command will execute as their user. Returns the new server's id and the launch preview the user approved.",
+      "Register an MCP server so its tools become available on the next connection sweep. Sources: npm, pipx, uvx, docker, or manual (caller supplies command + args). Requires user confirmation every time — even in auto mode.",
     parameters: {
       type: "object",
       properties: {
@@ -191,12 +191,12 @@ export const installMcpServerTool: Tool = {
           type: "string",
           enum: [...INSTALL_MCP_SOURCES],
           description:
-            "Where the MCP server lives. Use 'npm' for Node-based servers (most common — auto-fetched by npx). Use 'pipx' for persistent Python installs in isolated venvs. Use 'uvx' for ephemeral Python (fast first-run). Use 'docker' for containerised servers. Use 'manual' if the package isn't published via any of those and the user gave you a direct command.",
+            "Install style. npm/pipx/uvx/docker each map to a standard launch command; 'manual' takes a raw command + args.",
         },
         package: {
           type: "string",
           description:
-            "Package or image identifier. For npm: the npm package name (e.g. '@modelcontextprotocol/server-github'). For pipx/uvx: the PyPI distribution name. For docker: the image tag (e.g. 'mcp/serv:latest'). Omit for source='manual'.",
+            "Package name (npm/pipx/uvx) or image tag (docker). Omit when source='manual'.",
         },
         name: {
           type: "string",
@@ -211,7 +211,7 @@ export const installMcpServerTool: Tool = {
           type: "object",
           additionalProperties: { type: "string" },
           description:
-            "Environment variables the server needs (API keys, region, etc.). Stored encrypted at rest. Do NOT include secrets in the package name — put them here.",
+            "Env vars the server needs (API keys, etc.). Stored encrypted.",
         },
         command: {
           type: "string",
@@ -226,7 +226,7 @@ export const installMcpServerTool: Tool = {
           type: "string",
           enum: ["allow", "ask", "pin"],
           description:
-            "Default permission tier the server's child tools will be created with. Defaults to 'ask' so the user gets prompted for each one until they choose to relax it.",
+            "Default tier for the server's child tools. Defaults to 'ask'.",
         },
       },
       required: ["source"],

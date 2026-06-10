@@ -73,7 +73,7 @@ export const piCodeTool: Tool = {
   definition: {
     name: "pi_code",
     description:
-      "Hand off a coding task to the pi.dev coding agent (https://pi.dev). pi runs locally as a CLI and edits files in the chosen working directory. Use this for substantial multi-file refactors or feature implementation that a chat model would struggle with. Operations: run (start a coding task), status (check if pi is installed).",
+      "Delegate substantial multi-file coding to the local pi.dev CLI. Use for refactors / feature implementation that a chat model would struggle with. Operations: run, status.",
     parameters: {
       type: "object",
       properties: {

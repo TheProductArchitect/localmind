@@ -43,7 +43,7 @@ export const agentMemoryAdminTool: Tool = {
   definition: {
     name: "agent_memory",
     description:
-      "Read, write, or retire LESSONS attached to a specific sub-persona. Call this when you observe a sub-persona performing well or poorly across runs and want the next spawn of that persona to learn from it. Lessons render into the sub-persona's system prefix at spawn time. Operations: 'list' (review current lessons for a persona), 'record' (add a lesson the persona should remember), 'retire' (soft-delete a lesson that's no longer useful or has been superseded). Use 'lesson' for positive guidance, 'warning' for failure patterns to avoid, 'preference' for stylistic/format defaults, 'fact' for static reference info. Keep entries terse — one or two sentences max — they all stack into the subagent's prompt.",
+      "Read, write, or retire lessons attached to a sub-persona. Lessons stack into that sub-persona's system prefix on every spawn, so write only what should shape future runs. Kinds: 'lesson' (do this), 'warning' (avoid this), 'preference' (style/format), 'fact' (static info).",
     parameters: {
       type: "object",
       properties: {

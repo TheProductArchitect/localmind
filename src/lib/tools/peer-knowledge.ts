@@ -36,7 +36,7 @@ export const peerKnowledgeTool: Tool = {
   definition: {
     name: "peer_knowledge",
     description:
-      "Search or fetch knowledge across paired peer machines on the fleet. Use this when local knowledge is insufficient AND the user has paired one or more other LocalMind machines. Operations: search (fanout all paired peers), search_one (one specific peer), fetch (pull full content by document_id from one peer).",
+      "Search or fetch knowledge across paired peer machines. Use when local knowledge is insufficient and peers are paired. Operations: search (fan out to all), search_one (one peer), fetch (full content by document_id).",
     parameters: {
       type: "object",
       properties: {

@@ -56,6 +56,7 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/system/performance", methods: "ALL", role: "owner" },
   { path: "/api/system/logs", methods: "ALL", role: "owner" },
   { path: "/api/system/services/*", methods: "ALL", role: "owner" },
+  { path: "/api/system/always-on", methods: "ALL", role: "owner" },
 
   // --- Settings ---
   { path: "/api/settings", methods: ["GET"], role: "authenticated" },

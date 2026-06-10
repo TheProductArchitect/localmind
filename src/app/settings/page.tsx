@@ -344,7 +344,99 @@ function GeneralSection() {
           </div>
         ))}
       </Card>
+
+      <AlwaysOnCard />
     </div>
+  );
+}
+
+function AlwaysOnCard() {
+  type Plan = {
+    platform: "macos" | "linux" | "unsupported";
+    service_path?: string;
+    contents?: string;
+    activate_commands?: string[];
+    deactivate_commands?: string[];
+    reason?: string;
+  };
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [installed, setInstalled] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [showCommands, setShowCommands] = useState(false);
+
+  async function load() {
+    const j = await (await fetch("/api/system/always-on")).json();
+    setPlan(j.plan);
+    setInstalled(!!j.installed);
+  }
+  useEffect(() => { load(); }, []);
+
+  async function install() {
+    setBusy(true);
+    const r = await fetch("/api/system/always-on", { method: "POST" });
+    const j = await r.json();
+    setBusy(false);
+    if (!r.ok) toast(j.error || "Could not write the service file.", "error");
+    else { toast("Service file written. Run the activate commands to start.", "success"); setShowCommands(true); }
+    load();
+  }
+  async function uninstall() {
+    setBusy(true);
+    await fetch("/api/system/always-on", { method: "DELETE" });
+    setBusy(false);
+    toast("Service file removed. Run the deactivate commands to fully stop.", "success");
+    load();
+  }
+
+  if (!plan) return null;
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="lm-micro">Run LocalMind always</p>
+        {installed && <Badge variant="success">installed</Badge>}
+      </div>
+      <p className="text-[12px]" style={{ color: "hsl(0 0% 100% / 0.6)" }}>
+        Keep the server alive across logout and sleep so scheduled tasks, monitors, and peer chats land on
+        time. The app idles when nothing is happening — no busy loop, just a quiet check-in once a minute.
+      </p>
+
+      {plan.platform === "unsupported" ? (
+        <p className="text-xs text-amber-500">{plan.reason}</p>
+      ) : (
+        <>
+          <div className="text-[11px] font-mono text-muted-foreground break-all">
+            {plan.service_path}
+          </div>
+          <div className="flex items-center gap-2">
+            {!installed ? (
+              <Button size="sm" onClick={install} disabled={busy}>Install</Button>
+            ) : (
+              <>
+                <Button size="sm" variant="outline" onClick={() => setShowCommands((s) => !s)}>
+                  {showCommands ? "Hide" : "Show"} commands
+                </Button>
+                <Button size="sm" variant="ghost" onClick={uninstall} disabled={busy}>Remove</Button>
+              </>
+            )}
+          </div>
+          {(showCommands || !installed) && (
+            <div className="space-y-2 pt-2 border-t border-border">
+              <p className="text-[11px] text-muted-foreground">
+                Run these in your terminal to {installed ? "activate" : "complete activation"}:
+              </p>
+              {plan.activate_commands?.map((c, i) => (
+                <pre key={i} className="text-[10px] font-mono bg-muted p-1.5 rounded overflow-x-auto">{c}</pre>
+              ))}
+              <p className="text-[11px] text-muted-foreground pt-2">To uninstall later:</p>
+              {plan.deactivate_commands?.map((c, i) => (
+                <pre key={i} className="text-[10px] font-mono bg-muted p-1.5 rounded overflow-x-auto">{c}</pre>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </Card>
   );
 }
 
