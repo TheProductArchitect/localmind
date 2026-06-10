@@ -74,6 +74,11 @@ const DESTRUCTIVE_ACTIONS: ReadonlySet<string> = new Set([
   "post_message",        // outbound social posts
   "git_force_push",
   "git_reset_hard",
+  // Installing an MCP server registers a launch command that will execute as
+  // the user's process. Always confirm — even in auto mode — because the user
+  // has to vet the package source and trust the publisher. This is the floor
+  // behind Sora's `install_mcp_server` tool.
+  "install_mcp",
 ]);
 
 function isRead(actionType: string): boolean {

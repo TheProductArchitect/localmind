@@ -16,6 +16,7 @@ import { checkResourcesTool } from "./check-resources";
 import { timeTool } from "./time";
 import { requestToolAccessTool } from "./request-tool-access";
 import { agentMemoryAdminTool } from "./agent-memory-admin";
+import { installMcpServerTool } from "./install-mcp";
 import { getMcpTools } from "./mcp";
 import type { Tool } from "./types";
 
@@ -37,6 +38,7 @@ const BUILTIN: Tool[] = [
   timeTool,
   requestToolAccessTool,
   agentMemoryAdminTool,
+  installMcpServerTool,
   spawnSubagentTool,
   spawnSubagentsParallelTool,
 ];

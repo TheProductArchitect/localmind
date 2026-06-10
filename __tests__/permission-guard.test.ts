@@ -46,6 +46,7 @@ describe("permission-guard", () => {
         "post_message",
         "git_force_push",
         "git_reset_hard",
+        "install_mcp",
       ]) {
         const tier = classify(action);
         expect(tier, `${action} in auto mode`).not.toBe("allow");
