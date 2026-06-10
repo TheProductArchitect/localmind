@@ -43,10 +43,24 @@ export type HiddenSectionId = (typeof HIDDEN_SECTION_IDS)[number];
 
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]["id"];
 
-// Routes where the sidebar is hidden by default — auth flows only. Everywhere
-// else the sidebar stays open across navigation; the user can collapse it via
-// the hide button (state persisted in localStorage).
-const HIDDEN_ROUTES = ["/login", "/auth"];
+// Routes where the Settings sidebar is hidden. The five rail destinations
+// (Chat /, Work, Agents, Knowledge, Fleet) are workspace surfaces — they
+// have their own first-class layout and shouldn't be crowded by a config
+// sidebar. The sidebar appears on every settings / admin / config route
+// instead (handled by the inverse — see shouldRender). Auth flows are also
+// hidden. The user can still collapse the sidebar on its visible routes via
+// the hide button, with state persisted in localStorage.
+const HIDDEN_ROUTES = [
+  "/",          // chat
+  "/work",
+  "/agents",
+  "/knowledge",
+  "/fleet",
+  "/today",
+  "/login",
+  "/auth",
+  "/onboarding",
+];
 
 // Every non-auth route in the product, grouped semantically. The sidebar is
 // the complete page index — nothing is "hidden" behind the 5-glyph rail.
