@@ -44,7 +44,7 @@
     "d3": "^7.9.0",
     "date-fns": "^4.1.0",
     "epub2": "^3.0.2",
-    "groq-sdk": "^0.7.0",
+    "groq-sdk": "^1.2.1",
     "http-proxy": "^1.18.1",
     "iron-session": "^8.0.3",
     "lucide-react": "^0.460.0",
