@@ -914,6 +914,20 @@ configMigrations.push({
   },
 });
 
+// v14: mark MCP servers shipped with LocalMind as `builtin=1`. Used to:
+//   - prevent destructive UI/API ops (delete) on bundled servers
+//   - signal in the UI that the entry is a native offering rather than a
+//     user-installed one
+// The seed itself (the secure-browser row) is inserted at startup by
+// `ensureBuiltinMcpServers()` so the launcher path can be resolved relative
+// to the running install rather than baked into the migration.
+configMigrations.push({
+  version: 14,
+  up: (db) => {
+    db.exec("ALTER TABLE mcp_servers ADD COLUMN builtin INTEGER NOT NULL DEFAULT 0;");
+  },
+});
+
 const knowledgeMigrations: Migration[] = [
   {
     version: 1,

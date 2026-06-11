@@ -7,3 +7,9 @@ out
 .DS_Store
 ~/.localmind
 tsconfig.tsbuildinfo
+
+# Python virtual environments
+.venv/
+venv/
+__pycache__/
+*.pyc

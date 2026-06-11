@@ -29,12 +29,45 @@ export default function McpPage() {
   );
 }
 
+// Phase order emitted by bootstrap.sh. Used to render the progress bar; a
+// step is "done" once a later one fires. Keep in sync with bootstrap.sh.
+const BOOTSTRAP_PHASES = [
+  { key: "creating-venv",       label: "Create virtualenv" },
+  { key: "upgrading-pip",       label: "Upgrade pip" },
+  { key: "installing-deps",     label: "Install Python deps" },
+  { key: "installing-chromium", label: "Download Chromium" },
+  { key: "connecting",          label: "Connect to MCP" },
+  { key: "connected",           label: "Done" },
+] as const;
+
+function Spinner({ className = "" }: { className?: string }) {
+  return (
+    <span
+      className={`inline-block h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin ${className}`}
+      aria-label="loading"
+    />
+  );
+}
+
 function ServersTab() {
   const [servers, setServers] = useState<any[]>([]);
   const [form, setForm] = useState({ name: "", url: "", transport: "sse", command: "", tier: "ask", description: "" });
   const [expanded, setExpanded] = useState<string | null>(null);
   const load = () => fetch("/api/mcp/servers").then((r) => r.json()).then((j) => setServers(j.servers || []));
   useEffect(() => { load(); }, []);
+  // Poll while anything is transitional: connecting, currently restarting,
+  // actively bootstrapping (manual or auto). Keeps the visible state in
+  // sync without forcing the user to refresh.
+  useEffect(() => {
+    const anyTransitional =
+      servers.some((s) => s.health?.status === "connecting") ||
+      servers.some((s) => s.needs_bootstrap && bootstrapping === s.id) ||
+      servers.some((s) => s.auto_bootstrap?.state === "running");
+    if (!anyTransitional) return;
+    const t = setInterval(load, 1500);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [servers]);
 
   async function add() {
     if (!form.name) return;
@@ -54,10 +87,16 @@ function ServersTab() {
     const j = await r.json();
     toast(j.ok ? `Reachable — ${j.tools?.length || 0} tools` : j.error, j.ok ? "success" : "error");
   }
+  const [restarting, setRestarting] = useState<Record<string, boolean>>({});
   async function restart(id: string) {
-    const j = await (await fetch(`/api/mcp/servers/${id}/restart`, { method: "POST" })).json();
-    toast(j.ok ? "Restarted" : j.error || "Failed", j.ok ? "success" : "error");
-    load();
+    setRestarting((p) => ({ ...p, [id]: true }));
+    try {
+      const j = await (await fetch(`/api/mcp/servers/${id}/restart`, { method: "POST" })).json();
+      toast(j.ok ? "Connected" : `Connect failed: ${j.error || "unknown"}`, j.ok ? "success" : "error");
+    } finally {
+      setRestarting((p) => ({ ...p, [id]: false }));
+      load();
+    }
   }
   async function remove(id: string) {
     await fetch(`/api/mcp/servers/${id}`, { method: "DELETE" });
@@ -68,6 +107,32 @@ function ServersTab() {
       method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled }),
     });
     load();
+  }
+  const [bootstrapping, setBootstrapping] = useState<string | null>(null);
+  const [bootstrapLog, setBootstrapLog] = useState<string>("");
+  async function bootstrap(id: string) {
+    setBootstrapping(id);
+    setBootstrapLog("");
+    try {
+      const r = await fetch("/api/mcp/builtins/bootstrap", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id }),
+      });
+      if (!r.body) { toast("Bootstrap failed to start", "error"); return; }
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value);
+        setBootstrapLog(buf);
+      }
+      toast(buf.includes("[done]") ? "Bootstrap complete" : "Bootstrap finished with errors",
+        buf.includes("[done]") ? "success" : "error");
+    } finally {
+      setBootstrapping(null);
+      load();
+    }
   }
 
   return (
@@ -111,23 +176,61 @@ function ServersTab() {
           <Card key={s.id} className="p-3">
             <div className="flex items-center gap-2">
               <span className="font-medium text-sm">{s.name}</span>
-              <Badge variant={s.health?.status === "connected" ? "success" : s.health?.status === "error" ? "destructive" : "outline"}>
-                {s.health?.status || "disconnected"}
+              {s.builtin ? (
+                <Badge variant="outline" title="Ships natively with LocalMind. Can be disabled but not deleted.">Built-in</Badge>
+              ) : null}
+              {s.needs_bootstrap && s.auto_bootstrap?.state !== "running" ? (
+                <Badge variant="destructive" title="One-time install required before this server can run.">Setup needed</Badge>
+              ) : null}
+              {s.auto_bootstrap?.state === "running" ? (
+                <Badge variant="outline" className="inline-flex items-center gap-1" title="First-run install in progress — kicked off automatically.">
+                  <Spinner /> Installing…
+                </Badge>
+              ) : null}
+              <Badge
+                variant={
+                  s.health?.status === "connected" ? "success" :
+                  s.health?.status === "error" ? "destructive" :
+                  s.health?.status === "connecting" ? "outline" :
+                  "outline"
+                }
+                className="inline-flex items-center gap-1"
+              >
+                {s.health?.status === "connecting" || restarting[s.id] ? <Spinner /> : null}
+                {restarting[s.id] ? "connecting" : (s.health?.status || "disconnected")}
               </Badge>
               <span className="text-xs text-muted-foreground">{s.tools?.length || 0} tools · {s.source}</span>
               <button className="ml-auto text-xs underline" onClick={() => setExpanded(expanded === s.id ? null : s.id)}>
                 {expanded === s.id ? "hide" : "tools"}
               </button>
-              <Button size="sm" variant="outline" onClick={() => restart(s.id)}>Restart</Button>
+              {s.needs_bootstrap ? (
+                <Button size="sm" onClick={() => bootstrap(s.id)} disabled={bootstrapping === s.id} className="inline-flex items-center gap-1">
+                  {bootstrapping === s.id ? <><Spinner /> Installing…</> : "Bootstrap"}
+                </Button>
+              ) : null}
+              <Button size="sm" variant="outline" onClick={() => restart(s.id)} disabled={restarting[s.id]} className="inline-flex items-center gap-1">
+                {restarting[s.id] ? <><Spinner /> Connecting…</> : "Restart"}
+              </Button>
               <Button size="sm" variant="outline" onClick={() => toggle(s.id, !s.enabled)}>
                 {s.enabled ? "Disable" : "Enable"}
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => remove(s.id)}>Remove</Button>
+              {s.builtin ? null : (
+                <Button size="sm" variant="ghost" onClick={() => remove(s.id)}>Remove</Button>
+              )}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
               calls 24h: {s.health?.calls24h || 0} · errors: {s.health?.errors || 0} · avg {s.health?.avgMs || 0}ms
-              {s.health?.lastError ? ` · last error: ${s.health.lastError}` : ""}
             </p>
+            {s.health?.lastError ? (
+              <div className="mt-2 rounded border border-destructive/40 bg-destructive/10 text-destructive px-2 py-1 text-xs">
+                <span className="font-medium">Last error: </span>{s.health.lastError}
+              </div>
+            ) : null}
+            {bootstrapping === s.id || (bootstrapLog && s.needs_bootstrap) ? (
+              <BootstrapProgress log={bootstrapLog} running={bootstrapping === s.id} />
+            ) : s.auto_bootstrap?.state === "running" || (s.auto_bootstrap?.state === "failed" && s.needs_bootstrap) ? (
+              <BootstrapProgress log={s.auto_bootstrap.log || ""} running={s.auto_bootstrap.state === "running"} />
+            ) : null}
             {expanded === s.id && (
               <div className="mt-2 space-y-1">
                 {s.tools.map((t: any) => (
@@ -273,6 +376,67 @@ function BuilderTab() {
         </div>
       </Card>
       {code && <pre className="text-xs bg-muted/40 rounded p-3 overflow-x-auto">{code}</pre>}
+    </div>
+  );
+}
+
+function BootstrapProgress({ log, running }: { log: string; running: boolean }) {
+  // Parse the streamed log into (a) the most recently announced phase, and
+  // (b) any [error] lines we want to surface in red. Everything else is the
+  // raw output the user can expand if they want the full trace.
+  const lines = log.split("\n");
+  const stepNames = lines
+    .map((l) => l.match(/^\[step\]\s+(\S+)/)?.[1])
+    .filter(Boolean) as string[];
+  const errors = lines.filter((l) => l.startsWith("[error]")).map((l) => l.replace(/^\[error\]\s*/, ""));
+  const done = log.includes("[done]");
+  const failed = log.includes("[failed]") || errors.length > 0;
+
+  const phaseIdx = BOOTSTRAP_PHASES.findIndex((p) => p.key === stepNames[stepNames.length - 1]);
+  const progress = done
+    ? 1
+    : phaseIdx < 0
+    ? 0
+    : (phaseIdx + 1) / BOOTSTRAP_PHASES.length;
+
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="h-1 w-full overflow-hidden rounded-full bg-muted/60">
+        <div
+          className={`h-full transition-all duration-300 ${failed ? "bg-destructive" : done ? "bg-emerald-500" : "bg-primary"}`}
+          style={{ width: `${Math.round(progress * 100)}%` }}
+        />
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {BOOTSTRAP_PHASES.map((p, i) => {
+          const idx = stepNames.indexOf(p.key);
+          const reached = idx >= 0;
+          const isCurrent = running && !done && !failed && stepNames[stepNames.length - 1] === p.key;
+          return (
+            <Badge
+              key={p.key}
+              variant={isCurrent ? "outline" : reached ? "success" : "outline"}
+              className={`inline-flex items-center gap-1 ${isCurrent ? "border-primary text-primary" : ""}`}
+            >
+              {isCurrent ? <Spinner /> : reached ? "✓" : <span className="opacity-40">○</span>}
+              <span className="text-[10px]">{p.label}</span>
+            </Badge>
+          );
+        })}
+      </div>
+      {errors.length > 0 && (
+        <div className="rounded border border-destructive/40 bg-destructive/10 text-destructive px-2 py-1 text-xs">
+          {errors.map((e, i) => (
+            <div key={i}><span className="font-medium">Error: </span>{e}</div>
+          ))}
+        </div>
+      )}
+      <details className="text-xs">
+        <summary className="cursor-pointer text-muted-foreground select-none">Full output</summary>
+        <pre className="mt-1 max-h-48 overflow-auto bg-muted/30 rounded p-2 whitespace-pre-wrap">
+          {log || "starting…"}
+        </pre>
+      </details>
     </div>
   );
 }

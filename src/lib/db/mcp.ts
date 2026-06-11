@@ -18,6 +18,7 @@ export type McpServer = {
   command: string | null;
   last_connected_at: number | null;
   allowlist: string;
+  builtin: number;
 };
 
 export type McpToolRow = {
@@ -76,6 +77,14 @@ export function addMcpServer(opts: {
 
 export function deleteMcpServer(id: string) {
   const db = getConfigDb();
+  // Builtin servers ship with LocalMind. Deleting the row would just have
+  // ensureBuiltinMcpServers() recreate it on next boot, but the user can
+  // toggle `enabled` to turn them off. Refuse the delete so the caller gets
+  // a clear error instead of confusing transient state.
+  const row = db.prepare("SELECT builtin FROM mcp_servers WHERE id=?").get(id) as { builtin: number } | undefined;
+  if (row && row.builtin) {
+    throw new Error("Cannot delete a built-in MCP server. Disable it instead.");
+  }
   db.prepare("DELETE FROM mcp_servers WHERE id=?").run(id);
   db.prepare("DELETE FROM mcp_tools WHERE server_id=?").run(id);
 }

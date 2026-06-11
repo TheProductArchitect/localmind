@@ -8,7 +8,7 @@ import {
 import type { Tool } from "./types";
 
 export type ServerHealth = {
-  status: "connected" | "disconnected" | "error";
+  status: "connected" | "connecting" | "disconnected" | "error";
   toolCount: number;
   calls24h: number;
   errors: number;
@@ -74,6 +74,15 @@ export async function probeMcpServer(opts: { url?: string; transport?: string; c
 }
 
 export async function refreshServerTools(server: McpServer): Promise<{ ok: boolean; error?: string }> {
+  // Flip to "connecting" so the UI shows a live in-flight indicator instead
+  // of leaving a stale "disconnected" badge while the spawn + handshake
+  // happens. Cleared by the success/failure branches below.
+  {
+    const h = getServerHealth(server.id);
+    h.status = "connecting";
+    h.lastError = null;
+    health.set(server.id, h);
+  }
   try {
     const client = await connect(server);
     const res = await client.listTools();
@@ -85,6 +94,7 @@ export async function refreshServerTools(server: McpServer): Promise<{ ok: boole
     const h = getServerHealth(server.id);
     h.status = "connected";
     h.toolCount = res.tools.length;
+    h.lastError = null;
     health.set(server.id, h);
     return { ok: true };
   } catch (e: any) {

@@ -10,6 +10,8 @@ import type { RegistryPlugin } from "./registry";
 import { createPersona, getPersona, deletePersona } from "../db/personas";
 import { listBlocks, replaceBlocks, BUILTIN_BLOCK_NAMES } from "../db/system-prompt-blocks";
 import { createWorkflow, deleteWorkflow, getWorkflow } from "../db/automations";
+import { addMcpServer, deleteMcpServer, getMcpServer, listMcpServers } from "../db/mcp";
+import { resolveLaunch, INSTALL_MCP_SOURCES, type InstallSource } from "../tools/install-mcp";
 
 export type InstallReceipt = {
   plugin_id: string;
@@ -28,12 +30,75 @@ export type InstallReceipt = {
  * handled here. MCP server installs go through the existing MCP settings flow
  * for now; the marketplace UI surfaces them but routes the user to that page.
  */
+type McpLaunchPayload = {
+  source: InstallSource;
+  package?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  default_tool_tier?: "allow" | "ask" | "pin";
+};
+
 export async function installPlugin(reg: RegistryPlugin): Promise<{ ok: boolean; receipt?: InstallReceipt; reason?: string }> {
   if (reg.plugin_type === "mcp-server") {
+    // Plugin marketplace MCP installs reuse the same launch-line builder
+    // as Sora's `install_mcp_server` tool — same security floor (this is
+    // already gated as `install_mcp` in the destructive list), same
+    // allowlist semantics. No new sandbox needed because every MCP server
+    // already runs as a separate stdio child process whose outbound
+    // traffic is routed through the per-server domain allowlist proxy.
+    const payload = (reg.payload as McpLaunchPayload | undefined) || undefined;
+    if (!payload || !payload.source || !INSTALL_MCP_SOURCES.includes(payload.source)) {
+      return {
+        ok: false,
+        reason:
+          "This MCP server entry is missing launch metadata. Install it from the MCP Servers page → Add server, and the marketplace will pick up the connection on its next refresh.",
+      };
+    }
+    const resolved = resolveLaunch({
+      source: payload.source,
+      package: payload.package,
+      command: payload.command,
+      args: payload.args,
+    });
+    if (!resolved.ok) {
+      return { ok: false, reason: resolved.error };
+    }
+    const dupe = listMcpServers().find(
+      (s) => s.name === reg.name || (s.command || "") === resolved.launch.preview
+    );
+    if (dupe) {
+      return {
+        ok: false,
+        reason: `An MCP server with this ${dupe.name === reg.name ? "name" : "launch command"} is already registered. Disable or remove it first if you want to replace it.`,
+      };
+    }
+    const server = addMcpServer({
+      name: reg.name,
+      url: resolved.launch.preview,
+      description: reg.description,
+      tier: payload.default_tool_tier || "ask",
+      transport: resolved.launch.transport,
+      source: payload.source,
+      command: resolved.launch.preview,
+      env: payload.env,
+      allowlist: reg.network_domains || [],
+    });
+    const record = recordInstall({
+      plugin_type: reg.plugin_type,
+      name: reg.name,
+      version: reg.version,
+      source_url: reg.source_url ?? null,
+      config: { registry_id: reg.id, artefacts: [{ kind: "mcp-server", ref: server.id }] },
+    });
     return {
-      ok: false,
-      reason:
-        "MCP server plugins are installed from the MCP Servers settings page. The in-app sandbox installer ships in the next update.",
+      ok: true,
+      receipt: {
+        plugin_id: record.plugin_id,
+        plugin_type: record.plugin_type,
+        name: record.name,
+        artefacts: [{ kind: "mcp-server", ref: server.id }],
+      },
     };
   }
   if (reg.plugin_type === "knowledge-dataset" || reg.plugin_type === "agent-config") {
@@ -137,6 +202,15 @@ export function uninstallPlugin(pluginId: string): { ok: boolean; reason?: strin
       }
       if (a.kind === "persona" && getPersona(a.ref)) {
         deletePersona(a.ref);
+      }
+      if (a.kind === "mcp-server") {
+        // deleteMcpServer refuses on builtins (throws); ignore that case
+        // — a builtin can't have been installed via the marketplace anyway,
+        // so this only happens on a corrupt receipt.
+        const row = getMcpServer(a.ref);
+        if (row && !row.builtin) {
+          try { deleteMcpServer(a.ref); } catch {}
+        }
       }
     }
   } catch {
