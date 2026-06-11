@@ -20,14 +20,16 @@ function authorise(req: NextRequest, graphId: string) {
   return { graph, user };
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const { graph } = authorise(req, params.id);
   if (!graph) return NextResponse.json({ error: "Graph not found." }, { status: 404 });
   const nodes = listNodes(params.id);
   return NextResponse.json({ graph, nodes });
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const { graph } = authorise(req, params.id);
   if (!graph) return NextResponse.json({ error: "Graph not found." }, { status: 404 });
   if (graph.completed_at) {

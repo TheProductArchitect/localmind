@@ -15,13 +15,15 @@ function authorise(req: NextRequest, processId: string) {
   return { proc, user };
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const { proc } = authorise(req, params.id);
   if (!proc) return NextResponse.json({ error: "Process not found." }, { status: 404 });
   return NextResponse.json({ process: proc });
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const { proc } = authorise(req, params.id);
   if (!proc) return NextResponse.json({ error: "Process not found." }, { status: 404 });
   if (proc.completed_at) {

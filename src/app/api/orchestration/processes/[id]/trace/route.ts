@@ -5,7 +5,8 @@ import { buildTrace } from "@/lib/agent/trace";
 
 export const runtime = "nodejs";
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const proc = getProcess(params.id);
   const user = currentUser(req);
   if (!proc || !user) return NextResponse.json({ error: "Process not found." }, { status: 404 });

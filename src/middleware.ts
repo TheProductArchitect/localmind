@@ -52,8 +52,13 @@ export async function middleware(req: NextRequest) {
   const token = bearer || req.cookies.get("lm_token")?.value || "";
   let identity = token ? await verifyJwtEdge(token) : null;
 
-  // Localhost without a JWT resolves to the owner (owner auto-login path).
-  if (!identity) {
+  // Localhost auto-login fallback. Applies ONLY when no token was presented
+  // — a presented-but-invalid token (expired, tampered, signed under a
+  // different secret) must NOT silently become the owner. That would let a
+  // member's bad token authenticate as owner on localhost and quietly
+  // promote every action they take — exactly the leak the isolation test
+  // was catching.
+  if (!identity && !token) {
     const host = req.headers.get("host") || "";
     if (host.startsWith("localhost") || host.startsWith("127.0.0.1")) {
       identity = { userId: "__localhost_owner__", role: "owner" };
@@ -73,5 +78,10 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
+  // Node runtime is needed so process.env is read at request time. The edge
+  // runtime inlines env vars at build, which made LOCALMIND_JWT_SECRET
+  // effectively undefined in CI prod runs even when the variable was set at
+  // job level. Requires experimental.nodeMiddleware in next.config.js.
+  runtime: "nodejs",
   matcher: ["/api/:path*"],
 };

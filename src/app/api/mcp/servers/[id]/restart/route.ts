@@ -4,7 +4,8 @@ import { refreshServerTools } from "@/lib/tools/mcp";
 
 export const runtime = "nodejs";
 
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const server = getMcpServer(params.id);
   if (!server) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const result = await refreshServerTools(server);

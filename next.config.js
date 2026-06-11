@@ -1,8 +1,18 @@
+const path = require("path");
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Next 15: moved out of experimental.
+  serverExternalPackages: ["better-sqlite3", "bcryptjs", "playwright", "pdfjs-dist", "mammoth", "epub2", "archiver"],
+  // Pin the workspace root so Next doesn't pick up the stray ~/package-lock.json.
+  outputFileTracingRoot: path.join(__dirname),
+  // Run middleware on the Node runtime so it can read process.env at request
+  // time and use better-sqlite3-backed helpers if it ever needs them. The
+  // edge runtime inlines env vars at build time, which made LOCALMIND_JWT_SECRET
+  // unreadable in production builds where the build env didn't match the
+  // runtime env — the symptom was every token failing to verify in CI.
   experimental: {
-    serverComponentsExternalPackages: ["better-sqlite3", "bcryptjs", "playwright", "pdfjs-dist", "mammoth", "epub2", "archiver"],
-    instrumentationHook: true,
+    nodeMiddleware: true,
   },
   webpack: (config) => {
     config.externals.push({ "better-sqlite3": "commonjs better-sqlite3" });

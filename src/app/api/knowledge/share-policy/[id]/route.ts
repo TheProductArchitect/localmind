@@ -11,7 +11,8 @@ import { getKnowledgePolicy, setKnowledgePolicy } from "@/lib/db/fleet";
 
 export const runtime = "nodejs";
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const row = getKnowledgePolicy(params.id);
   if (!row) {
     return NextResponse.json({
@@ -37,7 +38,8 @@ const PutBody = z.object({
   granted_peers: z.array(z.string().min(1).max(128)).max(64).optional(),
 });
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const parsed = PutBody.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid policy payload." }, { status: 400 });
@@ -57,7 +59,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   });
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   getConfigDb().prepare("DELETE FROM knowledge_share_policy WHERE document_id=?").run(params.id);
   return NextResponse.json({ ok: true, document_id: params.id, reverted_to: "private" });
 }

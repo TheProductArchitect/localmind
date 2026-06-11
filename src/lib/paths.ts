@@ -13,6 +13,7 @@ export const KEYDATA_FILE = path.join(DATA_DIR, "keydata");
 export const KNOWLEDGE_DIR = path.join(DATA_DIR, "knowledge");
 export const NOTES_DIR = path.join(KNOWLEDGE_DIR, "notes");
 export const MCP_SERVERS_DIR = path.join(DATA_DIR, "mcp-servers");
+export const MODELS_DIR = path.join(DATA_DIR, "models");
 export const KEYS_DIR = path.join(DATA_DIR, "keys");
 export const NODE_PRIVKEY_FILE = path.join(KEYS_DIR, "node.key");
 export const NODE_PUBKEY_FILE = path.join(KEYS_DIR, "node.pub");

@@ -9,7 +9,8 @@ import {
 
 export const runtime = "nodejs";
 
-export async function GET(_req: NextRequest, { params }: { params: { personaId: string } }) {
+export async function GET(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ personaId: string }> }) {
+  const params = await paramsPromise;
   if (!getPersona(params.personaId)) {
     return NextResponse.json({ error: "Persona not found." }, { status: 404 });
   }
@@ -30,7 +31,8 @@ const PatchBody = z
   })
   .strict();
 
-export async function PATCH(req: NextRequest, { params }: { params: { personaId: string } }) {
+export async function PATCH(req: NextRequest, { params: paramsPromise }: { params: Promise<{ personaId: string }> }) {
+  const params = await paramsPromise;
   if (!getPersona(params.personaId)) {
     return NextResponse.json({ error: "Persona not found." }, { status: 404 });
   }

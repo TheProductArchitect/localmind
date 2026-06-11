@@ -86,21 +86,34 @@ function metaGoal(p: Proc): string | null {
   } catch { return null; }
 }
 
+/** Model the spawn is/was running. Tagged into metadata at startProcess time. */
+function metaModel(p: Proc): string | null {
+  try {
+    const m = JSON.parse(p.metadata_json || "{}") as { model?: string };
+    return m.model || null;
+  } catch { return null; }
+}
+
 export default function AgentsPage() {
   const [active, setActive] = useState<Proc[]>([]);
   const [history, setHistory] = useState<Proc[]>([]);
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [memory, setMemory] = useState<MemoryByPersona>({});
+  // Sora's own active model — fetched alongside everything else so the header
+  // can show "Sora → llama3.1:8b" without each user inferring it from settings.
+  const [activeModel, setActiveModel] = useState<string | null>(null);
   const [tick, setTick] = useState(0); // ticks once per second so elapsed times animate
   const tickRef = useRef<number | null>(null);
 
   async function load() {
     try {
-      const [a, h, p] = await Promise.all([
+      const [a, h, p, s] = await Promise.all([
         fetch("/api/orchestration/processes").then((r) => r.json()).catch(() => ({ processes: [] })),
         fetch("/api/orchestration/processes?history=1").then((r) => r.json()).catch(() => ({ processes: [] })),
         fetch("/api/agent/personas").then((r) => r.json()).catch(() => ({ personas: [] })),
+        fetch("/api/settings").then((r) => r.json()).catch(() => ({ settings: {} })),
       ]);
+      setActiveModel((s.settings?.active_model as string) || null);
       setActive((a.processes as Proc[]) || []);
       setHistory((h.processes as Proc[]) || []);
       const personaList = (p.personas as Persona[]) || [];
@@ -175,6 +188,15 @@ export default function AgentsPage() {
             <div className="lm-micro" style={{ textTransform: "none", letterSpacing: 0 }}>
               {liveParents.length} parent process{liveParents.length === 1 ? "" : "es"}
             </div>
+            {activeModel && (
+              <div className="lm-micro mt-1" style={{
+                textTransform: "none", letterSpacing: 0,
+                color: "hsl(0 0% 100% / 0.55)",
+                fontFamily: "ui-monospace,monospace", fontSize: 10,
+              }}>
+                Sora → {activeModel}
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -398,6 +420,7 @@ function AgentCard({ proc, kind, tick }: { proc: Proc; kind: "subagent" | "paren
   void tick;
   const tools = metaTools(proc);
   const goal = metaGoal(proc) || proc.current_step || proc.display_name;
+  const model = metaModel(proc);
   return (
     <div className="lm-agent-card lm-agent-card--enter" data-status={proc.status}>
       <div className="flex items-start gap-3">
@@ -406,7 +429,7 @@ function AgentCard({ proc, kind, tick }: { proc: Proc; kind: "subagent" | "paren
           <p className="lm-body" style={{ color: "hsl(0 0% 100% / 0.96)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {goal}
           </p>
-          <div className="flex items-center gap-2 mt-1">
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className="lm-micro" style={{ textTransform: "none", letterSpacing: 0 }}>
               {elapsed(proc.started_at)} elapsed
             </span>
@@ -414,6 +437,15 @@ function AgentCard({ proc, kind, tick }: { proc: Proc; kind: "subagent" | "paren
               {proc.status}
             </span>
             {kind === "subagent" && <span className="lm-micro" style={{ textTransform: "none", letterSpacing: 0 }}>subagent</span>}
+            {model && (
+              <span
+                className="lm-chip"
+                style={{ fontFamily: "ui-monospace,monospace", fontSize: 10 }}
+                title={`Model driving this agent: ${model}`}
+              >
+                {model}
+              </span>
+            )}
           </div>
         </div>
       </div>

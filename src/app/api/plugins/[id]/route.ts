@@ -5,13 +5,15 @@ import { getInstalled } from "@/lib/db/plugins";
 
 export const runtime = "nodejs";
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const plugin = getInstalled(params.id);
   if (!plugin) return NextResponse.json({ error: "Plugin not found." }, { status: 404 });
   return NextResponse.json({ plugin });
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const r = uninstallPlugin(params.id);
   if (!r.ok) return NextResponse.json({ error: r.reason }, { status: 400 });
   return NextResponse.json({ ok: true });
@@ -19,7 +21,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
 
 // POST is the "update to latest" action — re-fetches the registry entry and
 // reinstalls in place.
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const plugin = getInstalled(params.id);
   if (!plugin) return NextResponse.json({ error: "Plugin not found." }, { status: 404 });
   let registryId: string | null = null;

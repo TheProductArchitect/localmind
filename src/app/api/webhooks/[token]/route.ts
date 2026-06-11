@@ -6,7 +6,8 @@ import { handleInbound } from "@/lib/channels";
 export const runtime = "nodejs";
 
 // Generic inbound webhook. Any local service can POST { message } here.
-export async function POST(req: NextRequest, { params }: { params: { token: string } }) {
+export async function POST(req: NextRequest, { params: paramsPromise }: { params: Promise<{ token: string }> }) {
+  const params = await paramsPromise;
   const s = getSettings();
   if (!s.api_token_hash || hashToken(params.token) !== s.api_token_hash) {
     return NextResponse.json({ error: "Invalid token" }, { status: 401 });

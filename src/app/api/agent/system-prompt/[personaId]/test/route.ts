@@ -12,7 +12,8 @@ const Body = z.object({ message: z.string().min(1).max(4000) });
 // can show "what the model would see" before a real one-shot call is wired up.
 // TODO(V5.1): hand off to the provider router for a single non-streaming
 // completion using the persona's model_name (or the global active model).
-export async function POST(req: NextRequest, { params }: { params: { personaId: string } }) {
+export async function POST(req: NextRequest, { params: paramsPromise }: { params: Promise<{ personaId: string }> }) {
+  const params = await paramsPromise;
   const persona = getPersona(params.personaId);
   if (!persona) return NextResponse.json({ error: "Persona not found." }, { status: 404 });
 

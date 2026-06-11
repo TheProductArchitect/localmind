@@ -20,7 +20,8 @@ import type { AuditQueryRequest, AuditQueryResponse } from "@/lib/fleet/handlers
 
 export const runtime = "nodejs";
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const localAuditId = Number(params.id);
   if (!Number.isFinite(localAuditId) || localAuditId <= 0) {
     return NextResponse.json({ error: "Invalid audit id." }, { status: 400 });

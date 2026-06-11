@@ -256,21 +256,46 @@ export default function PluginsPage() {
                   </ul>
                 </div>
               )}
-              {confirming.plugin_type === "mcp-server" && (
-                <div className="flex items-start gap-2 rounded border border-amber-500/30 bg-amber-500/5 p-2 text-xs">
-                  <AlertTriangle className="h-3.5 w-3.5 mt-0.5" />
-                  <p>
-                    MCP server plugins need a sandboxed runtime that ships in the next update. For now, add this server manually from the MCP Servers settings page.
-                  </p>
-                </div>
-              )}
+              {confirming.plugin_type === "mcp-server" && (() => {
+                const launch = (confirming as any).payload as
+                  | { source?: string; package?: string; command?: string }
+                  | undefined;
+                if (launch && launch.source) {
+                  const preview =
+                    launch.source === "npm"    ? `npx -y ${launch.package}` :
+                    launch.source === "pipx"   ? `pipx run ${launch.package}` :
+                    launch.source === "uvx"    ? `uvx ${launch.package}` :
+                    launch.source === "docker" ? `docker run --rm -i ${launch.package}` :
+                    launch.command || "(manual)";
+                  return (
+                    <div className="rounded border bg-muted/40 p-2 text-xs space-y-1">
+                      <p className="font-medium">Launch command (runs as a separate child process)</p>
+                      <code className="text-[11px] block">{preview}</code>
+                      <p className="text-muted-foreground">
+                        Process isolation comes from running as its own stdio child; outbound network is restricted to the allowlist above.
+                      </p>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="flex items-start gap-2 rounded border border-amber-500/30 bg-amber-500/5 p-2 text-xs">
+                    <AlertTriangle className="h-3.5 w-3.5 mt-0.5" />
+                    <p>
+                      No launch metadata in the registry entry — add this server manually from MCP Servers → Add server.
+                    </p>
+                  </div>
+                );
+              })()}
             </div>
             <div className="border-t px-4 py-3 flex gap-2 justify-end">
               <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>Cancel</Button>
               <Button
                 size="sm"
                 onClick={() => install(confirming)}
-                disabled={busy === `install:${confirming.id}` || confirming.plugin_type === "mcp-server"}
+                disabled={
+                  busy === `install:${confirming.id}` ||
+                  (confirming.plugin_type === "mcp-server" && !((confirming as any).payload?.source))
+                }
               >
                 {busy === `install:${confirming.id}` ? "Installing…" : "Install"}
               </Button>

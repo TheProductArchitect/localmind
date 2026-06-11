@@ -49,12 +49,24 @@ export type FleetPeerPolicy = {
   // pair a peer for one-off knowledge queries without inviting it into the
   // task-graph placement pool.
   advertise_capabilities: boolean;
+  // Whether this peer is allowed to drive a CHAT session on us (the user is
+  // sitting at the peer's UI but the model lives here). Default OFF — a peer
+  // must be explicitly granted "you may run my chat for me" before we'll
+  // accept chat-relay envelopes from it. This is a separate flag from
+  // allow_self_actions because chat relay implies persistent conversation
+  // state, not just one-shot delegations.
+  accept_chat_relay: boolean;
+  // Maximum inbound chat-relay messages per minute from this peer.
+  // Defends against a compromised peer flooding our local model.
+  chat_relay_rate_per_min: number;
 };
 
 export const DEFAULT_PEER_POLICY: FleetPeerPolicy = {
   allow_self_actions: false,
   allowed_tools: [],
   advertise_capabilities: true,
+  accept_chat_relay: false,
+  chat_relay_rate_per_min: 30,
 };
 
 function readNow(): number {

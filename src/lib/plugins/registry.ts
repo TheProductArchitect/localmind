@@ -173,6 +173,7 @@ const BUILTIN: RegistryPlugin[] = [
     permissions: ["read_files"],
     install_size_kb: 40,
     source_url: "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem",
+    payload: { source: "npm", package: "@modelcontextprotocol/server-filesystem", default_tool_tier: "ask" },
   },
   {
     id: "mcp-github",
@@ -186,6 +187,7 @@ const BUILTIN: RegistryPlugin[] = [
     network_domains: ["api.github.com"],
     install_size_kb: 60,
     source_url: "https://github.com/modelcontextprotocol/servers/tree/main/src/github",
+    payload: { source: "npm", package: "@modelcontextprotocol/server-github", default_tool_tier: "ask" },
   },
   {
     id: "mcp-postgres",
@@ -198,6 +200,7 @@ const BUILTIN: RegistryPlugin[] = [
     permissions: ["read_files"],
     install_size_kb: 100,
     source_url: "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres",
+    payload: { source: "npm", package: "@modelcontextprotocol/server-postgres", default_tool_tier: "ask" },
   },
   {
     id: "mcp-sqlite",

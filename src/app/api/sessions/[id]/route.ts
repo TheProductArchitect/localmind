@@ -4,7 +4,8 @@ import { getAuth } from "@/lib/auth/session";
 
 export const runtime = "nodejs";
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const auth = getAuth(req);
   if (!auth) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   const session = getSession(params.id);

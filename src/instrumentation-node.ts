@@ -58,6 +58,17 @@ try {
   logger.warn("fleet transport init skipped", { error: (e as Error).message });
 }
 
+// Ambient cron tick. Runs forever once started; idempotent on re-fire (Next
+// dev hot-reload, instrumentation register replay). If the loop fails to
+// start the rest of LocalMind keeps working — scheduled tasks just won't
+// fire until the user reloads or restarts.
+try {
+  const { startScheduler } = require("./lib/scheduler") as typeof import("./lib/scheduler");
+  startScheduler();
+} catch (e) {
+  logger.warn("scheduler not started", { error: (e as Error).message });
+}
+
 // Catch any promise rejection or exception that escapes normal handling.
 process.on("unhandledRejection", (reason: any) => {
   logger.error("unhandledRejection", { reason: reason?.message || String(reason) });

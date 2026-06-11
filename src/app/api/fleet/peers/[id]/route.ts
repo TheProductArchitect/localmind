@@ -4,7 +4,8 @@ import { getPeer, unpairPeer, updatePeerLabel, updatePeerPolicy, DEFAULT_PEER_PO
 
 export const runtime = "nodejs";
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const peer = getPeer(params.id);
   if (!peer) return NextResponse.json({ error: "Peer not found." }, { status: 404 });
   return NextResponse.json({ peer });
@@ -18,12 +19,15 @@ const PatchBody = z
         allow_self_actions: z.boolean().optional(),
         allowed_tools: z.array(z.string()).optional(),
         advertise_capabilities: z.boolean().optional(),
+        accept_chat_relay: z.boolean().optional(),
+        chat_relay_rate_per_min: z.number().int().min(1).max(600).optional(),
       })
       .optional(),
   })
   .strict();
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const peer = getPeer(params.id);
   if (!peer) return NextResponse.json({ error: "Peer not found." }, { status: 404 });
   const parsed = PatchBody.safeParse(await req.json().catch(() => null));
@@ -38,7 +42,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   return NextResponse.json({ peer: getPeer(params.id) });
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const ok = unpairPeer(params.id);
   return NextResponse.json({ ok });
 }

@@ -1,0 +1,27 @@
+# Code owners — these paths require a maintainer review before merging.
+# See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything not covered below.
+*                                       @TheProductArchitect
+
+# Safety-critical and security-sensitive surfaces. Any change here always
+# requires maintainer review — these are the places where a regression has
+# the highest blast radius.
+/src/lib/auth/**                        @TheProductArchitect
+/src/lib/agent/permission-guard.ts      @TheProductArchitect
+/src/lib/agent/sanitize-tool-output.ts  @TheProductArchitect
+/src/lib/agent/critic.ts                @TheProductArchitect
+/src/lib/fleet/**                       @TheProductArchitect
+/src/lib/db/migrations.ts               @TheProductArchitect
+/src/middleware.ts                      @TheProductArchitect
+/middleware.ts                          @TheProductArchitect
+
+# CI + repo governance.
+/.github/                               @TheProductArchitect
+/SECURITY.md                            @TheProductArchitect
+/CODE_OF_CONDUCT.md                     @TheProductArchitect
+/LICENSE                                @TheProductArchitect
+
+# Dependency surface — bumps land via Dependabot but still need a human pass.
+/package.json                           @TheProductArchitect
+/package-lock.json                      @TheProductArchitect

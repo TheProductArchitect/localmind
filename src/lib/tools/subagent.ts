@@ -165,14 +165,14 @@ export const spawnSubagentTool: Tool = {
   definition: {
     name: "spawn_subagent",
     description:
-      "Hand off a discrete sub-task to a child agent. Use when a user request decomposes into independent units that benefit from focused context windows (e.g. one task that writes code, another that does research, another that touches files). The subagent has its own conversation and runs its own tool loop. Returns the subagent's final text output. Recursion depth is capped at 3. Tip: when a user asks for several distinct things, prefer spawning a subagent per thing rather than serialising tool calls in one turn — each subagent's focused context produces sharper output.",
+      "Hand off a focused sub-task to a child agent with its own context and tool loop. Use when a request has distinct units that each deserve their own focused window. Returns the subagent's final text. Depth capped at 3.",
     parameters: {
       type: "object",
       properties: {
         goal: {
           type: "string",
           description:
-            "Plain-English description of what the subagent should accomplish. Be specific — the subagent has no access to the orchestrator's conversation, only the goal you state here.",
+            "What the subagent should accomplish. Be specific — it only sees this goal, not your conversation.",
         },
         persona_id: {
           type: "string",
@@ -183,7 +183,7 @@ export const spawnSubagentTool: Tool = {
           type: "array",
           items: { type: "string" },
           description:
-            "Optional whitelist of tool names. Empty or unset = full tool registry. Restricting can improve focus (e.g. for a research subagent, ['web_search', 'knowledge_base', 'peer_knowledge']).",
+            "Tool whitelist for this run. Narrower surface = sharper focus.",
         },
         timeout_seconds: {
           type: "number",
@@ -402,7 +402,7 @@ export const spawnSubagentsParallelTool: Tool = {
   definition: {
     name: "spawn_subagents_parallel",
     description:
-      "Spawn a BATCH of subagents to run in parallel. Use when tasks are independent (no data flowing between them). The resource governor caps actual concurrency based on free RAM, active model size, and currently-running subagents — you can request a max but the governor decides. Returns all results in input order. For dependent tasks (B needs A's output), use spawn_subagent sequentially instead. CALL check_resources first if you're unsure how big a batch is reasonable.",
+      "Spawn a batch of independent subagents in parallel. Concurrency is capped by the resource governor — you ask, it decides. Returns results in input order. Use spawn_subagent sequentially if B needs A's output.",
     parameters: {
       type: "object",
       properties: {
@@ -423,7 +423,7 @@ export const spawnSubagentsParallelTool: Tool = {
         },
         max_parallel: {
           type: "number",
-          description: "Your requested max concurrency. The governor floors this further; the actual cap is in the returned cap_applied field.",
+          description: "Requested max concurrency. Governor may cap lower; actual is in cap_applied.",
         },
       },
       required: ["batch"],

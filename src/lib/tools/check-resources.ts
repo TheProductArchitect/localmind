@@ -29,13 +29,13 @@ export const checkResourcesTool: Tool = {
   definition: {
     name: "check_resources",
     description:
-      "Inspect current system resources (RAM, active model, currently-running subagents) and get a recommendation for how many subagents you can safely spawn in parallel right now. CALL THIS before using spawn_subagents_parallel when you're unsure how big a batch is safe. The returned `max_concurrent` is the hard ceiling — even if you request more in spawn_subagents_parallel, the governor will clamp you down.",
+      "Get a safe parallel-subagent count based on current RAM and active model. Call before spawn_subagents_parallel when batch size is uncertain. max_concurrent is a hard ceiling.",
     parameters: {
       type: "object",
       properties: {
         requested_max: {
           type: "number",
-          description: "How many subagents you're considering spawning. The governor returns this many or fewer. Default 8.",
+          description: "How many you're considering. Governor returns this or fewer. Default 8.",
         },
       },
     },

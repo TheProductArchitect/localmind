@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { CONFIG_DB, CONVERSATIONS_DB, KNOWLEDGE_DB, ensureDataDir } from "../paths";
 import { runMigrations } from "./migrations";
 import { loadVecExtension } from "./vec";
+import { ensureBuiltinMcpServers, autoBootstrapBuiltinsInBackground } from "../mcp/builtins";
 
 let configDb: Database.Database | null = null;
 let convDb: Database.Database | null = null;
@@ -19,6 +20,13 @@ export function getConfigDb(): Database.Database {
     configDb = new Database(CONFIG_DB);
     harden(configDb);
     runMigrations(configDb, "config");
+    // Seed/refresh built-in MCP servers (Secure Browser, etc.). Idempotent —
+    // safe on every boot, and keeps metadata in sync with the source table.
+    ensureBuiltinMcpServers(configDb);
+    // First-run UX: kick off bootstrap for any built-in that isn't installed
+    // yet (e.g. Secure Browser's venv on a fresh checkout). Fire-and-forget;
+    // progress is exposed via /api/mcp/servers and the MCP page surfaces it.
+    autoBootstrapBuiltinsInBackground();
   }
   return configDb;
 }

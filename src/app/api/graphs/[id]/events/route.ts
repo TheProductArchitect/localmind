@@ -29,7 +29,8 @@ function graphSignature(g: TaskGraph): string {
   return `${g.status}|${g.cost_actual.tokens}|${g.cost_actual.wall_seconds}|${g.completed_at ?? ""}`;
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const initial = getGraph(params.id);
   const user = currentUser(req);
   if (!initial || !user) return new Response("Not found", { status: 404 });

@@ -1,0 +1,81 @@
+name: CI Checks
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    # Run on ALL pull requests, regardless of target branch, so a contributor
+    # opening a PR against a long-lived feature branch still gets the green/red.
+    branches: [ "**" ]
+  # Allow manual reruns from the Actions tab when chasing flakes.
+  workflow_dispatch:
+
+# Cancel in-flight runs for the same ref when a new push arrives — saves CI
+# minutes and gives faster signal on rapid pushes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build_and_test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    env:
+      LOCALMIND_JWT_SECRET: supersecrettesting
+      # Pin every step to an isolated data dir so build, unit tests, and the
+      # isolation harness all share the SAME empty SQLite directory. Without
+      # this at job level, `next build` would seed rows into the runner's
+      # default ~/.localmind that then leaked into the isolation test.
+      LOCALMIND_DATA_DIR: /tmp/localmind-ci-data
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          
+      - name: Install Dependencies
+        run: npm ci
+        
+      - name: Run Linter
+        run: npm run lint
+        
+      - name: Run Unit Tests
+        run: npm test
+        
+      - name: Run Type Check
+        run: npx tsc --noEmit
+        
+      - name: Build Application
+        run: npm run build
+
+      # The build step compiles routes that import db modules, which on first
+      # touch will create schema rows in LOCALMIND_DATA_DIR. The isolation
+      # harness needs a virgin database, so we wipe the dir AFTER build and
+      # before starting the server. The job-level env var keeps every later
+      # step (server start, test runner) pointed at the same isolated path.
+      - name: Reset SQLite data dir for isolation test
+        run: |
+          rm -rf /tmp/localmind-ci-data
+          mkdir -p /tmp/localmind-ci-data
+
+      - name: Start Application in Background
+        run: npm run start &
+        
+      - name: Wait for server to boot
+        run: |
+          for i in {1..30}; do
+            curl -s http://localhost:3000 > /dev/null && break
+            echo "Waiting for Next.js to start..."
+            sleep 2
+          done
+          
+      - name: Run Isolation Checks
+        run: npm run test:isolation

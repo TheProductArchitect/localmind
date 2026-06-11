@@ -4,7 +4,8 @@ import { getTable, listRecords, putRecord, dropTable, ensureTable } from "@/lib/
 
 export const runtime = "nodejs";
 
-export async function GET(req: NextRequest, { params }: { params: { name: string } }) {
+export async function GET(req: NextRequest, { params: paramsPromise }: { params: Promise<{ name: string }> }) {
+  const params = await paramsPromise;
   const t = getTable(params.name);
   if (!t) return NextResponse.json({ error: "Table not found." }, { status: 404 });
   const sp = req.nextUrl.searchParams;
@@ -19,7 +20,8 @@ const PostBody = z.object({
   schema: z.record(z.unknown()).optional(),
 });
 
-export async function POST(req: NextRequest, { params }: { params: { name: string } }) {
+export async function POST(req: NextRequest, { params: paramsPromise }: { params: Promise<{ name: string }> }) {
+  const params = await paramsPromise;
   const parsed = PostBody.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid payload — expected { data }." }, { status: 400 });
   try {
@@ -31,7 +33,8 @@ export async function POST(req: NextRequest, { params }: { params: { name: strin
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { name: string } }) {
+export async function DELETE(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ name: string }> }) {
+  const params = await paramsPromise;
   const ok = dropTable(params.name);
   return NextResponse.json({ ok });
 }

@@ -6,15 +6,20 @@ import { toast } from "@/components/toast";
 import {
   RefreshCw, ExternalLink, CheckCircle2, AlertCircle,
 } from "lucide-react";
-import { SETTINGS_SECTIONS, type SettingsSectionId } from "@/components/settings-sidebar";
+import { SETTINGS_SECTIONS, type SettingsSectionId, type HiddenSectionId } from "@/components/settings-sidebar";
 
-type SectionId = SettingsSectionId;
+// Tools is reachable via ?section=Tools but doesn't appear in the in-page
+// tab list — it's surfaced under "Context engineering" in the sidebar.
+type SectionId = SettingsSectionId | HiddenSectionId;
+const ALL_SECTION_IDS = [...SETTINGS_SECTIONS.map((s) => s.id), "Tools"] as const;
 
 function SettingsBody() {
   const params = useSearchParams();
   const raw = params.get("section");
   const section: SectionId = (
-    SETTINGS_SECTIONS.find((s) => s.id === raw)?.id ?? "General"
+    (ALL_SECTION_IDS as readonly string[]).includes(raw ?? "")
+      ? (raw as SectionId)
+      : "General"
   );
 
   return (
@@ -339,7 +344,99 @@ function GeneralSection() {
           </div>
         ))}
       </Card>
+
+      <AlwaysOnCard />
     </div>
+  );
+}
+
+function AlwaysOnCard() {
+  type Plan = {
+    platform: "macos" | "linux" | "unsupported";
+    service_path?: string;
+    contents?: string;
+    activate_commands?: string[];
+    deactivate_commands?: string[];
+    reason?: string;
+  };
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [installed, setInstalled] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [showCommands, setShowCommands] = useState(false);
+
+  async function load() {
+    const j = await (await fetch("/api/system/always-on")).json();
+    setPlan(j.plan);
+    setInstalled(!!j.installed);
+  }
+  useEffect(() => { load(); }, []);
+
+  async function install() {
+    setBusy(true);
+    const r = await fetch("/api/system/always-on", { method: "POST" });
+    const j = await r.json();
+    setBusy(false);
+    if (!r.ok) toast(j.error || "Could not write the service file.", "error");
+    else { toast("Service file written. Run the activate commands to start.", "success"); setShowCommands(true); }
+    load();
+  }
+  async function uninstall() {
+    setBusy(true);
+    await fetch("/api/system/always-on", { method: "DELETE" });
+    setBusy(false);
+    toast("Service file removed. Run the deactivate commands to fully stop.", "success");
+    load();
+  }
+
+  if (!plan) return null;
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="lm-micro">Run LocalMind always</p>
+        {installed && <Badge variant="success">installed</Badge>}
+      </div>
+      <p className="text-[12px]" style={{ color: "hsl(0 0% 100% / 0.6)" }}>
+        Keep the server alive across logout and sleep so scheduled tasks, monitors, and peer chats land on
+        time. The app idles when nothing is happening — no busy loop, just a quiet check-in once a minute.
+      </p>
+
+      {plan.platform === "unsupported" ? (
+        <p className="text-xs text-amber-500">{plan.reason}</p>
+      ) : (
+        <>
+          <div className="text-[11px] font-mono text-muted-foreground break-all">
+            {plan.service_path}
+          </div>
+          <div className="flex items-center gap-2">
+            {!installed ? (
+              <Button size="sm" onClick={install} disabled={busy}>Install</Button>
+            ) : (
+              <>
+                <Button size="sm" variant="outline" onClick={() => setShowCommands((s) => !s)}>
+                  {showCommands ? "Hide" : "Show"} commands
+                </Button>
+                <Button size="sm" variant="ghost" onClick={uninstall} disabled={busy}>Remove</Button>
+              </>
+            )}
+          </div>
+          {(showCommands || !installed) && (
+            <div className="space-y-2 pt-2 border-t border-border">
+              <p className="text-[11px] text-muted-foreground">
+                Run these in your terminal to {installed ? "activate" : "complete activation"}:
+              </p>
+              {plan.activate_commands?.map((c, i) => (
+                <pre key={i} className="text-[10px] font-mono bg-muted p-1.5 rounded overflow-x-auto">{c}</pre>
+              ))}
+              <p className="text-[11px] text-muted-foreground pt-2">To uninstall later:</p>
+              {plan.deactivate_commands?.map((c, i) => (
+                <pre key={i} className="text-[10px] font-mono bg-muted p-1.5 rounded overflow-x-auto">{c}</pre>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </Card>
   );
 }
 
@@ -495,51 +592,208 @@ function McpSection() {
   );
 }
 
-function ToolsSection() {
-  const MAC_TOOLS = [
-    { id: "calendar", label: "Calendar", desc: "Read and create macOS Calendar events." },
-    { id: "email", label: "Mail", desc: "Read and send mail via macOS Mail." },
-    { id: "mac_automation", label: "Mac automation", desc: "Open apps, URLs, and post notifications." },
-  ];
-  const [status, setStatus] = useState<Record<string, any>>({});
+type ToolRow = { name: string; description: string; action_type: string };
+type McpServerRow = {
+  id: string; name: string; description: string | null;
+  enabled: number; transport: string; source: string;
+  command: string | null; url: string;
+};
 
-  async function verify(tool: string) {
-    alert("macOS will ask for permission. If no dialog appears, grant access in System Settings → Privacy & Security.");
-    setStatus((s) => ({ ...s, [tool]: { checking: true } }));
+const MAC_TOOL_IDS: Record<string, string> = {
+  calendar: "Calendar",
+  email: "Mail",
+  mac_automation: "Mac automation",
+};
+// Tools whose action_type lives in the destructive floor — their tier can
+// be 'ask' or 'pin' but never 'allow'. This mirrors permission-guard.ts.
+const FLOOR_ACTIONS = new Set([
+  "delete_files", "delete_data", "drop_table", "destructive_shell", "uninstall",
+  "factory_reset", "revoke_session", "delete_user", "unpair_peer",
+  "delete_conversation", "delete_memory", "delete_knowledge", "delete_automation",
+  "send_email", "make_call", "post_message", "git_force_push", "git_reset_hard",
+  "install_mcp",
+]);
+
+function ToolsSection() {
+  const [tools, setTools] = useState<ToolRow[]>([]);
+  const [servers, setServers] = useState<McpServerRow[]>([]);
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const [tiers, setTiers] = useState<Record<string, "allow" | "ask" | "pin">>({});
+  const [verifyStatus, setVerifyStatus] = useState<Record<string, any>>({});
+  const [filter, setFilter] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const [t, perms, m] = await Promise.all([
+        fetch("/api/tools").then((r) => r.json()).catch(() => ({ tools: [] })),
+        fetch("/api/permissions").then((r) => r.json()).catch(() => ({ profiles: [], active: null })),
+        fetch("/api/mcp/servers").then((r) => r.json()).catch(() => ({ servers: [] })),
+      ]);
+      setTools((t.tools as ToolRow[]) || []);
+      setServers((m.servers as McpServerRow[]) || []);
+      const active = (perms.profiles || []).find((p: any) => p.id === perms.active) || perms.profiles?.[0];
+      if (active) {
+        setProfileId(active.id);
+        setTiers(active.tiers || {});
+      }
+    })();
+  }, []);
+
+  async function setTier(actionType: string, next: "allow" | "ask" | "pin") {
+    if (!profileId) return;
+    // Honour the floor even at the UI: never let the user set 'allow' on a
+    // destructive action. The classifier in permission-guard.ts ignores it
+    // anyway, but stopping it here avoids confusion.
+    const safe = FLOOR_ACTIONS.has(actionType) && next === "allow" ? "ask" : next;
+    const updated = { ...tiers, [actionType]: safe };
+    setTiers(updated);
+    await fetch("/api/permissions", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: profileId, tiers: updated }),
+    });
+  }
+
+  async function setMcpEnabled(id: string, enabled: boolean) {
+    setServers((arr) => arr.map((s) => (s.id === id ? { ...s, enabled: enabled ? 1 : 0 } : s)));
+    await fetch(`/api/mcp/servers/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
+  async function verifyMac(tool: string) {
+    setVerifyStatus((s) => ({ ...s, [tool]: { checking: true } }));
     const j = await (await fetch("/api/tools/verify", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tool }),
     })).json();
-    setStatus((s) => ({ ...s, [tool]: j }));
+    setVerifyStatus((s) => ({ ...s, [tool]: j }));
   }
 
+  const q = filter.trim().toLowerCase();
+  const matches = (s: string) => !q || s.toLowerCase().includes(q);
+
+  // Separate built-ins from MCP-server-backed tools. MCP tools have names
+  // prefixed `mcp:` by the registry, so we can split cleanly.
+  const builtins = tools.filter((t) => !t.name.startsWith("mcp:") && (matches(t.name) || matches(t.description)));
+  const mcpTools = tools.filter((t) => t.name.startsWith("mcp:") && (matches(t.name) || matches(t.description)));
+
   return (
-    <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Tools</h1>
-      <p className="text-xs text-muted-foreground">
-        macOS tools need a one-time permission grant. Click Verify to trigger the system dialog
-        and confirm access.
-      </p>
-      {MAC_TOOLS.map((t) => {
-        const st = status[t.id];
-        return (
-          <Card key={t.id} className="p-4 space-y-2">
-            <div className="flex items-center gap-2">
-              <p className="font-medium text-sm flex-1">{t.label}</p>
-              {st?.verified && <Badge variant="success">Verified</Badge>}
-              {st && st.verified === false && <Badge variant="warning">Permission denied</Badge>}
-              <Button size="sm" variant="outline" onClick={() => verify(t.id)}>
-                {st?.checking ? "Checking…" : "Verify access"}
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">{t.desc}</p>
-            {st && st.verified === false && (
-              <a href={st.settingsPane} className="text-xs underline text-amber-600">
-                Open System Settings to grant access
-              </a>
-            )}
-          </Card>
-        );
-      })}
+    <div className="space-y-6">
+      <div>
+        <p className="text-xs text-muted-foreground mb-3">
+          Every tool Sora can call. The dropdown controls the default approval tier; destructive
+          tools are pinned to <span className="font-mono">ask</span> or <span className="font-mono">pin</span> and
+          cannot be set to <span className="font-mono">allow</span> regardless of mode.
+        </p>
+        <Input
+          placeholder="Filter…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+      </div>
+
+      {/* Built-in tools */}
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Built-in</p>
+        {builtins.length === 0 && (
+          <p className="text-xs text-muted-foreground">No tools match.</p>
+        )}
+        {builtins.map((t) => {
+          const tier = tiers[t.action_type] || "ask";
+          const isFloor = FLOOR_ACTIONS.has(t.action_type);
+          const macKey = Object.keys(MAC_TOOL_IDS).find((k) => t.name === k);
+          const st = macKey ? verifyStatus[macKey] : null;
+          return (
+            <Card key={t.name} className="p-3">
+              <div className="flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs">{t.name}</span>
+                    {isFloor && <Badge variant="warning">destructive</Badge>}
+                    {macKey && st?.verified && <Badge variant="success">verified</Badge>}
+                    {macKey && st?.verified === false && <Badge variant="warning">denied</Badge>}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">{t.description}</p>
+                  <p className="text-[10px] text-muted-foreground mt-1 font-mono">action: {t.action_type}</p>
+                </div>
+                <select
+                  value={tier}
+                  onChange={(e) => setTier(t.action_type, e.target.value as any)}
+                  className="text-xs border rounded px-2 py-1 bg-transparent"
+                  aria-label={`Permission tier for ${t.name}`}
+                >
+                  <option value="ask">ask</option>
+                  <option value="pin">pin</option>
+                  {!isFloor && <option value="allow">allow</option>}
+                </select>
+                {macKey && (
+                  <Button size="sm" variant="outline" onClick={() => verifyMac(macKey)}>
+                    {st?.checking ? "…" : "Verify"}
+                  </Button>
+                )}
+              </div>
+              {macKey && st?.verified === false && (
+                <a href={st.settingsPane} className="text-xs underline text-amber-600 mt-2 inline-block">
+                  Open System Settings to grant access
+                </a>
+              )}
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* MCP servers — show each server then the tools it provides */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">MCP servers</p>
+          <a href="/mcp" className="text-xs underline text-muted-foreground">Manage servers ↗</a>
+        </div>
+        {servers.length === 0 && (
+          <p className="text-xs text-muted-foreground">No MCP servers installed yet. Ask Sora to install one (e.g. &ldquo;install the GitHub MCP via npm&rdquo;) — she&apos;ll prompt you to approve before it&apos;s registered.</p>
+        )}
+        {servers.filter((s) => matches(s.name) || matches(s.description ?? "")).map((s) => {
+          const childTools = mcpTools.filter((t) => t.name === `mcp:${s.name}` || t.name.startsWith(`mcp:${s.name}:`));
+          return (
+            <Card key={s.id} className="p-3">
+              <div className="flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium text-sm">{s.name}</p>
+                    <Badge variant={s.enabled ? "success" : "warning"}>
+                      {s.enabled ? "enabled" : "disabled"}
+                    </Badge>
+                    <span className="text-[10px] text-muted-foreground font-mono">{s.source}</span>
+                  </div>
+                  {s.description && <p className="text-xs text-muted-foreground mt-1">{s.description}</p>}
+                  {s.command && (
+                    <p className="text-[10px] text-muted-foreground mt-1 font-mono truncate">
+                      $ {s.command}
+                    </p>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setMcpEnabled(s.id, !s.enabled)}
+                >
+                  {s.enabled ? "Disable" : "Enable"}
+                </Button>
+              </div>
+              {childTools.length > 0 && (
+                <div className="mt-2 pl-3 border-l border-border space-y-1">
+                  {childTools.map((t) => (
+                    <p key={t.name} className="text-[11px] font-mono text-muted-foreground">
+                      • {t.name.replace(/^mcp:/, "")}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </Card>
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -33,7 +33,7 @@ export const requestToolAccessTool: Tool = {
   definition: {
     name: "request_tool_access",
     description:
-      "Call this when you've been given a task that you cannot complete with your current tool surface. Specify the tool(s) you need and the reason. Your run will end cleanly with a structured request payload; the parent agent (Sora) will read the request and decide whether to re-spawn you with broader access, do the work itself, or decline the task. DO NOT call this for tools you already have — check your tool list first. DO NOT call this to bypass safety; destructive actions still require user confirmation regardless of who holds the tool.",
+      "Call when you can't complete the task with your current tools. Specify what you need and why; your run ends with a structured request the parent reads. Not for tools you already have, not for bypassing safety.",
     parameters: {
       type: "object",
       properties: {

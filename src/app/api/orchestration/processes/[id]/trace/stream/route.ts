@@ -10,7 +10,8 @@ export const dynamic = "force-dynamic";
 // weren't sent on a prior tick. Stops when the process is completed/cancelled
 // and the final batch has been delivered. Cheap and adequate for V5; a true
 // pub/sub bus is a V5.1 swap.
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const proc = getProcess(params.id);
   const user = currentUser(req);
   if (!proc || !user) return new Response("Not found", { status: 404 });

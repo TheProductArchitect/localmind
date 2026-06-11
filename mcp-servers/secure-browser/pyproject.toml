@@ -1,0 +1,26 @@
+[project]
+name = "secure-browser-mcp"
+version = "0.1.0"
+description = "MCP server that fetches a URL, sanitizes it to Markdown, and runs a local prompt-injection scan before returning content to the LLM."
+requires-python = ">=3.10"
+dependencies = [
+  "mcp>=1.0.0",
+  "playwright>=1.45.0",
+  "beautifulsoup4>=4.12.0",
+  "markdownify>=0.13.0",
+  "llm-guard>=0.3.14",
+  "torch>=2.2.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0.0"]
+
+[project.scripts]
+secure-browser-mcp = "secure_browser.server:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

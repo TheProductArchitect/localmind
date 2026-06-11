@@ -14,7 +14,8 @@ const PatchBody = z
   })
   .strict();
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const persona = getPersona(params.id);
   if (!persona) return NextResponse.json({ error: "Persona not found." }, { status: 404 });
 
@@ -27,7 +28,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   return NextResponse.json({ persona: getPersona(params.id) });
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+  const params = await paramsPromise;
   const result = deletePersona(params.id);
   if (!result.ok) {
     return NextResponse.json({ error: result.reason || "Could not delete persona." }, { status: 400 });
