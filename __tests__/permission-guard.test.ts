@@ -71,6 +71,19 @@ describe("permission-guard", () => {
       expect(isDestructive("memory_read")).toBe(false);
       expect(isDestructive("web_search")).toBe(false);
     });
+
+    it("browser_automation is on the always-confirm floor", () => {
+      // Raw browser navigation bypasses Secure Browser MCP's SSRF guard and
+      // injection scanner. Every nav must get user confirmation regardless
+      // of mode — auto mode does NOT bypass this. If this test starts
+      // failing, someone has loosened a security floor; read the comment in
+      // permission-guard.ts before changing the assertion.
+      expect(isDestructive("browser_automation")).toBe(true);
+      for (const mode of ["auto", "plan", "ask"] as const) {
+        mockedSettings.mockReturnValue({ agent_mode: mode } as any);
+        expect(classify("browser_automation")).toBe("ask");
+      }
+    });
   });
 
   describe("LLM-owned actions", () => {

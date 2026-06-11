@@ -11,7 +11,8 @@ export const websearchTool: Tool = {
   cacheable: () => true,
   definition: {
     name: "web_search",
-    description: "Search the web and return top results. Uses Brave Search if BRAVE_API_KEY is set, otherwise DuckDuckGo HTML.",
+    description:
+      "Discover links matching a query — returns titles, URLs, and snippets only. To read the contents of any returned URL, call the Secure Browser MCP's read_secure_webpage; raw page rendering through other tools is gated behind user permission.",
     parameters: {
       type: "object",
       properties: { query: { type: "string" } },

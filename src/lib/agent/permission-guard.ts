@@ -50,11 +50,15 @@ const READ_ACTIONS: ReadonlySet<string> = new Set([
   "read_time",
 ]);
 
-// DESTRUCTIVE FLOOR — these actions ALWAYS require user confirmation.
-// "auto" mode does NOT bypass this list. The user has to sign off on every
-// single delete, drop, format, kill, or shell-out that destroys state.
-// Sora's system prompt is told explicitly that she cannot remove files
-// or run rm-style commands without an inline approval from the user.
+// ALWAYS-CONFIRM FLOOR — these actions ALWAYS require user confirmation.
+// "auto" mode does NOT bypass this list. Two classes live here:
+//   (a) destructive ops (delete/drop/format/kill, irreversible outbound sends)
+//   (b) unguarded network reach (raw browser navigation that bypasses our
+//       secure-browser MCP — every such nav is an SSRF / prompt-injection
+//       surface, so the user must vet the URL).
+// Sora's system prompt is told explicitly that she cannot remove files,
+// run rm-style commands, or open raw browser sessions without an inline
+// approval from the user.
 const DESTRUCTIVE_ACTIONS: ReadonlySet<string> = new Set([
   "delete_files",
   "delete_data",
@@ -79,6 +83,11 @@ const DESTRUCTIVE_ACTIONS: ReadonlySet<string> = new Set([
   // has to vet the package source and trust the publisher. This is the floor
   // behind Sora's `install_mcp_server` tool.
   "install_mcp",
+  // Raw browser navigation bypasses the Secure Browser MCP's SSRF guard,
+  // resource filter, and prompt-injection scanner. Every call gets an
+  // explicit user confirmation; the model is told via the tool description
+  // to prefer read_secure_webpage for normal reading.
+  "browser_automation",
 ]);
 
 function isRead(actionType: string): boolean {

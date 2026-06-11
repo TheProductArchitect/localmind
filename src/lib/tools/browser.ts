@@ -30,7 +30,7 @@ export const browserTool: Tool = {
   definition: {
     name: "browser",
     description:
-      "Open a web page in a real Chromium browser (renders JavaScript) and return its readable text content. Pass a URL.",
+      "Open a URL in a raw Chromium browser. Every call requires explicit user confirmation. Prefer the Secure Browser MCP (read_secure_webpage) for normal reading — it sanitizes content and scans for prompt injection. Use this tool only when the user has asked for unfiltered, JavaScript-rendered access.",
     parameters: {
       type: "object",
       properties: { url: { type: "string" } },
