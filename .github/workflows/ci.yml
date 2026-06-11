@@ -50,7 +50,7 @@ jobs:
       - name: Run Unit Tests
         run: npm test
         
-      - name: Run Type Check (if you have explicitly set one)
+      - name: Run Type Check
         run: npx tsc --noEmit
         
       - name: Build Application
