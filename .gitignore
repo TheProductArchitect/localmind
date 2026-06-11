@@ -8,8 +8,9 @@ out
 ~/.localmind
 tsconfig.tsbuildinfo
 
-# Python virtual environments
+# Python virtual environments + build artifacts
 .venv/
 venv/
 __pycache__/
 *.pyc
+*.egg-info/
