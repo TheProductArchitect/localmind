@@ -3,16 +3,8 @@
  *
  * For any node tagged `requires_verification: true`, after the node produces
  * its output the executor spawns a sibling that tries to REFUTE the output
- * against the contract. The refuter runs with the same persona but with the
- * contract's `success_predicate` and the proposed output as inputs.
- *
- * The asymmetry (one agent proposes, a separate one refutes) catches plausible-
- * but-wrong outputs that "judge panels" miss because all judges share the
- * proposer's blind spots. See §4 of the V6 plan for the rationale.
- *
- * V6.3 ships the refute pass as a pure executor concern — the refuter agent
- * is a stub for now (returns `refuted: false` with a note) so we can wire the
- * full pipeline without a real LLM call. V6.4 plugs in the live agent.
+ * against the contract. The refuter runs with reduced tools and parses a
+ * structured JSON verdict from the model response.
  */
 
 import type {
@@ -84,13 +76,7 @@ export function parseRefuteResponse(text: string): { refuted: boolean; reason: s
 /**
  * Run the refute pass against an output using the executor's pluggable
  * runner. The verifier is constructed as a sibling task node so its work is
- * audited and budgeted alongside everything else. Returns a verdict.
- *
- * V6.4 will replace the stub branch with a real agent run that uses a small
- * fast model (configurable per-contract). For V6.3, when the caller passes a
- * stub runner that returns `{ ok: true, output: "(stub-refuter)" }`, the
- * default verdict is `refuted: false` because we have no signal — the
- * executor logs this as "verification skipped" so it's visible.
+ * audited and budgeted alongside everything else.
  */
 export async function runRefute(
   node: TaskNode,
@@ -133,14 +119,6 @@ export async function runRefute(
   }
 
   const text = r.output_text ?? (typeof r.output === "string" ? r.output : JSON.stringify(r.output ?? ""));
-  // Stub-runner sentinel — V6.3 ships without a live refuter agent.
-  if (text.includes("(stub-refuter)")) {
-    return {
-      refuted: false,
-      reason: "Verification skipped — V6.3 refuter is stubbed pending live agent wire-up.",
-      cost: r.cost,
-    };
-  }
   const verdict = parseRefuteResponse(text);
   return { ...verdict, cost: r.cost };
 }

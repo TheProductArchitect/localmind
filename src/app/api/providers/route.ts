@@ -7,10 +7,17 @@ export const runtime = "nodejs";
 const PROVIDERS = ["ollama", "openai", "anthropic", "groq", "openrouter"];
 
 export async function GET() {
-  const connected = listConnectedProviders();
-  return NextResponse.json({
-    providers: PROVIDERS.map((p) => ({ name: p, connected: p === "ollama" || connected.includes(p) })),
-  });
+  try {
+    const connected = listConnectedProviders();
+    return NextResponse.json({
+      providers: PROVIDERS.map((p) => ({ name: p, connected: p === "ollama" || connected.includes(p) })),
+    });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: "providers_unavailable", providers: [], message: e?.message || "Could not load providers" },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST(req: NextRequest) {

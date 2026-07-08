@@ -928,6 +928,30 @@ configMigrations.push({
   },
 });
 
+// Workflow pause state for human_approval steps.
+configMigrations.push({
+  version: 15,
+  up: (db) => {
+    db.exec(`
+      ALTER TABLE workflow_runs ADD COLUMN paused_step_index INTEGER;
+      ALTER TABLE workflow_runs ADD COLUMN paused_vars TEXT;
+      ALTER TABLE workflow_runs ADD COLUMN paused_conv_id TEXT;
+      ALTER TABLE workflow_runs ADD COLUMN approval_message TEXT;
+
+      CREATE TABLE workflow_approvals (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        workflow_id TEXT NOT NULL,
+        message TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at INTEGER NOT NULL,
+        responded_at INTEGER
+      );
+      CREATE INDEX idx_workflow_approvals_run ON workflow_approvals(run_id);
+    `);
+  },
+});
+
 const knowledgeMigrations: Migration[] = [
   {
     version: 1,

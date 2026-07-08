@@ -38,6 +38,9 @@
 
 import { getConfigDb } from "../db";
 import { addMemory } from "../db/agent-memory";
+import { getProcess } from "../db/agent-processes";
+import { getSettings } from "../db/queries";
+import { getProvider } from "../providers";
 
 export type CriticQueueStatus = "pending" | "reviewing" | "done" | "failed" | "skipped";
 
@@ -243,11 +246,55 @@ export async function runCriticOnce(): Promise<{ reviewed: number; reason?: stri
  * mock during development.
  */
 async function judgeSubagentRun(
-  _processId: string,
-  _personaId: string,
-  _reason: string
+  processId: string,
+  personaId: string,
+  reason: string
 ): Promise<CriticRating | null> {
-  // TODO: wire to local model. For now we return null so production behavior is
-  // a no-op even when LOCALMIND_CRITIC_ENABLED=1 but the model isn't wired.
-  return null;
+  const settings = getSettings();
+  if (!settings.active_model) return null;
+
+  const proc = getProcess(processId);
+  const prompt = [
+    `You are a critic reviewing a subagent run.`,
+    `Persona: ${personaId}`,
+    `Review reason: ${reason}`,
+    `Process status: ${proc?.status ?? "unknown"}`,
+    `Display name: ${proc?.display_name ?? "(unknown)"}`,
+    ``,
+    `Rate the run 1-5 (1=harmful, 5=excellent), confidence 0-1, and propose lessons.`,
+    `Reply with a single JSON object:`,
+    `{ "rating": <1-5>, "confidence": <0-1>, "lessons": ["..."], "warnings": ["..."] }`,
+  ].filter(Boolean).join("\n");
+
+  let text = "";
+  try {
+    for await (const chunk of getProvider().chat({
+      model: settings.active_model,
+      messages: [{ role: "user", content: prompt }],
+      tools: [],
+      signal: AbortSignal.timeout(60_000),
+    })) {
+      if (chunk.type === "text") text += chunk.delta;
+    }
+  } catch {
+    return null;
+  }
+
+  const match = text.match(/\{[\s\S]*"rating"[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(match[0]) as {
+      rating?: number;
+      confidence?: number;
+      lessons?: string[];
+      warnings?: string[];
+    };
+    const rating = Math.min(5, Math.max(1, Math.round(Number(parsed.rating) || 3))) as CriticRating["rating"];
+    const confidence = Math.min(1, Math.max(0, Number(parsed.confidence) || 0.5));
+    const lessons = Array.isArray(parsed.lessons) ? parsed.lessons.map(String).filter(Boolean) : [];
+    const warnings = Array.isArray(parsed.warnings) ? parsed.warnings.map(String).filter(Boolean) : [];
+    return { rating, confidence, lessons, warnings };
+  } catch {
+    return null;
+  }
 }

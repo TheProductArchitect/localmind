@@ -62,6 +62,50 @@ function sectionTitle(id: SectionId): string {
   }[id];
 }
 
+async function readApi<T extends Record<string, unknown>>(
+  url: string
+): Promise<{ ok: true; data: T } | { ok: false; error: string; status: number }> {
+  try {
+    const r = await fetch(url);
+    const data = (await r.json().catch(() => ({}))) as T & { message?: string; error?: string };
+    if (!r.ok) {
+      return {
+        ok: false,
+        error: data.message || data.error || "Request failed",
+        status: r.status,
+      };
+    }
+    return { ok: true, data };
+  } catch {
+    return { ok: false, error: "Network error", status: 0 };
+  }
+}
+
+function SettingsLoading() {
+  return <p className="text-sm text-muted-foreground">Loading…</p>;
+}
+
+/** Shown when API returns 401 — usually a stale lm_token cookie blocking loopback access. */
+function SettingsAuthPrompt({ message, onRetry }: { message: string; onRetry: () => void }) {
+  async function continueOnLocalhost() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    onRetry();
+  }
+  return (
+    <Card className="p-4 space-y-3">
+      <p className="text-sm">{message}</p>
+      <p className="text-xs text-muted-foreground">
+        On localhost, an expired session cookie can block access. Clear it to continue without signing in,
+        or sign in with your PIN.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" onClick={() => { window.location.href = "/login"; }}>Sign in</Button>
+        <Button size="sm" variant="outline" onClick={continueOnLocalhost}>Continue on localhost</Button>
+      </div>
+    </Card>
+  );
+}
+
 /* ============================================================ */
 /* Integrations                                                 */
 /* ============================================================ */
@@ -195,26 +239,49 @@ function IntegrationGroup({
 
 function useSettings() {
   const [s, setS] = useState<any>(null);
-  const load = () => fetch("/api/settings").then((r) => r.json()).then((j) => setS(j.settings));
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const load = () => {
+    setLoading(true);
+    return readApi<{ settings: any }>("/api/settings").then((r) => {
+      if (!r.ok) {
+        setAuthError(r.status === 401 || r.status === 403 ? r.error : r.error);
+        setS(null);
+        return;
+      }
+      setAuthError(null);
+      setS(r.data.settings ?? null);
+    }).finally(() => setLoading(false));
+  };
   useEffect(() => { load(); }, []);
   const save = async (patch: any) => {
-    await fetch("/api/settings", {
+    const r = await fetch("/api/settings", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(patch),
     });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      toast(j.message || j.error || "Save failed", "error");
+      return;
+    }
     toast("Saved", "success");
     load();
   };
-  return { s, save };
+  return { s, save, loading, authError, reload: load };
 }
 
 function GeneralSection() {
-  const { s, save } = useSettings();
+  const { s, save, loading, authError, reload } = useSettings();
   const [memory, setMemory] = useState<any[]>([]);
   const [pin, setPin] = useState("");
-  useEffect(() => { fetch("/api/memory").then((r) => r.json()).then((j) => setMemory(j.memory || [])); }, []);
-  if (!s) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  useEffect(() => {
+    readApi<{ memory: any[] }>("/api/memory").then((r) => {
+      if (r.ok) setMemory(r.data.memory || []);
+    });
+  }, []);
+  if (authError) return <SettingsAuthPrompt message={authError} onRetry={reload} />;
+  if (loading || !s) return <SettingsLoading />;
 
   return (
     <div className="space-y-4">
@@ -441,13 +508,14 @@ function AlwaysOnCard() {
 }
 
 function NetworkSection() {
-  const { s, save } = useSettings();
+  const { s, save, loading, authError, reload } = useSettings();
   const [ip, setIp] = useState("");
   useEffect(() => {
     fetch("/api/system/health").then(() => {});
     setIp(window.location.hostname);
   }, []);
-  if (!s) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (authError) return <SettingsAuthPrompt message={authError} onRetry={reload} />;
+  if (loading || !s) return <SettingsLoading />;
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Network</h1>
@@ -481,7 +549,22 @@ function NetworkSection() {
 function ProvidersSection() {
   const [providers, setProviders] = useState<{ name: string; connected: boolean }[]>([]);
   const [keys, setKeys] = useState<Record<string, string>>({});
-  const load = () => fetch("/api/providers").then((r) => r.json()).then((j) => setProviders(j.providers));
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const load = () => {
+    setLoading(true);
+    return readApi<{ providers: { name: string; connected: boolean }[] }>("/api/providers")
+      .then((r) => {
+        if (!r.ok) {
+          setAuthError(r.status === 401 || r.status === 403 ? r.error : r.error);
+          setProviders([]);
+          return;
+        }
+        setAuthError(null);
+        setProviders(Array.isArray(r.data.providers) ? r.data.providers : []);
+      })
+      .finally(() => setLoading(false));
+  };
   useEffect(() => { load(); }, []);
 
   async function action(provider: string, act: string) {
@@ -500,7 +583,12 @@ function ProvidersSection() {
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Providers & API Keys</h1>
       <p className="text-xs text-muted-foreground">Keys are encrypted with AES-256-GCM at rest.</p>
-      {providers.map((p) => (
+      {authError ? (
+        <SettingsAuthPrompt message={authError} onRetry={load} />
+      ) : loading ? (
+        <SettingsLoading />
+      ) : (
+      providers.map((p) => (
         <Card key={p.name} className="p-4 space-y-2">
           <div className="flex items-center gap-2">
             <span className="font-medium text-sm capitalize">{p.name}</span>
@@ -524,7 +612,8 @@ function ProvidersSection() {
             toast(`${p.name} set as active provider`, "success");
           }}>Set as active</Button>
         </Card>
-      ))}
+      ))
+      )}
     </div>
   );
 }
@@ -875,22 +964,51 @@ function TwilioWizard() {
 function CommsSection() {
   const [telegram, setTelegram] = useState({ enabled: false, botToken: "", defaultChatId: "" });
   const [twilio, setTwilio] = useState({ enabled: false, accountSid: "", authToken: "", authorisedNumber: "", publicUrl: "" });
-  // WhatsApp piggybacks on Twilio's WhatsApp API — same SID/auth, but a
-  // separate enable flag + WhatsApp-from number and per-channel webhook URL.
-  // Storing the config in its own channel row lets us wire Twilio's two
-  // independent webhooks (SMS vs WhatsApp) without conflating them.
   const [whatsapp, setWhatsapp] = useState({ enabled: false, fromNumber: "", authorisedNumber: "" });
   const [apiToken, setApiToken] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetch("/api/channels?type=telegram").then((r) => r.json()).then((j) =>
-      setTelegram({ enabled: j.enabled, botToken: j.config?.botToken || "", defaultChatId: j.config?.defaultChatId || "" }));
-    fetch("/api/channels?type=twilio").then((r) => r.json()).then((j) =>
-      setTwilio({ enabled: j.enabled, accountSid: j.config?.accountSid || "", authToken: j.config?.authToken || "",
-        authorisedNumber: j.config?.authorisedNumber || "", publicUrl: j.config?.publicUrl || "" }));
-    fetch("/api/channels?type=whatsapp").then((r) => r.json()).then((j) =>
-      setWhatsapp({ enabled: j.enabled, fromNumber: j.config?.fromNumber || "", authorisedNumber: j.config?.authorisedNumber || "" }));
-  }, []);
+  const loadChannels = () => {
+    setLoading(true);
+    Promise.all([
+      readApi<{ enabled?: boolean; config?: Record<string, string> }>("/api/channels?type=telegram"),
+      readApi<{ enabled?: boolean; config?: Record<string, string> }>("/api/channels?type=twilio"),
+      readApi<{ enabled?: boolean; config?: Record<string, string> }>("/api/channels?type=whatsapp"),
+    ]).then(([tg, tw, wa]) => {
+      const denied = [tg, tw, wa].find((r) => !r.ok && (r.status === 401 || r.status === 403));
+      if (denied && !denied.ok) {
+        setAuthError(denied.error);
+        return;
+      }
+      setAuthError(null);
+      if (tg.ok) {
+        setTelegram({
+          enabled: !!tg.data.enabled,
+          botToken: tg.data.config?.botToken || "",
+          defaultChatId: tg.data.config?.defaultChatId || "",
+        });
+      }
+      if (tw.ok) {
+        setTwilio({
+          enabled: !!tw.data.enabled,
+          accountSid: tw.data.config?.accountSid || "",
+          authToken: tw.data.config?.authToken || "",
+          authorisedNumber: tw.data.config?.authorisedNumber || "",
+          publicUrl: tw.data.config?.publicUrl || "",
+        });
+      }
+      if (wa.ok) {
+        setWhatsapp({
+          enabled: !!wa.data.enabled,
+          fromNumber: wa.data.config?.fromNumber || "",
+          authorisedNumber: wa.data.config?.authorisedNumber || "",
+        });
+      }
+    }).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { loadChannels(); }, []);
 
   async function saveChannel(type: string, enabled: boolean, config: any) {
     await fetch("/api/channels", {
@@ -911,7 +1029,12 @@ function CommsSection() {
         Channels carry messages to your Mac for local processing. Only message-in-transit passes
         through a relay (Telegram, Twilio); nothing is stored in the cloud.
       </p>
-
+      {authError ? (
+        <SettingsAuthPrompt message={authError} onRetry={loadChannels} />
+      ) : loading ? (
+        <SettingsLoading />
+      ) : (
+      <>
       <Card className="p-4 space-y-2">
         <div className="flex items-center gap-2">
           <p className="font-medium text-sm flex-1">Telegram</p>
@@ -993,6 +1116,8 @@ function CommsSection() {
           </p>
         )}
       </Card>
+      </>
+      )}
     </div>
   );
 }

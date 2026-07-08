@@ -21,6 +21,8 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/auth/passkey/authenticate/*", methods: "ALL", role: "public" },
 
   // --- Inbound channel webhooks (carry their own HMAC/token) ---
+  { path: "/api/channels", methods: ["GET"], role: "authenticated" },
+  { path: "/api/channels", methods: ["POST"], role: "owner" },
   { path: "/api/channels/*", methods: "ALL", role: "public" },
   { path: "/api/webhooks/*", methods: "ALL", role: "public" },
   { path: "/api/internal/*", methods: "ALL", role: "public" },
@@ -77,7 +79,8 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/mcp/*", methods: "ALL", role: "owner" },
 
   // --- Providers ---
-  { path: "/api/providers", methods: "ALL", role: "owner" },
+  { path: "/api/providers", methods: ["GET"], role: "authenticated" },
+  { path: "/api/providers", methods: ["POST"], role: "owner" },
 
   // --- Users & roles ---
   { path: "/api/users", methods: "ALL", role: "owner" },

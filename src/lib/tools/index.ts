@@ -17,6 +17,9 @@ import { timeTool } from "./time";
 import { requestToolAccessTool } from "./request-tool-access";
 import { agentMemoryAdminTool } from "./agent-memory-admin";
 import { installMcpServerTool } from "./install-mcp";
+import { remindersTool } from "./reminders";
+import { contactsTool } from "./contacts";
+import { webResearchTool } from "./web-research";
 import { getMcpTools } from "./mcp";
 import type { Tool } from "./types";
 
@@ -28,6 +31,9 @@ const BUILTIN: Tool[] = [
   emailTool,
   macAutomationTool,
   browserTool,
+  remindersTool,
+  contactsTool,
+  webResearchTool,
   knowledgeTool,
   devpmTool,
   datastoreTool,

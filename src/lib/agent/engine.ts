@@ -14,6 +14,7 @@ import {
 import { approxTokens } from "../utils";
 import { startProcess, updateProcess, completeProcess } from "../db/agent-processes";
 import { unregisterProcess } from "./process-registry";
+import { resolveRoutedModel } from "./routing";
 
 // Best-effort orchestration hooks — orchestration writes must never crash the agent loop.
 function safeProcessHook(fn: () => void): void {
@@ -79,6 +80,7 @@ export async function* runAgent(
     regenerate?: boolean;
     channelMode?: boolean;
     systemPrefix?: string;
+    channelKey?: string;
     /** Merged into the spawned agent_processes row's metadata. Used by
      *  spawn_subagent / spawn_subagents_parallel to tag children with
      *  { kind: "subagent", batch_size, free_ram_gb_at_start }. */
@@ -86,17 +88,19 @@ export async function* runAgent(
     /** Overrides the default display name (first user message) — useful for
      *  subagents which want descriptive labels in the orchestration page. */
     processDisplayName?: string;
-    /** Whitelist of tool NAMES this agent may see. Used to give spawned
-     *  subagents a narrow surface — the persona's enabled_tools intersected
-     *  with the caller-specified allowed_tools. Tools outside this set are
-     *  hidden from the LLM's tool definitions AND refused at dispatch. The
-     *  `request_tool_access` tool is auto-added so a subagent can ask for
-     *  more access when stuck. Undefined = full registry (the main Sora chat). */
     allowedTools?: readonly string[];
+    /** When set, use this model instead of the routed/default model. */
+    modelPreference?: string | null;
   }
 ): AsyncGenerator<SSEEvent> {
   const settings = getSettings();
-  if (!settings.active_model) {
+  const routed = resolveRoutedModel(
+    userMessage,
+    settings.active_model,
+    (opts?.processMetadata as { persona_id?: string } | undefined)?.persona_id
+  );
+  const activeModel = opts?.modelPreference || routed.model || settings.active_model;
+  if (!activeModel) {
     yield { type: "error", message: "No AI model is selected. Pull a model from the Model Manager first.", code: "no_model" };
     return;
   }
@@ -187,14 +191,15 @@ export async function* runAgent(
       persona_id: subagentPersonaId ?? "persona-general",
       metadata: {
         conversation_id: conversationId,
-        model: settings.active_model,
+        model: activeModel,
         ...(opts?.processMetadata ?? {}),
+        ...(routed.matchedAgent ? { routed_agent: routed.matchedAgent, routing_rule_id: routed.ruleId } : {}),
       },
     });
   });
 
   // Context window overflow prevention — compress old turns if the history is large.
-  const ctxWindow = resolveContextWindow(settings.context_window, settings.active_model);
+  const ctxWindow = resolveContextWindow(settings.context_window, activeModel);
   const estTokens = messages.reduce((s, m) => s + approxTokens((m as any).content || ""), 0);
   if (estTokens > ctxWindow * 0.8 && messages.length > 6) {
     try {
@@ -205,7 +210,7 @@ export async function* runAgent(
         .join("\n");
       let summary = "";
       for await (const d of getProvider().chat({
-        model: settings.active_model,
+        model: activeModel,
         messages: [
           { role: "system", content: "Summarise the conversation below in 200-400 words, preserving key facts, decisions, and any file paths." },
           { role: "user", content: transcript },
@@ -238,7 +243,7 @@ export async function* runAgent(
       const toolCalls: { id: string; name: string; arguments: Record<string, unknown> }[] = [];
 
       for await (const delta of provider.chat({
-        model: settings.active_model,
+        model: activeModel,
         messages,
         tools: toolDefs,
         signal,
@@ -306,8 +311,39 @@ export async function* runAgent(
         let allowed = true;
 
         if (tier === "ask" || tier === "pin") {
-          if (opts?.channelMode) {
-            // No interactive UI on this channel — sensitive actions are refused.
+          if (opts?.channelMode && opts?.channelKey) {
+            safeProcessHook(() => updateProcess(processId, {
+              status: "waiting_confirmation",
+              current_step: `Waiting for channel confirmation on ${actionType}`,
+            }));
+            yield {
+              type: "confirmation_required",
+              toolCallId: call.id,
+              actionType,
+              preview,
+              timeoutSeconds: 120,
+              requiresPin: false,
+            };
+            const channelType = opts.channelKey?.split(":")[0] || "browser";
+            const { deliver } = await import("../workflow/deliver");
+            const approvalMsg = `LocalMind needs approval:\n${preview}\n\nReply YES to approve or NO to deny.`;
+            try {
+              await deliver(channelType, approvalMsg);
+            } catch {
+              await deliver("browser", approvalMsg);
+            }
+            const decision = await awaitConfirmation(call.id, 120_000, false, {
+              channelKey: opts.channelKey,
+              preview,
+            });
+            allowed = decision === "allow";
+            approvedBy = "user";
+            if (!allowed) {
+              yield { type: "confirmation_timeout", toolCallId: call.id };
+            }
+            safeProcessHook(() => updateProcess(processId, { status: "running" }));
+          } else if (opts?.channelMode) {
+            // No channel key — sensitive actions are refused.
             allowed = false;
             approvedBy = "rule";
           } else {
@@ -520,27 +556,29 @@ export async function runAgentCollect(
   message: string,
   opts?: {
     systemPrefix?: string;
-    /** Optional metadata merged into the agent_processes row created for this
-     *  run. Used by subagent.ts to tag spawned children with
-     *  { kind: "subagent", batch_size, free_ram_gb_at_start } so the analytics
-     *  rollup can attribute work to its spawn pattern. */
     processMetadata?: Record<string, unknown>;
-    /** Optional display name for the spawned agent_processes row. Useful for
-     *  the orchestration page to distinguish "Subagent (research)" from
-     *  "Subagent (writer)". */
     processDisplayName?: string;
-    /** Tool-name whitelist enforced at dispatch. See runAgent for semantics. */
     allowedTools?: readonly string[];
+    /** Set by the graph runner to prevent recursive graph execution. */
+    fromGraph?: boolean;
+    modelPreference?: string | null;
   }
 ): Promise<string> {
+  if (!opts?.fromGraph && process.env.LOCALMIND_USE_GRAPHS !== "0") {
+    const { runCollectViaGraph } = await import("./graph-chat");
+    return runCollectViaGraph(conversationId, message, opts);
+  }
+
   const controller = new AbortController();
   let text = "";
   for await (const ev of runAgent(conversationId, message, controller.signal, {
     channelMode: true,
+    channelKey: (opts?.processMetadata as { channel_key?: string } | undefined)?.channel_key,
     systemPrefix: opts?.systemPrefix,
     processMetadata: opts?.processMetadata,
     processDisplayName: opts?.processDisplayName,
     allowedTools: opts?.allowedTools,
+    modelPreference: opts?.modelPreference,
   })) {
     if (ev.type === "text_chunk") text += ev.delta;
     if (ev.type === "error") return ev.message;

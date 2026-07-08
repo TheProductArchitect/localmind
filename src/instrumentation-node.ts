@@ -58,15 +58,26 @@ try {
   logger.warn("fleet transport init skipped", { error: (e as Error).message });
 }
 
-// Ambient cron tick. Runs forever once started; idempotent on re-fire (Next
-// dev hot-reload, instrumentation register replay). If the loop fails to
-// start the rest of LocalMind keeps working — scheduled tasks just won't
-// fire until the user reloads or restarts.
+// Scheduled tasks and monitors are driven exclusively by worker.js (PM2) which
+// POSTs to /api/internal/*. An in-process scheduler here duplicated cron
+// fires and could run tasks twice — do not start it in the Next process.
+// Set LOCALMIND_IN_PROCESS_SCHEDULER=1 only for dev without the worker.
 try {
-  const { startScheduler } = require("./lib/scheduler") as typeof import("./lib/scheduler");
-  startScheduler();
+  if (process.env.LOCALMIND_IN_PROCESS_SCHEDULER === "1") {
+    const { startScheduler } = require("./lib/scheduler") as typeof import("./lib/scheduler");
+    startScheduler();
+    logger.info("in-process scheduler started (LOCALMIND_IN_PROCESS_SCHEDULER=1)");
+  }
 } catch (e) {
   logger.warn("scheduler not started", { error: (e as Error).message });
+}
+
+// Seed default automations (morning briefing, etc.) once per install.
+try {
+  const { ensureDefaultAutomations } = require("./lib/default-automations") as typeof import("./lib/default-automations");
+  ensureDefaultAutomations();
+} catch (e) {
+  logger.warn("default automations seed skipped", { error: (e as Error).message });
 }
 
 // Catch any promise rejection or exception that escapes normal handling.

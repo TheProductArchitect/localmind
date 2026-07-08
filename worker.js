@@ -2,6 +2,8 @@
 // Handles scheduled task timing and condition monitor timing. Heavy work
 // (agent runs, embeddings) is delegated to the main app over localhost HTTP.
 const Database = require("better-sqlite3");
+const crypto = require("crypto");
+const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
@@ -9,7 +11,35 @@ const DATA_DIR = process.env.LOCALMIND_DATA_DIR || path.join(os.homedir(), ".loc
 const CONFIG_DB = path.join(DATA_DIR, "config.db");
 const PORT = process.env.PORT || 3000;
 const BASE = `http://127.0.0.1:${PORT}`;
-const INTERNAL_TOKEN = process.env.LOCALMIND_INTERNAL_TOKEN || "localmind-internal";
+
+// Shared secret for /api/internal/* calls. Must match src/lib/internal-auth.ts:
+// env var first, otherwise the per-install random secret persisted by whichever
+// process touches it first. No guessable constant fallback.
+function internalToken() {
+  if (process.env.LOCALMIND_INTERNAL_TOKEN) return process.env.LOCALMIND_INTERNAL_TOKEN;
+  const file = path.join(DATA_DIR, "internal-token");
+  try {
+    if (fs.existsSync(file)) {
+      const t = fs.readFileSync(file, "utf8").trim();
+      if (t) return t;
+    }
+  } catch {}
+  const t = crypto.randomBytes(32).toString("hex");
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    // Exclusive create; if the app process won the race, re-read its token.
+    fs.writeFileSync(file, t, { mode: 0o600, flag: "wx" });
+    return t;
+  } catch {
+    try {
+      const existing = fs.readFileSync(file, "utf8").trim();
+      if (existing) return existing;
+    } catch {}
+  }
+  return t;
+}
+
+const INTERNAL_TOKEN = internalToken();
 
 function db() {
   const d = new Database(CONFIG_DB);
@@ -100,6 +130,11 @@ async function tick() {
 
     // Job queue — process pending embedding/ingestion jobs every tick.
     await post("/api/internal/process-jobs", {});
+
+    // Critic queue — once per minute, review one pending subagent run.
+    if (newMinute) {
+      await post("/api/internal/process-critic", {});
+    }
   } catch (e) {
     console.error("[worker] tick error:", e.message);
   } finally {

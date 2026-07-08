@@ -1,6 +1,7 @@
 import { createConversation } from "../db/queries";
 import { runAgentCollect } from "../agent/engine";
 import { markChannelMessage, type ChannelType } from "../db/channels";
+import { tryChannelConfirmation } from "../agent/confirmations";
 import { logger } from "../logger";
 
 // Maps a channel + external user id to a LocalMind conversation.
@@ -24,7 +25,19 @@ export async function handleInbound(
 ): Promise<string> {
   logger.info("channel inbound", { channel, externalUserId });
   markChannelMessage(channel);
+  const channelKey = `${channel}:${externalUserId}`;
+
+  const confirmation = tryChannelConfirmation(channelKey, text);
+  if (confirmation.handled) {
+    return confirmation.decision === "allow"
+      ? `Approved: ${confirmation.preview || "action"}. Processing will continue.`
+      : `Denied: ${confirmation.preview || "action"}.`;
+  }
+
   const convId = conversationFor(channel, externalUserId);
-  const prefix = `This message arrived via the ${channel} channel. Sensitive actions cannot be confirmed here — if one is needed, ask the user to use the browser. Keep replies concise for messaging.`;
-  return runAgentCollect(convId, text, { systemPrefix: prefix });
+  const prefix = `This message arrived via the ${channel} channel. For actions that need approval, reply YES to approve or NO to deny when prompted. Keep replies concise for messaging.`;
+  return runAgentCollect(convId, text, {
+    systemPrefix: prefix,
+    processMetadata: { channel_key: channelKey },
+  });
 }
