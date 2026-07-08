@@ -33,6 +33,7 @@ class FetchResult:
     title: str
     markdown: str
     timed_out: bool = False
+    has_password_field: bool = False
 
 
 def _is_private_ip(ip_str: str) -> bool:
@@ -83,15 +84,23 @@ def assert_url_safe(url: str) -> None:
             raise UnsafeUrlError(f"host '{host}' resolves to internal address {ip}")
 
 
-def _sanitize(html: str) -> tuple[str, str]:
-    """Return (title, markdown) for a fetched HTML document.
+def _sanitize(html: str) -> tuple[str, str, bool]:
+    """Return (title, markdown, has_password_field) for a fetched document.
 
     Stripped: <script>, <style>, <noscript>, <svg>, <iframe>, <template>,
     <link>, <meta>, comments, and any node hidden via display:none,
     visibility:hidden, the HTML `hidden` attribute, or aria-hidden="true".
     These are the standard prompt-injection hiding places.
+
+    has_password_field marks the page as a sensitive context (login/signup)
+    — detected BEFORE stripping so hiding the form doesn't hide the signal.
+    The server withholds such pages unless the caller passed
+    allow_sensitive=true (which LocalMind's web-guard only sets for domains
+    the user explicitly allowed).
     """
     soup = BeautifulSoup(html, "html.parser")
+
+    has_password_field = soup.find("input", attrs={"type": "password"}) is not None
 
     for tag in soup(list(STRIP_TAGS)):
         tag.decompose()
@@ -100,6 +109,10 @@ def _sanitize(html: str) -> tuple[str, str]:
         c.extract()
 
     for el in soup.find_all(True):
+        # Decomposing a hidden parent leaves its children in this snapshot
+        # as dead nodes (attrs=None); touching them raises. Skip them.
+        if el.decomposed:
+            continue
         style = (el.get("style") or "").lower().replace(" ", "")
         if "display:none" in style or "visibility:hidden" in style:
             el.decompose()
@@ -111,7 +124,7 @@ def _sanitize(html: str) -> tuple[str, str]:
     body = soup.body or soup
     md = markdownify(str(body), heading_style="ATX")
     md = "\n".join(line.rstrip() for line in md.splitlines() if line.strip())
-    return title, md
+    return title, md, has_password_field
 
 
 async def fetch_markdown(url: str, *, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> FetchResult:
@@ -161,11 +174,12 @@ async def fetch_markdown(url: str, *, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> F
         finally:
             await browser.close()
 
-    title, md = _sanitize(html)
+    title, md, has_password_field = _sanitize(html)
     return FetchResult(
         url=url,
         final_url=final_url,
         title=title,
         markdown=md,
         timed_out=timed_out,
+        has_password_field=has_password_field,
     )

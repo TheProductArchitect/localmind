@@ -44,6 +44,14 @@ async def list_tools() -> list[Tool]:
                         "minimum": 1_000,
                         "maximum": 60_000,
                     },
+                    "allow_sensitive": {
+                        "type": "boolean",
+                        "description": (
+                            "Set by the host's web-guard for domains the user explicitly "
+                            "allowed. When false (default), pages containing a password "
+                            "field are withheld as sensitive contexts."
+                        ),
+                    },
                 },
                 "required": ["url"],
             },
@@ -74,6 +82,22 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         )]
     except Exception as e:
         return [TextContent(type="text", text=f"[ERROR] fetch failed: {type(e).__name__}: {e}")]
+
+    # Sensitive-context blindness: login/signup pages are the highest-value
+    # injection and credential-exposure surfaces. Withhold them unless the
+    # host explicitly opted this domain in (allow_sensitive comes from the
+    # user's standing site grant, never from the model).
+    allow_sensitive = bool((arguments or {}).get("allow_sensitive"))
+    if result.has_password_field and not allow_sensitive:
+        return [TextContent(
+            type="text",
+            text=(
+                "[SECURITY ALERT] This page contains a password field — a sensitive "
+                "context (login/signup). Content withheld. If the user wants agents "
+                "to read this site, they can add an 'allow' grant for the domain "
+                "under Settings → Web access."
+            ),
+        )]
 
     md = result.markdown
     truncated = False

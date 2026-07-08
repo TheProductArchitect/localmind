@@ -1,6 +1,6 @@
 import type { Tool } from "./types";
 import { websearchTool } from "./websearch";
-import { listAllTools } from "./index";
+import { resolveSecureWebpageReader } from "./read-secure-webpage";
 
 const URL_RE = /https?:\/\/[^\s)]+/gi;
 
@@ -17,7 +17,7 @@ export const webResearchTool: Tool = {
   definition: {
     name: "web_research",
     description:
-      "Search the web and read the top results in one step. Returns a synthesized summary with source URLs. Use for research tasks that need more than snippets.",
+      "Search the web and read the top results via Secure Browser in one step. Returns page contents with source URLs. Prefer this for open-ended research; for one concrete URL the user already gave you, call read_secure_webpage directly.",
     parameters: {
       type: "object",
       properties: {
@@ -46,8 +46,7 @@ export const webResearchTool: Tool = {
       };
     }
 
-    const allTools = await listAllTools();
-    const secureReader = allTools.find((t) => t.definition.name === "read_secure_webpage");
+    const secureReader = await resolveSecureWebpageReader();
 
     const sections: string[] = [`# Search results for: ${q}\n`, searchResult.output, "\n# Page contents\n"];
 

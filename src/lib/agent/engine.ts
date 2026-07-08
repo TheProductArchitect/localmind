@@ -24,7 +24,7 @@ function safeProcessHook(fn: () => void): void {
 export type SSEEvent =
   | { type: "text_chunk"; delta: string }
   | { type: "tool_call_start"; toolCallId: string; toolName: string; status: string; input: any }
-  | { type: "tool_call_result"; toolCallId: string; status: string; output: string }
+  | { type: "tool_call_result"; toolCallId: string; status: string; output: string; summary?: string }
   | { type: "confirmation_required"; toolCallId: string; actionType: string; preview: string; timeoutSeconds: number; requiresPin: boolean }
   | { type: "confirmation_timeout"; toolCallId: string }
   | { type: "done"; conversationId: string; title: string; tokenCount: number }
@@ -156,13 +156,18 @@ export async function* runAgent(
   // Subagents get a narrow tool surface. The `request_tool_access` tool is
   // always added to that surface so a stuck subagent can ask the parent for
   // more — see src/lib/tools/request-tool-access.ts. The main Sora chat
-  // (no allowedTools restriction) sees the full registry.
+  // (no allowedTools restriction) sees the full registry — do not hide tools
+  // here based on prompt state; small models improve with better models /
+  // routing, not by hardcoding away capabilities.
   const allowedSet = opts?.allowedTools
     ? new Set<string>([...opts.allowedTools, "request_tool_access"])
     : null;
+  // request_tool_access is the subagent escape hatch. Main chat already has
+  // the full registry — leaving it visible causes small models to "ask
+  // permission" instead of answering or calling the real tools.
   const visibleTools = allowedSet
     ? allTools.filter((t) => allowedSet.has(t.definition.name))
-    : allTools;
+    : allTools.filter((t) => t.definition.name !== "request_tool_access");
   const toolMap = new Map<string, Tool>(visibleTools.map((t) => [t.definition.name, t]));
   const toolDefs = visibleTools.map((t) => t.definition);
   let totalTokens = 0;
@@ -481,7 +486,11 @@ export async function* runAgent(
             type: "tool_call_result",
             toolCallId: call.id,
             status: result.ok ? "success" : "failed",
-            output: result.summary || sanitized.output.slice(0, 500),
+            // Prefer the real tool output for the chat card. Previously we
+            // yielded only `summary`, which for spawn_subagent hid the child’s
+            // answer behind a one-liner and left no structured metadata.
+            output: sanitized.output.slice(0, 8_000),
+            summary: result.summary,
           };
         } catch (e: any) {
           logComplete(auditId, "failed", e?.message || "execution error");
@@ -516,9 +525,18 @@ export async function* runAgent(
   } catch (e: any) {
     processOutcome = signal.aborted ? "cancelled" : "failed";
     if (signal.aborted) return;
+    const detail = typeof e?.message === "string" ? e.message.trim() : "";
+    // Surface the real provider/tool failure (e.g. "model 'X' not found") so
+    // the UI doesn't collapse every crash into a reconnect loop.
+    const message = /model .+ not found|ECONNREFUSED|fetch failed|Ollama/i.test(detail)
+      ? detail
+      : detail
+        ? `Something went wrong while generating a response: ${detail}`
+        : "Something went wrong while generating a response. Check that Ollama is running.";
+    console.error("[agent] runAgent failed:", detail || e);
     yield {
       type: "error",
-      message: "Something went wrong while generating a response. Check that Ollama is running.",
+      message,
       code: "agent_error",
     };
   } finally {

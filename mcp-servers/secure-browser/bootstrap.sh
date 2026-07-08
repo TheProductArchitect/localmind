@@ -32,5 +32,18 @@ step "installing-deps"
 step "installing-chromium"
 "$VENV/bin/python" -m playwright install chromium || fail "playwright chromium install failed"
 
+step "warming-scanner"
+# Pre-download the prompt-injection model into the HF cache NOW, while we
+# have direct internet. At runtime the MCP child sits behind LocalMind's
+# outbound allowlist proxy (empty allowlist by default), so a lazy download
+# on first scan would hang and surface as an MCP timeout.
+"$VENV/bin/python" - <<'PY' || fail "scanner warmup failed"
+from llm_guard.input_scanners import PromptInjection
+from llm_guard.input_scanners.prompt_injection import MatchType
+s = PromptInjection(threshold=0.5, match_type=MatchType.FULL)
+_, ok, _ = s.scan("hello world")
+print(f"[secure-browser-mcp] scanner warm, benign text ok={ok}")
+PY
+
 step "done"
 echo "[secure-browser-mcp] bootstrap complete: $VENV"

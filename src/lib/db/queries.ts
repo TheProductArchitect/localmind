@@ -27,6 +27,7 @@ export type Settings = {
   api_token_hash: string | null;
   context_window: number;
   agent_mode: AgentMode;
+  web_access_killed: number;
 };
 
 export type AgentMode = "auto" | "plan" | "ask";

@@ -66,6 +66,13 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/settings/export", methods: "ALL", role: "owner" },
   { path: "/api/settings/api-token", methods: "ALL", role: "owner" },
 
+  // --- Web guard + Browse ---
+  // Site grants and the kill switch shape what every agent can reach — owner only.
+  { path: "/api/web-guard/*", methods: "ALL", role: "owner" },
+  // Browsing through the secure pipeline is fine for any signed-in user; the
+  // guard itself still applies per-request.
+  { path: "/api/browse", methods: ["POST"], role: "authenticated" },
+
   // --- Backup ---
   { path: "/api/backup", methods: "ALL", role: "owner" },
   { path: "/api/backup/*", methods: "ALL", role: "owner" },

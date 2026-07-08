@@ -104,6 +104,10 @@ function ChatInner() {
         else {
           setModel(j.settings?.active_model || null);
           setAgentMode((j.settings?.agent_mode as "auto" | "plan" | "ask") || "ask");
+          const fs = Number(j.settings?.chat_font_size);
+          if (fs >= 12 && fs <= 28) {
+            document.documentElement.style.setProperty("--lm-root-fs", `${fs}px`);
+          }
         }
       });
     loadConversations();
@@ -128,6 +132,9 @@ function ChatInner() {
 
   useEffect(() => {
     if (searchParams.get("new") === "1") newConversation();
+    // Prefill from other surfaces (e.g. Browse → "Ask Sora about this page").
+    const ask = searchParams.get("ask");
+    if (ask) setInput(ask);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -269,7 +276,9 @@ function ChatInner() {
           }
           if (!dataLine) continue;
           const ev = JSON.parse(dataLine.slice(6));
-          if (ev.type === "done") gotDone = true;
+          // Terminal events: stop reconnecting so we don't overwrite a real
+          // agent error with "connection was interrupted".
+          if (ev.type === "done" || ev.type === "error") gotDone = true;
           handleEvent(ev);
         }
       }
@@ -424,7 +433,13 @@ function ChatInner() {
         for (let i = next.length - 1; i >= 0; i--) {
           const it = next[i];
           if (it.kind === "tool" && it.tc.id === ev.toolCallId) {
-            next[i] = { kind: "tool", tc: { ...it.tc, result: { status: ev.status, output: ev.output } } };
+            next[i] = {
+              kind: "tool",
+              tc: {
+                ...it.tc,
+                result: { status: ev.status, output: ev.output, summary: ev.summary },
+              },
+            };
             break;
           }
         }
@@ -743,7 +758,13 @@ function ChatInner() {
       </aside>
 
       <style jsx>{`
-        .lm-chat { display: grid; grid-template-columns: 240px 1fr 220px; height: 100%; }
+        .lm-chat {
+          display: grid;
+          grid-template-columns: 240px 1fr 220px;
+          height: 100%;
+          min-height: 0;
+          overflow: hidden;
+        }
         @media (max-width: 1100px) { .lm-chat { grid-template-columns: 200px 1fr 0; } .lm-sora { display: none; } }
 
         /* === Conversations strip === */
@@ -754,6 +775,7 @@ function ChatInner() {
           backdrop-filter: blur(14px);
           padding: 16px 10px;
           gap: 8px;
+          min-height: 0;
           overflow: hidden;
         }
         .lm-conv__new {
@@ -797,11 +819,22 @@ function ChatInner() {
         .lm-conv__row:hover .lm-conv__del { opacity: 1; }
 
         /* === Thread === */
-        .lm-thread { display: flex; flex-direction: column; min-width: 0; height: 100%; }
+        .lm-thread {
+          display: flex;
+          flex-direction: column;
+          min-width: 0;
+          min-height: 0;
+          height: 100%;
+          overflow: hidden;
+        }
         .lm-thread__head {
           display: flex; align-items: center; justify-content: space-between;
+          flex-shrink: 0;
           padding: 14px 28px;
           border-bottom: 1px solid hsl(0 0% 100% / 0.06);
+          background: hsl(234 22% 4% / 0.72);
+          backdrop-filter: blur(12px);
+          z-index: 2;
         }
         .lm-thread__sep { width: 1px; height: 14px; background: hsl(0 0% 100% / 0.10); margin: 0 4px; }
         .lm-thread__select, .lm-thread__toggle, .lm-thread__export {
@@ -852,7 +885,13 @@ function ChatInner() {
           box-shadow: 0 0 14px hsl(0 0% 100% / 0.35);
         }
 
-        .lm-thread__scroll { flex: 1; overflow-y: auto; padding: 40px 28px 60px; }
+        .lm-thread__scroll {
+          flex: 1;
+          min-height: 0;
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          padding: 40px 28px 60px;
+        }
 
         .lm-empty {
           display: flex; flex-direction: column; align-items: center;
@@ -867,10 +906,20 @@ function ChatInner() {
           border-radius: 14px 14px 4px 14px;
           background: hsl(0 0% 100% / 0.94);
           color: hsl(234 22% 4%);
-          font-size: 14px; letter-spacing: -0.005em;
+          font-size: 1rem;
+          line-height: 1.55;
+          letter-spacing: -0.005em;
           white-space: pre-wrap;
         }
-        .lm-turn--assistant { padding-right: 24px; }
+        .lm-turn--assistant {
+          padding-right: 24px;
+          font-size: 1rem;
+          line-height: 1.55;
+        }
+        .lm-turn--assistant :global(.markdown) {
+          font-size: inherit;
+          line-height: inherit;
+        }
         .lm-turn__actions {
           display: flex; align-items: center; gap: 10px;
           margin-top: 8px;
@@ -953,8 +1002,11 @@ function ChatInner() {
 
         /* === Composer === */
         .lm-composer {
+          flex-shrink: 0;
           padding: 18px 28px 22px;
           border-top: 1px solid hsl(0 0% 100% / 0.06);
+          background: hsl(234 22% 4% / 0.72);
+          backdrop-filter: blur(12px);
         }
         .lm-composer :global(.lm-composer__input) {
           flex: 1;
@@ -963,7 +1015,8 @@ function ChatInner() {
           border-radius: 14px;
           padding: 12px 14px;
           color: hsl(0 0% 100% / 0.96);
-          font-size: 14px; line-height: 22px;
+          font-size: 1rem;
+          line-height: 1.45;
           resize: none;
           outline: none;
           min-height: 46px;
@@ -994,6 +1047,7 @@ function ChatInner() {
           padding: 28px 16px;
           display: flex; flex-direction: column;
           gap: 24px;
+          min-height: 0;
           overflow-y: auto;
         }
         .lm-sora__top { display: flex; flex-direction: column; align-items: center; padding-top: 12px; }
@@ -1040,8 +1094,10 @@ function orbStateLabel(s: OrbState): string {
 
 export default function ChatPage() {
   return (
-    <Suspense fallback={<div className="p-6 lm-body" style={{ color: "hsl(0 0% 100% / 0.5)" }}>Loading…</div>}>
-      <ChatInner />
+    <Suspense fallback={<div className="p-6 lm-body h-full" style={{ color: "hsl(0 0% 100% / 0.5)" }}>Loading…</div>}>
+      <div className="h-full min-h-0">
+        <ChatInner />
+      </div>
     </Suspense>
   );
 }

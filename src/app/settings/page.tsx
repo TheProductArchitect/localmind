@@ -351,9 +351,24 @@ function GeneralSection() {
             <option value="light">Light</option><option value="dark">Dark</option><option value="system">System</option>
           </select>
         </label>
-        <label className="block text-sm">Chat font size
-          <Input type="number" defaultValue={s.chat_font_size}
-            onBlur={(e) => save({ chat_font_size: Number(e.target.value) })} className="mt-1 w-24" />
+        <label className="block text-sm">App font size (px)
+          <Input
+            type="number"
+            min={12}
+            max={28}
+            defaultValue={s.chat_font_size ?? 17}
+            onBlur={(e) => {
+              const n = Number(e.target.value);
+              if (Number.isFinite(n) && n >= 12 && n <= 28) {
+                save({ chat_font_size: n });
+                document.documentElement.style.setProperty("--lm-root-fs", `${n}px`);
+              }
+            }}
+            className="mt-1 w-24"
+          />
+          <span className="block text-xs text-muted-foreground mt-1">
+            Scales the whole interface (12–28). Default 17.
+          </span>
         </label>
       </Card>
 
@@ -1144,6 +1159,7 @@ function DataSection() {
           in <code>~/.localmind</code>. Nothing leaves the device unless you connect a cloud
           provider, in which case only your chat messages are sent to that provider.</p>
       </Card>
+      <WebAccessCard />
       <Card className="p-4 space-y-2">
         <p className="font-medium text-sm">Export all data</p>
         <a href="/api/settings/export"><Button size="sm" variant="outline">Download ZIP archive</Button></a>
@@ -1171,6 +1187,108 @@ function DataSection() {
 
 function confirm2(msg: string) {
   return typeof window !== "undefined" && window.confirm(msg);
+}
+
+// Web access controls — ported from Nova's three-layer browser access model.
+// Kill switch severs every web-reaching tool; site grants opt domains in
+// (even sensitive-classed ones) or blind agents to them entirely.
+function WebAccessCard() {
+  const [killed, setKilled] = useState<boolean | null>(null);
+  const [grants, setGrants] = useState<{ domain: string; policy: string; note: string | null }[]>([]);
+  const [domain, setDomain] = useState("");
+  const [policy, setPolicy] = useState<"allow" | "never">("never");
+
+  useEffect(() => {
+    fetch("/api/settings").then((r) => r.json()).then((j) => setKilled(!!j.settings?.web_access_killed));
+    fetch("/api/web-guard/grants").then((r) => r.json()).then((j) => setGrants(j.grants || [])).catch(() => {});
+  }, []);
+
+  async function toggleKill() {
+    const next = !killed;
+    setKilled(next);
+    await fetch("/api/settings", {
+      method: "PATCH", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ web_access_killed: next ? 1 : 0 }),
+    });
+    toast(next ? "Web access severed for all agents" : "Web access restored", next ? "success" : "success");
+  }
+
+  async function addGrant() {
+    if (!domain.trim()) return;
+    const r = await fetch("/api/web-guard/grants", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ domain: domain.trim(), policy }),
+    });
+    const j = await r.json();
+    if (!r.ok) { toast(j.error || "Failed", "error"); return; }
+    setGrants(j.grants || []);
+    setDomain("");
+  }
+
+  async function removeGrant(d: string) {
+    const r = await fetch("/api/web-guard/grants", {
+      method: "DELETE", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ domain: d }),
+    });
+    const j = await r.json();
+    setGrants(j.grants || []);
+  }
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="font-medium text-sm">Web access</p>
+          <p className="text-xs text-muted-foreground">
+            Controls every tool that can reach the web — search, Secure Browser, and the raw browser.
+          </p>
+        </div>
+        <Button
+          size="sm"
+          variant={killed ? "destructive" : "outline"}
+          onClick={toggleKill}
+          disabled={killed === null}
+        >
+          {killed ? "Severed — restore" : "Kill switch"}
+        </Button>
+      </div>
+      {killed && (
+        <p className="text-xs rounded border border-destructive/40 bg-destructive/10 text-destructive px-2 py-1">
+          All agent web access is severed. Agents will refuse web tools until you restore access.
+        </p>
+      )}
+      <div className="pt-1">
+        <p className="text-xs font-medium mb-1">Site grants</p>
+        <p className="text-xs text-muted-foreground mb-2">
+          Banking, government, health, and webmail sites are blind to agents by default.
+          Grant <em>allow</em> to opt a domain in (covers subdomains), or <em>never</em> to blind agents to it entirely.
+        </p>
+        <div className="flex gap-2 mb-2">
+          <Input placeholder="example.com" value={domain} onChange={(e) => setDomain(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") addGrant(); }} className="flex-1" />
+          <select value={policy} onChange={(e) => setPolicy(e.target.value as "allow" | "never")}
+            className="h-9 rounded-md border bg-background px-2 text-sm">
+            <option value="never">never</option>
+            <option value="allow">allow</option>
+          </select>
+          <Button size="sm" onClick={addGrant}>Add</Button>
+        </div>
+        {grants.length > 0 && (
+          <div className="space-y-1">
+            {grants.map((g) => (
+              <div key={g.domain} className="flex items-center gap-2 text-xs border rounded px-2 py-1">
+                <span className="font-medium">{g.domain}</span>
+                <Badge variant={g.policy === "allow" ? "success" : "destructive"}>{g.policy}</Badge>
+                <button className="ml-auto underline text-muted-foreground" onClick={() => removeGrant(g.domain)}>
+                  remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
 }
 
 function BackupSection() {

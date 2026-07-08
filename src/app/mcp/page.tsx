@@ -36,6 +36,7 @@ const BOOTSTRAP_PHASES = [
   { key: "upgrading-pip",       label: "Upgrade pip" },
   { key: "installing-deps",     label: "Install Python deps" },
   { key: "installing-chromium", label: "Download Chromium" },
+  { key: "warming-scanner",     label: "Warm injection scanner" },
   { key: "connecting",          label: "Connect to MCP" },
   { key: "connected",           label: "Done" },
 ] as const;

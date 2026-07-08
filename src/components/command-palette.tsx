@@ -33,6 +33,7 @@ const COMMANDS: Command[] = [
 
   // Knowledge
   { label: "Knowledge base",    href: "/knowledge",  group: "Knowledge" },
+  { label: "Browse the web (secure)", href: "/browse", group: "Knowledge" },
   { label: "Memory",            href: "/knowledge?tab=memory", group: "Knowledge" },
   { label: "Data tables",       href: "/data",       group: "Knowledge" },
 

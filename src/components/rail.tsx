@@ -35,7 +35,7 @@ type Dest = {
 const DESTS: Dest[] = [
   { href: "/",          label: "Chat",      Icon: MessageSquare,     matches: ["/"] },
   { href: "/work",      label: "Work",      Icon: Workflow,          matches: ["/work", "/graphs", "/orchestration", "/automations", "/agents"] },
-  { href: "/knowledge", label: "Knowledge", Icon: BookOpen,          matches: ["/knowledge", "/memory", "/data"] },
+  { href: "/knowledge", label: "Knowledge", Icon: BookOpen,          matches: ["/knowledge", "/memory", "/data", "/browse"] },
   { href: "/fleet",     label: "Fleet",     Icon: Wifi,              matches: ["/fleet", "/mcp", "/models", "/plugins"] },
   { href: "/settings",  label: "Settings",  Icon: SlidersHorizontal, matches: ["/settings", "/permissions", "/access", "/audit", "/analytics", "/system", "/devpm", "/agent"] },
 ];

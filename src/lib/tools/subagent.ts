@@ -213,13 +213,22 @@ export const spawnSubagentTool: Tool = {
     // Look up the requested persona (or default to general). The persona
     // carries the BASE tool surface — what this kind of agent is allowed
     // to do in principle. The caller's allowed_tools narrows further.
+    // Accept prompt aliases like persona-researcher → agent-researcher.
     let personaName: string | undefined;
     let personaTools: string[] | null = null;
-    const resolvedPersonaId = String(input.persona_id ?? "persona-general");
+    const rawPersonaId = String(input.persona_id ?? "persona-general");
+    let effectivePersonaId = rawPersonaId;
     try {
       const personas = listPersonas();
-      const persona = personas.find((p) => p.persona_id === resolvedPersonaId);
+      const lower = rawPersonaId.toLowerCase();
+      const stem = lower.replace(/^(persona|agent)-/, "");
+      const persona =
+        personas.find((p) => p.persona_id === rawPersonaId) ||
+        personas.find((p) => p.persona_id === `agent-${stem}`) ||
+        personas.find((p) => p.persona_id === `persona-${stem}`) ||
+        personas.find((p) => p.name.toLowerCase() === stem);
       if (persona) {
+        effectivePersonaId = persona.persona_id;
         personaName = persona.name;
         try {
           const parsed = JSON.parse(persona.enabled_tools || "[]") as string[];
@@ -253,7 +262,14 @@ export const spawnSubagentTool: Tool = {
     const callerTools = Array.isArray(input.allowed_tools)
       ? (input.allowed_tools as string[]).filter((t) => typeof t === "string")
       : [];
-    const SAFE_DEFAULT = ["memory", "time", "knowledge_base", "web_search"];
+    const SAFE_DEFAULT = [
+      "memory",
+      "time",
+      "knowledge_base",
+      "web_search",
+      "web_research",
+      "read_secure_webpage",
+    ];
 
     let effectiveTools: string[];
     if (personaTools && callerTools.length > 0) {
@@ -280,7 +296,7 @@ export const spawnSubagentTool: Tool = {
 
     const systemPrefix = buildSubagentSystemPrefix({
       goal,
-      persona_id: resolvedPersonaId,
+      persona_id: effectivePersonaId,
       persona_name: personaName,
       allowed_tools: effectiveTools,
       depth: childDepth,
@@ -306,7 +322,7 @@ export const spawnSubagentTool: Tool = {
           free_ram_gb_at_start: freeRamGbAtStart,
           depth: childDepth,
           allowed_tools: effectiveTools,
-          persona_id: resolvedPersonaId,
+          persona_id: effectivePersonaId,
           persona_name: personaName ?? null,
         },
       }).then((text) => {
@@ -323,6 +339,16 @@ export const spawnSubagentTool: Tool = {
       return {
         ok: false,
         output: `Subagent timed out after ${timeoutSeconds}s. Conversation id ${subConv.id} preserved for inspection.`,
+        summary: JSON.stringify({
+          kind: "subagent",
+          conversation_id: subConv.id,
+          persona: personaName ?? null,
+          persona_id: effectivePersonaId,
+          depth: childDepth,
+          goal,
+          allowed_tools: effectiveTools,
+          timed_out: true,
+        }),
       };
     }
 
@@ -330,7 +356,18 @@ export const spawnSubagentTool: Tool = {
     return {
       ok: true,
       output: safeOutput,
-      summary: `Subagent (depth ${childDepth}${personaName ? `, ${personaName}` : ""}) completed in conversation ${subConv.id}`,
+      // Machine-readable summary so the chat UI can show a high-level spawn
+      // card and load child tool I/O on expand (conversation_id + persona).
+      summary: JSON.stringify({
+        kind: "subagent",
+        conversation_id: subConv.id,
+        persona: personaName ?? null,
+        persona_id: effectivePersonaId,
+        depth: childDepth,
+        goal,
+        allowed_tools: effectiveTools,
+        timed_out: false,
+      }),
     };
   },
 };

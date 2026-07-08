@@ -12,7 +12,7 @@ export const websearchTool: Tool = {
   definition: {
     name: "web_search",
     description:
-      "Discover links matching a query — returns titles, URLs, and snippets only. To read the contents of any returned URL, call the Secure Browser MCP's read_secure_webpage; raw page rendering through other tools is gated behind user permission.",
+      "Discover links matching a query — returns titles, URLs, and snippets only. To read a concrete URL, call read_secure_webpage (or web_research for open-ended questions). Never pass http(s) URLs to filesystem.",
     parameters: {
       type: "object",
       properties: { query: { type: "string" } },
@@ -22,6 +22,11 @@ export const websearchTool: Tool = {
   async execute(input) {
     const q = String(input.query || "").trim();
     if (!q) return { ok: false, output: "Empty query" };
+
+    // Kill switch covers search too — "sever web access" means all of it.
+    const { checkWebAccess } = await import("../agent/web-guard");
+    const access = checkWebAccess();
+    if (!access.ok) return { ok: false, output: access.reason, summary: "blocked by web guard" };
 
     const brave = process.env.BRAVE_API_KEY;
     try {

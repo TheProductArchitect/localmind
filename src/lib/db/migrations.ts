@@ -23,7 +23,7 @@ const configMigrations: Migration[] = [
           https_enabled INTEGER NOT NULL DEFAULT 0,
           approved_dirs TEXT NOT NULL DEFAULT '[]',
           onboarded INTEGER NOT NULL DEFAULT 0,
-          chat_font_size INTEGER NOT NULL DEFAULT 14,
+          chat_font_size INTEGER NOT NULL DEFAULT 17,
           auto_backup INTEGER NOT NULL DEFAULT 1,
           backup_dir TEXT
         );
@@ -833,7 +833,7 @@ configMigrations.push({
         id: "agent-researcher",
         name: "Researcher",
         description: "Searches the web, reads documents, queries paired peers, and returns a synthesised brief with sources. Read-only; never writes or sends.",
-        tools: ["web_search", "browser", "knowledge_base", "peer_knowledge", "memory", "time"],
+        tools: ["web_research", "read_secure_webpage", "web_search", "browser", "knowledge_base", "peer_knowledge", "memory", "time"],
       },
       {
         id: "agent-scheduler",
@@ -938,7 +938,7 @@ configMigrations.push({
       ALTER TABLE workflow_runs ADD COLUMN paused_conv_id TEXT;
       ALTER TABLE workflow_runs ADD COLUMN approval_message TEXT;
 
-      CREATE TABLE workflow_approvals (
+      CREATE TABLE IF NOT EXISTS workflow_approvals (
         id TEXT PRIMARY KEY,
         run_id TEXT NOT NULL,
         workflow_id TEXT NOT NULL,
@@ -947,8 +947,93 @@ configMigrations.push({
         created_at INTEGER NOT NULL,
         responded_at INTEGER
       );
-      CREATE INDEX idx_workflow_approvals_run ON workflow_approvals(run_id);
+      CREATE INDEX IF NOT EXISTS idx_workflow_approvals_run ON workflow_approvals(run_id);
     `);
+  },
+});
+
+// v16: web-access controls, ported from Nova's browser design (three-layer
+// DOM-access model, adapted to LocalMind's tool architecture):
+//   - settings.web_access_killed — the kill switch. When 1, EVERY tool that
+//     touches the web (web_search, raw browser, Secure Browser MCP) refuses
+//     before any network I/O. Layer 3 in Nova terms: blunt, absolute.
+//   - site_grants — per-domain standing grants (Layer 2). policy='allow'
+//     lets agents read the domain even when it's sensitive-classed;
+//     policy='never' blinds agents to it entirely. Domains not listed fall
+//     through to the sensitive-context heuristics (Layer 1) in web-guard.ts.
+// NOTE: this was originally drafted as a second v15 migration and never ran
+// on DBs that already applied the workflow-pause v15. Kept at v16 so those
+// installs actually get the columns/tables.
+configMigrations.push({
+  version: 16,
+  up: (db) => {
+    db.exec(`
+      ALTER TABLE settings ADD COLUMN web_access_killed INTEGER NOT NULL DEFAULT 0;
+      CREATE TABLE IF NOT EXISTS site_grants (
+        domain TEXT PRIMARY KEY,
+        policy TEXT NOT NULL CHECK (policy IN ('allow','never')),
+        note TEXT,
+        created_at INTEGER NOT NULL
+      );
+    `);
+  },
+});
+
+// v17: give Researcher the page-reading tools the orchestrator expects
+// (web_research + read_secure_webpage). Prior seed only listed web_search /
+// browser, which pushed agents toward search-snippet workarounds.
+configMigrations.push({
+  version: 17,
+  up: (db) => {
+    const tools = JSON.stringify([
+      "web_research",
+      "read_secure_webpage",
+      "web_search",
+      "browser",
+      "knowledge_base",
+      "peer_knowledge",
+      "memory",
+      "time",
+    ]);
+    db.prepare(
+      "UPDATE personas SET enabled_tools=?, updated_at=? WHERE persona_id IN ('agent-researcher','persona-researcher')"
+    ).run(tools, Date.now());
+  },
+});
+
+// v18: re-enable date_context. Serving clock only via the `time` tool made
+// small models burn a tool call on every "hello". A one-line clock in the
+// prompt is cheaper; `time` remains for explicit clock/scheduling asks.
+configMigrations.push({
+  version: 18,
+  up: (db) => {
+    db.exec(`
+      UPDATE system_prompt_blocks
+      SET enabled = 1, updated_at = ${Date.now()}
+      WHERE block_type = 'builtin' AND block_name = 'date_context';
+    `);
+  },
+});
+
+// v19: bump default UI font size. Only touches installs still on a prior
+// baked default (14 or 16) so deliberate larger preferences are preserved.
+configMigrations.push({
+  version: 19,
+  up: (db) => {
+    db.prepare(
+      "UPDATE settings SET chat_font_size = 17 WHERE chat_font_size IN (14, 16)"
+    ).run();
+  },
+});
+
+// v20: app-wide font scale default settled at 17. Re-bump any leftover 14/16
+// from installs that already applied v19 when it only targeted 14→16.
+configMigrations.push({
+  version: 20,
+  up: (db) => {
+    db.prepare(
+      "UPDATE settings SET chat_font_size = 17 WHERE chat_font_size IN (14, 16)"
+    ).run();
   },
 });
 

@@ -20,6 +20,7 @@ import { installMcpServerTool } from "./install-mcp";
 import { remindersTool } from "./reminders";
 import { contactsTool } from "./contacts";
 import { webResearchTool } from "./web-research";
+import { readSecureWebpageTool, SECURE_BROWSER_MCP_NAME } from "./read-secure-webpage";
 import { getMcpTools } from "./mcp";
 import type { Tool } from "./types";
 
@@ -34,6 +35,7 @@ const BUILTIN: Tool[] = [
   remindersTool,
   contactsTool,
   webResearchTool,
+  readSecureWebpageTool,
   knowledgeTool,
   devpmTool,
   datastoreTool,
@@ -55,7 +57,10 @@ export function listBuiltinTools(): Tool[] {
 
 export async function listAllTools(): Promise<Tool[]> {
   const mcp = await getMcpTools().catch(() => []);
-  return [...BUILTIN, ...mcp];
+  // Secure Browser is exposed via the first-class `read_secure_webpage` alias
+  // so the model doesn't see two names for the same capability.
+  const otherMcp = mcp.filter((t) => t.definition.name !== SECURE_BROWSER_MCP_NAME);
+  return [...BUILTIN, ...otherMcp];
 }
 
 export function getBuiltinTool(name: string): Tool | undefined {

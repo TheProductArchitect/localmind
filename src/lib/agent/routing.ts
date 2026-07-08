@@ -28,10 +28,17 @@ export function inferTaskType(message: string): string | undefined {
 export function inferRequiredTools(message: string): string[] {
   const tools: string[] = [];
   const lower = message.toLowerCase();
-  if (/\b(search|google|web|internet|latest|news)\b/.test(lower)) tools.push("web_search");
+  const hasUrl = /https?:\/\//i.test(message);
+  if (hasUrl) {
+    tools.push("read_secure_webpage", "web_research");
+  } else if (/\b(search|google|web|internet|latest|news)\b/.test(lower)) {
+    tools.push("web_search", "web_research");
+  }
   if (/\b(calendar|meeting|schedule|appointment)\b/.test(lower)) tools.push("calendar");
   if (/\b(email|mail|inbox)\b/.test(lower)) tools.push("email");
-  if (/\b(file|folder|directory|read|write)\b/.test(lower)) tools.push("filesystem");
+  // Only hint filesystem for local paths / file ops — never when the "read"
+  // is aimed at a web URL (that previously pushed models at filesystem).
+  if (!hasUrl && /\b(file|folder|directory|read|write)\b/.test(lower)) tools.push("filesystem");
   if (/\b(reminder|todo|task list)\b/.test(lower)) tools.push("reminders");
   return tools;
 }
@@ -49,9 +56,18 @@ export function buildRoutingContext(
   };
 }
 
+/** True when `target` looks like a model id rather than an agent/persona name. */
+function looksLikeModelId(target: string): boolean {
+  // provider/model, family:tag, or dotted model families commonly used by Ollama/OpenAI.
+  return /[/:]/.test(target) || /\b(gpt|claude|llama|mistral|qwen|phi|gemma|deepseek)\b/i.test(target);
+}
+
 /**
  * Resolve which model to use for a user message based on routing rules.
- * Falls back to the settings default when no rule matches.
+ * Falls back to the settings default when no rule matches, or when a rule
+ * targets an unknown agent with no model configured. Never invents an
+ * Ollama model name from an agent label like "Research" — that previously
+ * produced "model not found" and looked like a dropped chat connection.
  */
 export function resolveRoutedModel(
   userMessage: string,
@@ -67,16 +83,30 @@ export function resolveRoutedModel(
   }
 
   const personas = listPersonas();
+  const lower = target.toLowerCase();
   const persona = personas.find(
     (p) =>
-      p.name.toLowerCase() === target.toLowerCase() ||
+      p.name.toLowerCase() === lower ||
       p.persona_id === target ||
-      p.persona_id === `persona-${target.toLowerCase()}`
+      p.persona_id === `persona-${lower}` ||
+      p.persona_id === `agent-${lower}` ||
+      // "Research" → "Researcher", "Code" → "Coder", etc.
+      p.name.toLowerCase().startsWith(lower) ||
+      lower.startsWith(p.name.toLowerCase())
   );
-  if (persona?.model_name) {
-    return { model: persona.model_name, matchedAgent: target, ruleId: match.rule_id };
+  if (persona) {
+    return {
+      model: persona.model_name || defaultModel,
+      matchedAgent: persona.name,
+      ruleId: match.rule_id,
+    };
   }
 
-  // Treat target as a literal model name (e.g. "llama3.2", "gpt-4o-mini").
-  return { model: target, matchedAgent: target, ruleId: match.rule_id };
+  if (looksLikeModelId(target)) {
+    return { model: target, matchedAgent: target, ruleId: match.rule_id };
+  }
+
+  // Unknown agent label with no persona — keep the default model rather than
+  // asking the provider for a nonexistent model named after the agent.
+  return { model: defaultModel, matchedAgent: target, ruleId: match.rule_id };
 }

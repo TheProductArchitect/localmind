@@ -103,9 +103,32 @@ def test_link_and_meta_are_dropped():
 
 
 def test_title_is_extracted_and_stripped_from_body_markdown():
-    title, md = _sanitize("<html><head><title>Hello World</title></head><body><p>body text</p></body></html>")
+    title, md, _sensitive = _sanitize("<html><head><title>Hello World</title></head><body><p>body text</p></body></html>")
     assert title == "Hello World"
     assert "body text" in md
+
+
+def test_password_field_flags_sensitive_context():
+    # Login pages must be flagged so the server can withhold them unless the
+    # host passed allow_sensitive (i.e. the user granted the domain).
+    _t, _md, sensitive = _sanitize(
+        '<html><body><form><input type="text" name="u"><input type="password" name="p"></form></body></html>'
+    )
+    assert sensitive is True
+
+
+def test_hidden_password_field_still_flags_sensitive():
+    # Detection runs BEFORE hidden-node stripping — a login form hidden with
+    # display:none (e.g. a modal) must still mark the page sensitive.
+    _t, _md, sensitive = _sanitize(
+        '<html><body><div style="display:none"><input type="password"></div><p>hi</p></body></html>'
+    )
+    assert sensitive is True
+
+
+def test_page_without_password_field_is_not_sensitive():
+    _t, _md, sensitive = _sanitize("<html><body><p>article text</p></body></html>")
+    assert sensitive is False
 
 
 def test_normal_visible_text_survives():

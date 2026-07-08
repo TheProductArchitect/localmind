@@ -33,7 +33,7 @@ export const requestToolAccessTool: Tool = {
   definition: {
     name: "request_tool_access",
     description:
-      "Call when you can't complete the task with your current tools. Specify what you need and why; your run ends with a structured request the parent reads. Not for tools you already have, not for bypassing safety.",
+      "SUBAGENT ONLY. Call when you cannot finish the assigned goal with your current allowed_tools. Ends your run with a structured request for the parent. Never call this if you already have the tools you need, and never call it from the main assistant chat (you already have the full registry).",
     parameters: {
       type: "object",
       properties: {
@@ -56,9 +56,30 @@ export const requestToolAccessTool: Tool = {
     },
   },
   async execute(input) {
-    const tools = Array.isArray(input.tools)
-      ? (input.tools as unknown[]).filter((t): t is string => typeof t === "string").slice(0, 8)
-      : [];
+    // Small models often stringify arrays as "['email', 'calendar']" or
+    // "email, calendar". Accept those shapes so a valid ask isn't rejected.
+    let tools: string[] = [];
+    if (Array.isArray(input.tools)) {
+      tools = (input.tools as unknown[])
+        .map((t) => (typeof t === "string" ? t : String(t ?? "")))
+        .map((t) => t.trim())
+        .filter(Boolean);
+    } else if (typeof input.tools === "string") {
+      const raw = input.tools.trim();
+      try {
+        const parsed = JSON.parse(raw.replace(/'/g, '"'));
+        if (Array.isArray(parsed)) {
+          tools = parsed.map((t) => String(t).trim()).filter(Boolean);
+        }
+      } catch {
+        tools = raw
+          .replace(/^\[|\]$/g, "")
+          .split(/[,;\s]+/)
+          .map((t) => t.replace(/^['"]|['"]$/g, "").trim())
+          .filter(Boolean);
+      }
+    }
+    tools = [...new Set(tools)].slice(0, 8);
     const reason = typeof input.reason === "string" ? input.reason.slice(0, 800) : "";
     const followup = typeof input.suggested_followup === "string" ? input.suggested_followup.slice(0, 800) : "";
 
@@ -66,7 +87,7 @@ export const requestToolAccessTool: Tool = {
       return {
         ok: false,
         output:
-          "request_tool_access requires both `tools` (non-empty array) and `reason`. Returning without making a request.",
+          "request_tool_access requires both `tools` (non-empty array of tool name strings) and `reason`. Example: tools=[\"email\",\"calendar\"], reason=\"Need to create an event and draft an invite\".",
       };
     }
 

@@ -133,9 +133,32 @@ export async function getMcpTools(): Promise<Tool[]> {
         },
         async execute(input) {
           const started = Date.now();
+          // Web-guard interception for the built-in Secure Browser: enforce
+          // kill switch + site grants + sensitive-context blindness before
+          // the child process sees the URL, and pass the domain's standing
+          // grant down so the MCP can release password-field pages only for
+          // explicitly-allowed sites.
+          if (server.id === "builtin-secure-browser" && typeof input.url === "string") {
+            const { checkWebAccess, auditPageRead } = await import("../agent/web-guard");
+            const access = checkWebAccess(input.url);
+            if (!access.ok) {
+              recordCall(server.id, 0, false, "blocked by web guard");
+              return { ok: false, output: access.reason, summary: "blocked by web guard" };
+            }
+            input = { ...input, allow_sensitive: access.allowSensitive };
+            auditPageRead("read_secure_webpage", input.url);
+          }
           try {
             const client = await connect(server);
-            const result: any = await client.callTool({ name: mt.tool_name, arguments: input });
+            // Secure Browser needs headroom beyond the SDK's 60s default:
+            // cold spawn loads the injection-scanner model (~10-20s on CPU)
+            // before the page fetch even starts.
+            const callTimeout = server.id === "builtin-secure-browser" ? 120_000 : undefined;
+            const result: any = await client.callTool(
+              { name: mt.tool_name, arguments: input },
+              undefined,
+              callTimeout ? { timeout: callTimeout } : undefined
+            );
             await client.close();
             bumpMcpToolUsage(server.id, mt.tool_name);
             const text = (result.content || [])
