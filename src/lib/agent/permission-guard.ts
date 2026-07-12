@@ -78,6 +78,11 @@ const DESTRUCTIVE_ACTIONS: ReadonlySet<string> = new Set([
   "post_message",        // outbound social posts
   "git_force_push",
   "git_reset_hard",
+  // Creating/updating a recurring scheduled task commits Sora to future
+  // autonomous runs. That deserves an explicit confirmation regardless of
+  // agent mode — the user must see the resolved cron before it's committed.
+  // (Deleting an automation is covered by `delete_automation` above.)
+  "schedule_write",
   // Installing an MCP server registers a launch command that will execute as
   // the user's process. Always confirm — even in auto mode — because the user
   // has to vet the package source and trust the publisher. This is the floor

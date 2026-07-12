@@ -9,6 +9,11 @@ export type AssemblyContext = {
   conversationId?: string;
   // Convenience for the {active_model} variable; falls back to settings.active_model.
   activeModelOverride?: string;
+  // When set, the async assembler routes the `memory` block through the Context
+  // Broker (§7.3): it injects the top-k *retrieved* slice relevant to this
+  // query within a token budget, instead of dumping all key/value memory.
+  query?: string;
+  budgetTokens?: number;
 };
 
 export type AssemblyResult = {
@@ -82,9 +87,10 @@ You are a personal assistant first: anticipate what would help, answer clearly, 
 - Never invent local paths, URLs, names, or credentials. Ask if a required detail is missing.
 
 ## Tools
-- Call a tool only when conversation context + general knowledge cannot fulfill the request.
+- Call a tool only when conversation context + general knowledge cannot fulfill the request. Greetings, small talk, and questions you can already answer need NO tools — just reply.
 - Prefer the tool whose contract matches the need (see each tool's description). Parallelize independent reads.
-- Live web URLs → \`read_secure_webpage\`. Open-ended research → \`web_research\` (or spawn researcher when substantial). Discovery-only → \`web_search\`. Never pass http(s) to \`filesystem\`. Prefer Secure Browser over raw \`browser\` unless the user needs unfiltered JS.
+- When a tool returns nothing, an error, or thin content, say so plainly and offer a concrete next step (different query, a specific site, permission to retry). NEVER fill the gap with guesses, stale memory, or invented results presented as findings.
+- Live web URLs → \`read_secure_webpage\`. User on /browse with linked session → \`browse_session\`. Open-ended research → \`web_research\` / spawn. Discovery-only → \`web_search\`. Never pass http(s) to \`filesystem\`.
 - Substantial multi-file code work → \`pi_code\`. Peer-local knowledge → \`peer_knowledge\`.
 - After each tool result, decide silently: another tool, or answer the user. Recover from failures without describing them unless the user is blocked.
 
@@ -215,6 +221,23 @@ function evaluateCondition(block: SystemPromptBlock, persona: Persona): boolean 
  * (e.g. fresh DB on a machine that hasn't run the V6 migration yet — should
  * be impossible, but defensive).
  */
+/** Render the `memory` block via the Context Broker for the current turn. */
+async function renderBrokeredMemory(ctx: AssemblyContext): Promise<string> {
+  try {
+    const { retrieveContext } = await import("./context-broker");
+    const res = await retrieveContext({
+      query: ctx.query || "",
+      userId: ctx.userId,
+      budgetTokens: ctx.budgetTokens,
+    });
+    return res.brief;
+  } catch {
+    // Broker failed (e.g. embeddings offline) — fall back to no memory block
+    // rather than dumping everything; the model still has the live query.
+    return "";
+  }
+}
+
 export async function assembleSystemPrompt(
   personaId: string,
   ctx: AssemblyContext = {}
@@ -241,6 +264,14 @@ export async function assembleSystemPrompt(
       // override. Variables are still substituted so overrides can reference
       // {assistant_name}, {active_model}, etc.
       const override = (b.content || "").trim();
+      // The `memory` block, when a turn query is available and not overridden,
+      // is served by the Context Broker: retrieved-relevant slices within a
+      // token budget rather than the whole memory dump (§7.3).
+      if (b.block_name === "memory" && !override && ctx.query) {
+        const rendered = await renderBrokeredMemory(ctx);
+        if (rendered) parts.push(rendered);
+        continue;
+      }
       const rendered = override
         ? substituteVariables(b.content, persona, ctx)
         : renderBuiltin(b.block_name, persona, ctx);

@@ -19,8 +19,10 @@ import { agentMemoryAdminTool } from "./agent-memory-admin";
 import { installMcpServerTool } from "./install-mcp";
 import { remindersTool } from "./reminders";
 import { contactsTool } from "./contacts";
+import { scheduleTool } from "./schedule";
 import { webResearchTool } from "./web-research";
 import { readSecureWebpageTool, SECURE_BROWSER_MCP_NAME } from "./read-secure-webpage";
+import { browseSessionTool } from "./browse-session";
 import { getMcpTools } from "./mcp";
 import type { Tool } from "./types";
 
@@ -34,8 +36,10 @@ const BUILTIN: Tool[] = [
   browserTool,
   remindersTool,
   contactsTool,
+  scheduleTool,
   webResearchTool,
   readSecureWebpageTool,
+  browseSessionTool,
   knowledgeTool,
   devpmTool,
   datastoreTool,

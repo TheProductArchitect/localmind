@@ -1,18 +1,21 @@
 import type { Browser } from "playwright";
 import type { Tool } from "./types";
 import { logger } from "../logger";
+import { withPlaywrightBrowsersPath } from "../playwright-path";
 
 let browserInstance: Browser | null = null;
 
-async function getBrowser(): Promise<Browser> {
+export async function getBrowser(): Promise<Browser> {
   if (browserInstance && browserInstance.isConnected()) return browserInstance;
-  const { chromium } = await import("playwright");
-  const wsEndpoint = process.env.PLAYWRIGHT_BROWSER_WS_ENDPOINT;
-  browserInstance = wsEndpoint
-    ? await chromium.connect(wsEndpoint)
-    : await chromium.launch({ headless: true });
-  logger.info("playwright browser launched");
-  return browserInstance;
+  return withPlaywrightBrowsersPath(async () => {
+    const { chromium } = await import("playwright");
+    const wsEndpoint = process.env.PLAYWRIGHT_BROWSER_WS_ENDPOINT;
+    browserInstance = wsEndpoint
+      ? await chromium.connect(wsEndpoint)
+      : await chromium.launch({ headless: true });
+    logger.info("playwright browser launched");
+    return browserInstance;
+  });
 }
 
 export async function closeBrowser() {

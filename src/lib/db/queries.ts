@@ -28,7 +28,13 @@ export type Settings = {
   context_window: number;
   agent_mode: AgentMode;
   web_access_killed: number;
+  web_search_provider: WebSearchProvider;
+  idle_work_enabled: number;
+  idle_start_hour: number;
+  idle_end_hour: number;
 };
+
+export type WebSearchProvider = "auto" | "brave" | "you" | "duckduckgo";
 
 export type AgentMode = "auto" | "plan" | "ask";
 

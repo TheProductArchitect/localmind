@@ -1,0 +1,51 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits"
+  ],
+  "timezone": "Europe/London",
+  "schedule": ["after 10pm every weekday", "before 5am every weekday", "every weekend"],
+  "prConcurrentLimit": 5,
+  "labels": ["dependencies"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 5am on monday"]
+  },
+  "packageRules": [
+    {
+      "description": "Group non-major (minor+patch) updates and auto-merge them once CI is green.",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "non-major dependencies",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Never auto-merge major upgrades — they get their own reviewable PR.",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "separateMajorMinor": true
+    },
+    {
+      "description": "Framework / native / cloud packages are pinned and upgraded deliberately by a human — never auto-merged, always their own PR.",
+      "matchPackageNames": [
+        "next",
+        "react",
+        "react-dom",
+        "electron",
+        "better-sqlite3",
+        "playwright",
+        "@mindstudio-ai/agent"
+      ],
+      "automerge": false,
+      "groupName": null,
+      "schedule": ["before 5am on monday"]
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "automerge": false
+  }
+}

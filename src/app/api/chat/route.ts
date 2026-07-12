@@ -14,10 +14,19 @@ const SSE_HEADERS = {
 };
 
 export async function POST(req: NextRequest) {
-  const { conversationId, message, regenerate, persona } = await req.json();
+  const { conversationId, message, regenerate, persona, browseSessionId } = await req.json();
   if (!conversationId || (!regenerate && typeof message !== "string")) {
     return new Response("conversationId and message are required", { status: 400 });
   }
+
+  let browsePrefix: string | undefined;
+  if (typeof browseSessionId === "string" && browseSessionId.trim()) {
+    const { linkBrowseSession, buildBrowseContextPrefix } = await import("@/lib/browse/session");
+    linkBrowseSession(conversationId, browseSessionId.trim());
+    browsePrefix = await buildBrowseContextPrefix(browseSessionId.trim());
+  }
+  const devpmPrefix = persona === "devpm" ? devpmSystemPrefix() : undefined;
+  const systemPrefix = [browsePrefix, devpmPrefix].filter(Boolean).join("\n\n") || undefined;
 
   const lastEventId = Number(req.headers.get("last-event-id") || "0");
   const existing = getSession(conversationId);
@@ -72,7 +81,7 @@ export async function POST(req: NextRequest) {
       try {
         for await (const ev of runAgent(conversationId, message || "", controller.signal, {
           regenerate: !!regenerate,
-          systemPrefix: persona === "devpm" ? devpmSystemPrefix() : undefined,
+          systemPrefix,
         })) {
           pushEvent(conversationId, ev.type, ev);
         }

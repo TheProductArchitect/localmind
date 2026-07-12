@@ -23,6 +23,31 @@ npm run build
 npm run start  # http://localhost:3000 — rebuild after route/UI changes
 ```
 
+### Desktop app (LocalMind's own browser)
+
+```bash
+npm run build && npm run app   # Electron shell; reuses :3000 server or spawns one
+npm run app:dev                # against a running `npm run dev` (:3001)
+```
+
+The Electron shell turns `/browse` into a real browser: the LocalMind UI is
+the chrome, and each tab is a sandboxed Chromium `WebContentsView` — real
+sessions, real JS, real logins, driven from the same app Sora lives in. On
+the web build, `/browse` falls back to the screenshot Live mode + Reader.
+
+Main process: `electron/main.js` (tab manager, server boot); privileged
+bridge: `electron/preload.js` (chrome window only — tab content is fully
+sandboxed with no preload).
+
+**Sora on your tabs (phase 3).** Sora rides in a side panel next to the
+tabs — plain chat by default. Click **Grant Sora** on a tab and the server
+attaches to that one tab over CDP (`127.0.0.1:9223`, loopback-only), turning
+it into a `browse_session` Sora can read and act on; a green
+"Sora can see and act on this tab" strip — drawn by the chrome, unreachable
+by page content — shows while access is live. Grants are per-tab, revocable
+in one click, die with the tab, gate through the web-guard, and audit as
+security events. `LM_AGENT_BRIDGE=0` disables the bridge entirely.
+
 PM2 production stack (app + background worker):
 
 ```bash

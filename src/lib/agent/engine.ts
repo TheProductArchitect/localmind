@@ -12,7 +12,8 @@ import {
   addMessage, getMessages, getSettings, updateConversation, deleteTrailingTurn, getConversation,
 } from "../db/queries";
 import { approxTokens } from "../utils";
-import { startProcess, updateProcess, completeProcess } from "../db/agent-processes";
+import { startProcess, updateProcess, completeProcess, type Pillar } from "../db/agent-processes";
+import { classifyPillar } from "./pillar-classify";
 import { unregisterProcess } from "./process-registry";
 import { resolveRoutedModel } from "./routing";
 
@@ -186,6 +187,10 @@ export async function* runAgent(
   const subagentPersonaId =
     (opts?.processMetadata as { persona_id?: string } | undefined)?.persona_id ?? null;
   const subagentStartedAt = Date.now();
+  // Tag the process with the pillar it advances (§6) so the Ops board can
+  // filter/group. Explicit metadata.pillar (e.g. idle "maintain" jobs) wins.
+  const explicitPillar = (opts?.processMetadata as { pillar?: Pillar } | undefined)?.pillar;
+  const pillar = explicitPillar ?? classifyPillar(firstUserText, subagentPersonaId);
   let processId = "";
   safeProcessHook(() => {
     processId = startProcess({
@@ -194,6 +199,7 @@ export async function* runAgent(
       owner_user_id: convOwner || null,
       agent_name: isSubagent ? "Subagent" : "Main",
       persona_id: subagentPersonaId ?? "persona-general",
+      pillar,
       metadata: {
         conversation_id: conversationId,
         model: activeModel,

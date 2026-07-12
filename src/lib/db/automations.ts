@@ -35,6 +35,23 @@ export function recordTaskRun(id: string, output: string) {
 export function setTaskEnabled(id: string, enabled: boolean) {
   getConfigDb().prepare("UPDATE scheduled_tasks SET enabled=? WHERE id=?").run(enabled ? 1 : 0, id);
 }
+export function updateTask(
+  id: string,
+  patch: { name?: string; cron?: string; prompt?: string; delivery_channel?: string }
+): ScheduledTask | null {
+  const cur = getTask(id);
+  if (!cur) return null;
+  getConfigDb()
+    .prepare("UPDATE scheduled_tasks SET name=?, cron=?, prompt=?, delivery_channel=? WHERE id=?")
+    .run(
+      patch.name ?? cur.name,
+      patch.cron ?? cur.cron,
+      patch.prompt ?? cur.prompt,
+      patch.delivery_channel ?? cur.delivery_channel,
+      id
+    );
+  return getTask(id);
+}
 export function deleteTask(id: string) {
   getConfigDb().prepare("DELETE FROM scheduled_tasks WHERE id=?").run(id);
 }

@@ -1,5 +1,6 @@
 // Node-only startup hardening. Imported by instrumentation.ts only on the
 // Node.js runtime so its node-builtin imports never reach the edge bundle.
+import "./lib/playwright-path";
 import { logger } from "./lib/logger";
 import { closeAllDbs, integrityCheck } from "./lib/db";
 

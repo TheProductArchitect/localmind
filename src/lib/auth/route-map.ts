@@ -72,6 +72,9 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   // Browsing through the secure pipeline is fine for any signed-in user; the
   // guard itself still applies per-request.
   { path: "/api/browse", methods: ["POST"], role: "authenticated" },
+  { path: "/api/browse/*", methods: "ALL", role: "authenticated" },
+  { path: "/api/browse/session", methods: ["POST"], role: "authenticated" },
+  { path: "/api/browse/session/*", methods: "ALL", role: "authenticated" },
 
   // --- Backup ---
   { path: "/api/backup", methods: "ALL", role: "owner" },
@@ -142,6 +145,14 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   // --- V5: Orchestration (processes, trace, pause/resume/cancel) ---
   { path: "/api/orchestration/processes", methods: ["GET"], role: "authenticated" },
   { path: "/api/orchestration/processes/*", methods: ["GET", "DELETE", "POST"], role: "authenticated" },
+
+  // --- Ops board: self-improvement proposals (approval is owner-only, §7.2) ---
+  { path: "/api/ops/proposals", methods: ["GET"], role: "authenticated" },
+  { path: "/api/ops/proposals", methods: ["POST"], role: "owner" },
+  { path: "/api/ops/proposals/*", methods: ["POST"], role: "owner" },
+
+  // --- User Context Graph (per-user; read-only in phase 1, §12) ---
+  { path: "/api/context/graph", methods: ["GET"], role: "authenticated" },
 
   // --- V5: Long-running jobs ---
   { path: "/api/jobs", methods: ["GET", "POST"], role: "authenticated" },

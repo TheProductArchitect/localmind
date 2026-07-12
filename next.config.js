@@ -6,14 +6,13 @@ const nextConfig = {
   serverExternalPackages: ["better-sqlite3", "bcryptjs", "playwright", "pdfjs-dist", "mammoth", "epub2", "archiver"],
   // Pin the workspace root so Next doesn't pick up the stray ~/package-lock.json.
   outputFileTracingRoot: path.join(__dirname),
-  // Run middleware on the Node runtime so it can read process.env at request
-  // time and use better-sqlite3-backed helpers if it ever needs them. The
-  // edge runtime inlines env vars at build time, which made LOCALMIND_JWT_SECRET
-  // unreadable in production builds where the build env didn't match the
-  // runtime env — the symptom was every token failing to verify in CI.
-  experimental: {
-    nodeMiddleware: true,
-  },
+  // Middleware runs on the Node runtime via `runtime: "nodejs"` in
+  // src/middleware.ts — needed so process.env is read at request time (the
+  // edge runtime inlines env vars at build, which broke JWT verification in
+  // CI). Node middleware is STABLE in Next 15.5: no experimental flag. The
+  // old `experimental.nodeMiddleware` key now only triggers an "Unrecognized
+  // key" warning — verified live (evil-Host 401 test) that enforcement is
+  // identical without it. Don't re-add it.
   webpack: (config) => {
     config.externals.push({ "better-sqlite3": "commonjs better-sqlite3" });
     return config;

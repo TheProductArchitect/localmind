@@ -1037,6 +1037,145 @@ configMigrations.push({
   },
 });
 
+// v21: Ops board (Feature A) + Pillars (Feature F). Tag each process with the
+// pillar it advances, link subagents to their spawner so the board can nest
+// them, and track an optional 0..1 progress value for a progress bar.
+// All nullable / back-filled null so existing rows are untouched.
+configMigrations.push({
+  version: 21,
+  up: (db) => {
+    db.exec(`
+      ALTER TABLE agent_processes ADD COLUMN pillar TEXT;
+      ALTER TABLE agent_processes ADD COLUMN parent_process_id TEXT;
+      ALTER TABLE agent_processes ADD COLUMN progress REAL;
+      CREATE INDEX IF NOT EXISTS idx_agent_processes_parent ON agent_processes(parent_process_id);
+    `);
+  },
+});
+
+// v22: selectable web-search backend (Feature C1). "auto" preserves today's
+// behavior (Brave if BRAVE_API_KEY set, else DuckDuckGo). "you" uses the
+// you.com search API with a key stored in api_keys.
+configMigrations.push({
+  version: 22,
+  up: (db) => {
+    db.exec("ALTER TABLE settings ADD COLUMN web_search_provider TEXT NOT NULL DEFAULT 'auto';");
+  },
+});
+
+// v23: the Brain's entity graph (§4.0/§4.3.1). Typed relationships between
+// brain entities (and the User Context Graph in §12), populated by a zero-LLM
+// extraction pass over [[wikilinks]] on note write. Additive — the existing
+// memory/notes/knowledge stores are untouched.
+configMigrations.push({
+  version: 23,
+  up: (db) => {
+    db.exec(`
+      CREATE TABLE brain_edges (
+        id TEXT PRIMARY KEY,
+        src_entity TEXT NOT NULL,
+        dst_entity TEXT NOT NULL,
+        edge_type TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'inferred',
+        weight REAL NOT NULL DEFAULT 1.0,
+        created_at INTEGER NOT NULL,
+        UNIQUE(src_entity, dst_entity, edge_type)
+      );
+      CREATE INDEX idx_brain_edges_src ON brain_edges(src_entity);
+      CREATE INDEX idx_brain_edges_dst ON brain_edges(dst_entity);
+    `);
+  },
+});
+
+// v24: the Ideate pillar's surface (§6.2) — a "Strategist" persona that runs
+// divergent→convergent brainstorming and writes the chosen plan to the Brain.
+// Implemented purely as a persona + a custom system-prompt block; no engine
+// changes. Reachable from the persona selector and ⌘K.
+configMigrations.push({
+  version: 24,
+  up: (db) => {
+    const NOW = Date.now();
+    db.prepare(`
+      INSERT INTO personas (persona_id, name, description, model_name, enabled_tools, permission_profile_id, created_at, updated_at)
+      VALUES ('persona-strategist', 'Strategist',
+        'Ideation mode — generates options, pressure-tests them, and converges to a plan, then saves the chosen plan to the Brain and can hand off to execute/coordinate.',
+        NULL, ?, 'normal', ?, ?)
+      ON CONFLICT(persona_id) DO UPDATE SET
+        description = excluded.description,
+        enabled_tools = excluded.enabled_tools,
+        updated_at = excluded.updated_at
+    `).run(
+      JSON.stringify(["memory", "knowledge_base", "web_search", "time", "spawn_subagents_parallel", "schedule_task"]),
+      NOW,
+      NOW
+    );
+
+    const insBlock = db.prepare(`
+      INSERT OR IGNORE INTO system_prompt_blocks
+        (block_id, persona_id, block_type, block_name, content, enabled, sort_order, condition_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+    `);
+    // Standard builtins so the persona has identity/permissions/tools context.
+    const builtins = [
+      { name: "identity", enabled: 1 },
+      { name: "permissions", enabled: 1 },
+      { name: "tools", enabled: 1 },
+    ];
+    builtins.forEach((b, i) => {
+      insBlock.run(`blk-strategist-${b.name}`, "persona-strategist", "builtin", b.name, "", b.enabled, i, NOW, NOW);
+    });
+    // The ideation method itself, as a custom-static block.
+    const ideate = `## Ideation method
+You are in Strategist mode. Work in two phases:
+1. DIVERGE — generate a wide set of distinct options. Do not filter yet. Aim for genuinely different approaches, not variations of one.
+2. CONVERGE — pressure-test the options (risks, cost, effort, reversibility). Optionally spawn a parallel "red team" via spawn_subagents_parallel to attack the leading ideas. Then converge to a single recommended plan.
+
+Output a structured plan: goal, the options you considered, the chosen approach and why, and concrete next actions. Save the chosen plan as an \`idea\` note in the Brain (knowledge_base) so it persists and can be linked to follow-on execute/coordinate work. Offer to schedule or spin up the execution steps, but do not start execution without the user's go-ahead.`;
+    insBlock.run("blk-strategist-ideate", "persona-strategist", "custom-static", "ideate", ideate, 1, 3, NOW, NOW);
+  },
+});
+
+// v25: idle self-improvement (Feature G.1/G.2). The two-gate flow: idle Sora
+// writes proposal *cards* only (Gate 1); a human approval enqueues a build that
+// produces a branch/PR (Gate 2); final merge stays human. `self_checks` records
+// idle test runs (read-only w.r.t. the app). Idle work is opt-in and windowed.
+configMigrations.push({
+  version: 25,
+  up: (db) => {
+    db.exec(`
+      CREATE TABLE improvement_proposals (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        rationale TEXT NOT NULL,
+        target_paths TEXT NOT NULL DEFAULT '[]',
+        benefit TEXT,
+        risk TEXT,
+        status TEXT NOT NULL DEFAULT 'proposed',
+        created_at INTEGER NOT NULL,
+        approved_at INTEGER,
+        branch TEXT,
+        pr_url TEXT,
+        audit_ref TEXT
+      );
+      CREATE INDEX idx_improvement_proposals_status ON improvement_proposals(status);
+
+      CREATE TABLE self_checks (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        summary TEXT,
+        detail TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_self_checks_created ON self_checks(created_at DESC);
+    `);
+    // Idle work is off by default. Window defaults to 01:00–06:00 local.
+    db.exec("ALTER TABLE settings ADD COLUMN idle_work_enabled INTEGER NOT NULL DEFAULT 0;");
+    db.exec("ALTER TABLE settings ADD COLUMN idle_start_hour INTEGER NOT NULL DEFAULT 1;");
+    db.exec("ALTER TABLE settings ADD COLUMN idle_end_hour INTEGER NOT NULL DEFAULT 6;");
+  },
+});
+
 const knowledgeMigrations: Migration[] = [
   {
     version: 1,

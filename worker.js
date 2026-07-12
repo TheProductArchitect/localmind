@@ -135,6 +135,13 @@ async function tick() {
     if (newMinute) {
       await post("/api/internal/process-critic", {});
     }
+
+    // Idle self-improvement cycle — once per minute. The route returns fast
+    // when the system isn't idle-eligible (opt-in + window + no active work),
+    // so this is cheap to poll.
+    if (newMinute) {
+      await post("/api/internal/idle-tick", {});
+    }
   } catch (e) {
     console.error("[worker] tick error:", e.message);
   } finally {

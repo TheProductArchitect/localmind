@@ -18,6 +18,7 @@ import { useEffect, useState } from "react";
 import {
   MessageSquare,    // Chat
   Workflow,         // Work
+  Globe,            // Browse
   BookOpen,         // Knowledge
   Wifi,             // Fleet
   SlidersHorizontal,// Settings
@@ -34,8 +35,9 @@ type Dest = {
 
 const DESTS: Dest[] = [
   { href: "/",          label: "Chat",      Icon: MessageSquare,     matches: ["/"] },
-  { href: "/work",      label: "Work",      Icon: Workflow,          matches: ["/work", "/graphs", "/orchestration", "/automations", "/agents"] },
-  { href: "/knowledge", label: "Knowledge", Icon: BookOpen,          matches: ["/knowledge", "/memory", "/data", "/browse"] },
+  { href: "/work",      label: "Work",      Icon: Workflow,          matches: ["/work", "/ops", "/graphs", "/orchestration", "/automations", "/agents"] },
+  { href: "/browse",    label: "Browse",    Icon: Globe,             matches: ["/browse"] },
+  { href: "/knowledge", label: "Knowledge", Icon: BookOpen,          matches: ["/knowledge", "/memory", "/data", "/context"] },
   { href: "/fleet",     label: "Fleet",     Icon: Wifi,              matches: ["/fleet", "/mcp", "/models", "/plugins"] },
   { href: "/settings",  label: "Settings",  Icon: SlidersHorizontal, matches: ["/settings", "/permissions", "/access", "/audit", "/analytics", "/system", "/devpm", "/agent"] },
 ];

@@ -25,6 +25,7 @@ const COMMANDS: Command[] = [
 
   // Work
   { label: "Work timeline",     href: "/work",       group: "Work" },
+  { label: "Agent Ops board",   href: "/ops",        group: "Work" },
   { label: "Agents — live + catalog", href: "/agents", group: "Work" },
   { label: "Task graphs",       href: "/graphs",     group: "Work" },
   { label: "Orchestration",     href: "/orchestration", group: "Work" },
@@ -33,8 +34,9 @@ const COMMANDS: Command[] = [
 
   // Knowledge
   { label: "Knowledge base",    href: "/knowledge",  group: "Knowledge" },
-  { label: "Browse the web (secure)", href: "/browse", group: "Knowledge" },
+  { label: "Browse the web", href: "/browse", group: "Knowledge" },
   { label: "Memory",            href: "/knowledge?tab=memory", group: "Knowledge" },
+  { label: "My context — what Sora knows about me", href: "/context", group: "Knowledge" },
   { label: "Data tables",       href: "/data",       group: "Knowledge" },
 
   // Fleet
