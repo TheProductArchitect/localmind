@@ -1,12 +1,12 @@
 "use client";
 
 /**
- * <Rail/> — 40px vertical nav with the five primary destinations.
+ * <Rail/> — vertical nav with the primary destinations.
  *
- * Replaces the legacy MainNav + MobileNav. Five glyphs only; labels appear
- * on hover via a floating chip so the rail itself stays a quiet vertical
- * line. The orb at the bottom polls /api/pulse and mirrors whatever Sora
- * is doing across the whole product — chat or background.
+ * Replaces the legacy MainNav + MobileNav. Glyphs only; labels appear on
+ * hover via a floating chip so the rail itself stays a quiet vertical line.
+ * The orb at the bottom polls /api/pulse and mirrors whatever Sora is doing
+ * across the whole product — chat or background.
  *
  * On viewports below md the desktop Rail hides and <RailMobile/> takes
  * over as a horizontal glass bar pinned to the bottom edge.
@@ -18,8 +18,10 @@ import { useEffect, useState } from "react";
 import {
   MessageSquare,    // Chat
   Workflow,         // Work
+  Columns3,         // Ops (Kanban)
   Globe,            // Browse
   BookOpen,         // Knowledge
+  Waypoints,        // Context graph
   Wifi,             // Fleet
   SlidersHorizontal,// Settings
 } from "lucide-react";
@@ -35,9 +37,11 @@ type Dest = {
 
 const DESTS: Dest[] = [
   { href: "/",          label: "Chat",      Icon: MessageSquare,     matches: ["/"] },
-  { href: "/work",      label: "Work",      Icon: Workflow,          matches: ["/work", "/ops", "/graphs", "/orchestration", "/automations", "/agents"] },
+  { href: "/work",      label: "Work",      Icon: Workflow,          matches: ["/work", "/graphs", "/orchestration", "/automations", "/agents"] },
+  { href: "/ops",       label: "Ops",       Icon: Columns3,          matches: ["/ops"] },
   { href: "/browse",    label: "Browse",    Icon: Globe,             matches: ["/browse"] },
-  { href: "/knowledge", label: "Knowledge", Icon: BookOpen,          matches: ["/knowledge", "/memory", "/data", "/context"] },
+  { href: "/knowledge", label: "Knowledge", Icon: BookOpen,          matches: ["/knowledge", "/memory", "/data"] },
+  { href: "/context",   label: "Context",   Icon: Waypoints,         matches: ["/context"] },
   { href: "/fleet",     label: "Fleet",     Icon: Wifi,              matches: ["/fleet", "/mcp", "/models", "/plugins"] },
   { href: "/settings",  label: "Settings",  Icon: SlidersHorizontal, matches: ["/settings", "/permissions", "/access", "/audit", "/analytics", "/system", "/devpm", "/agent"] },
 ];

@@ -13,7 +13,7 @@ import { Button, Input } from "@/components/ui";
 import { BrowseSoraPanel } from "@/components/browse/sora-panel";
 import { Orb } from "@/components/orb";
 import { toast } from "@/components/toast";
-import { ArrowLeft, ArrowRight, RotateCw, Plus, X, Globe, Loader2, Eye, EyeOff, PanelRightClose } from "lucide-react";
+import { ArrowLeft, ArrowRight, RotateCw, Plus, X, Globe, Loader2, Eye, EyeOff } from "lucide-react";
 
 const SORA_OPEN_KEY = "lm-browse-sora-open";
 
@@ -304,17 +304,7 @@ export function AppBrowser() {
         soraOpen ? "w-[min(380px,32vw)] hidden md:flex" : "w-0 overflow-hidden flex"
       }`}
     >
-      {soraOpen && (
-        <button
-          onClick={toggleSora}
-          className="absolute top-2 right-2 z-10 p-1.5 rounded hover:bg-muted/60 text-muted-foreground"
-          title="Hide Sora (⌘/)"
-          aria-label="Hide Sora panel"
-        >
-          <PanelRightClose className="h-4 w-4" />
-        </button>
-      )}
-      <BrowseSoraPanel browseSessionId={activeSessionId} />
+      <BrowseSoraPanel browseSessionId={activeSessionId} onHide={toggleSora} />
     </div>
     </div>
   );

@@ -4,18 +4,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button, Textarea } from "@/components/ui";
-import { Send, Loader2 } from "lucide-react";
+import { Send, Loader2, PanelRightClose } from "lucide-react";
 
 const SESSION_KEY = "lm-browse-session-id";
 
 type Props = {
   browseSessionId: string | null;
   onBrowseAction?: () => void;
+  /** When provided, a "hide" control appears in the header. */
+  onHide?: () => void;
 };
 
 type Msg = { role: "user" | "assistant"; content: string };
 
-export function BrowseSoraPanel({ browseSessionId, onBrowseAction }: Props) {
+export function BrowseSoraPanel({ browseSessionId, onBrowseAction, onHide }: Props) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -92,9 +94,21 @@ export function BrowseSoraPanel({ browseSessionId, onBrowseAction }: Props) {
 
   return (
     <div className="flex flex-col h-full min-h-[280px] border-t lg:border-t-0 lg:border-l border-white/10 bg-white/[0.02]">
-      <div className="px-4 py-3 border-b border-white/10 shrink-0">
-        <p className="lm-micro mb-0.5">Sora</p>
-        <p className="text-xs text-muted-foreground">Ask about this page or tell me what to click and type.</p>
+      <div className="px-4 py-3 border-b border-white/10 shrink-0 flex items-start gap-2">
+        <div className="flex-1 min-w-0">
+          <p className="lm-micro mb-0.5">Sora</p>
+          <p className="text-xs text-muted-foreground">Ask about this page or tell me what to click and type.</p>
+        </div>
+        {onHide && (
+          <button
+            onClick={onHide}
+            className="shrink-0 inline-flex items-center gap-1 rounded-md border border-white/10 px-2 py-1 text-xs text-muted-foreground hover:bg-white/10 hover:text-foreground"
+            title="Hide Sora (⌘/)"
+            aria-label="Hide Sora panel"
+          >
+            <PanelRightClose className="h-3.5 w-3.5" /> Hide
+          </button>
+        )}
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
         {!browseSessionId && messages.length === 0 && (

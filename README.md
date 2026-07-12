@@ -2,7 +2,9 @@
 
 A local-first AI control panel for Mac. Chat with **Sora**, your personal assistant —
 automate workflows, search and read the web, control your Mac, and audit everything
-in the browser. Nothing leaves your machine unless you choose a cloud provider.
+in the browser. Watch every agent on the **Ops board**, keep a personal **Brain**,
+and steer what Sora knows about you in the **Context Graph**. Nothing leaves your
+machine unless you choose a cloud provider.
 
 ## Install
 
@@ -48,6 +50,10 @@ by page content — shows while access is live. Grants are per-tab, revocable
 in one click, die with the tab, gate through the web-guard, and audit as
 security events. `LM_AGENT_BRIDGE=0` disables the bridge entirely.
 
+The Sora panel is collapsible — **Hide** in its header (or `⌘/`) reclaims the
+width for the page; a floating **Ask Sora** orb summons it back. The panel stays
+mounted while hidden, so the conversation and any active tab grant survive.
+
 PM2 production stack (app + background worker):
 
 ```bash
@@ -63,10 +69,11 @@ critic queue. Cron tasks are **not** duplicated in the Next.js process unless yo
 | Layer | Stack |
 |-------|--------|
 | Frontend | Next.js 15 App Router, React 19, Tailwind, Radix |
-| Database | SQLite (`~/.localmind/config.db`, `conversations.db`, knowledge DB) |
+| Database | SQLite (`~/.localmind/config.db`, `conversations.db`, knowledge DB) + Markdown Brain vault (`~/.localmind/brain/`) |
 | AI | Provider abstraction — Ollama (default), Anthropic, OpenAI, Groq, OpenRouter |
-| Agent | Tool-calling loop with streaming SSE, subagents, task graphs, routing rules |
-| Worker | `worker.js` — cron, monitors, jobs, critic (via `/api/internal/*`) |
+| Retrieval | Local `nomic-embed-text` embeddings + sqlite-vec; Context Broker packs cited slices within a token budget |
+| Agent | Tool-calling loop with streaming SSE, subagents, task graphs, routing rules, pillar tagging |
+| Worker | `worker.js` — cron, monitors, jobs, critic, idle self-improvement (via `/api/internal/*`) |
 | Security | Permission guard, audit hash chain, loopback auth, sandboxed filesystem |
 
 ### Assistant (Sora)
@@ -84,6 +91,7 @@ Built-ins that matter for web work:
 | `web_research` | Search + read top pages through Secure Browser |
 | `web_search` | Snippets / discovery only |
 | `browser` | Raw Chromium — confirmation on every call |
+| `schedule_task` | Create/list/update/disable recurring tasks (NL → cron, confirmed) |
 | `spawn_subagent` / `spawn_subagents_parallel` | Specialist personas (researcher, coder, …) |
 
 Chat shows spawn work as a high-level agent card; expand **Show what this agent did**
@@ -93,10 +101,58 @@ to drill into child tool Input/Output.
 
 - **Tools** — filesystem, web search, web research, secure page read, memory, calendar,
   reminders, contacts, email, mac automation, browser, knowledge base, MCP plugins,
-  subagents, and more
-- **Automations** — scheduled tasks, condition monitors, multi-step workflows with human approval
+  subagents, `schedule_task`, and more
+- **Automations** — scheduled tasks, condition monitors, multi-step workflows with human approval;
+  Sora can self-serve recurring work via `schedule_task` (confirmed before it commits)
 - **Orchestration** — personas, routing rules (model per task shape), task graphs, fleet federation
+- **Pillars** — every unit of work is tagged `ideate · research · execute · coordinate · communicate · maintain`
+  so the Ops board can filter and group it; the **Strategist** persona runs divergent→convergent ideation
 - **Channels** — Telegram, SMS/voice (Twilio); reply YES/NO to approve gated actions
+
+### Agent Ops board (`/ops`)
+
+A live Kanban of every unit of agent work, in its own rail glyph. Cards flow
+through **Proposals → Queued → Running → Needs you → Done → Failed**, sourced in
+one fetch from `agent_processes` (`GET /api/orchestration/processes?board=1`)
+with workflow approvals and self-improvement proposals folded in. Toggle
+**Kanban** vs **By pillar**, filter by pillar, and open a card for the live SSE
+trace. Inline controls reuse the existing pause/resume/cancel and approval
+endpoints. Complements `/orchestration` (deep control) and `/graphs` (DAG view).
+
+### The Brain
+
+A plain-Markdown, Obsidian-compatible vault at `~/.localmind/brain/` — one file
+per entity (people, companies, topics, ideas). A zero-LLM write hook parses
+`[[wikilinks]]` into a typed `brain_edges` graph (`works_at`, `mentioned_in`,
+`related_to`, …). Indexed by the existing local embeddings, so it feeds
+retrieval without anything leaving the machine.
+
+### Context Broker (efficient memory)
+
+Instead of dumping whole files into the model, the broker (`src/lib/agent/context-broker.ts`)
+retrieves only the top-relevant slices per turn: it embeds the query locally
+(`nomic-embed-text`), searches the knowledge base + memory, dedupes, and packs
+citations within a **token budget** (default 15% of the context window), with an
+explicit "not in memory" note when coverage is thin. Retrieval is 100% local.
+
+### User Context Graph (`/context`)
+
+A durable, user-rooted view of what Sora understands about **you** — goals,
+preferences, people, and topics — assembled from goals + memory + the Brain and
+rendered as a force graph (its own rail glyph). Inferred nodes are visually
+distinct from stated ones. Read-only in phase 1; per-user scoped; nothing leaves
+the machine. Distinct from `/ops`, which tracks the *agent's* activity.
+
+### Idle self-improvement (opt-in, two-gate)
+
+When enabled (**off by default**) and the machine is idle within a nightly
+window, a worker cycle runs the test suite (read-only w.r.t. app code, recorded
+to `self_checks`) and — only when `LM_SELF_IMPROVE=propose` — writes
+**improvement proposal cards** to the Ops board. Turning a proposal into code is
+strictly two-gate: **Gate 1** Sora only proposes; **Gate 2** the owner approves
+the card, which authorizes a branch/PR build. Sora never merges, hot-patches, or
+restarts the running app — final merge is always human. There is no auto-build
+or auto-merge mode.
 
 ### Web access model
 
@@ -138,12 +194,16 @@ materially with larger ones (8B+). Pull and select models under **Models**.
 
 ### Key paths
 
-- `src/lib/agent/` — engine, routing, web-guard, confirmations, critic, system prompt
-- `src/lib/tools/` — built-in tools (`read-secure-webpage`, web research, subagent, …)
+- `src/lib/agent/` — engine, routing, web-guard, confirmations, critic, system prompt,
+  `context-broker.ts` (RAG), `pillar-classify.ts`, `idle.ts` / `idle-cycle.ts`
+- `src/lib/tools/` — built-in tools (`read-secure-webpage`, web research, subagent, `schedule`, …)
+- `src/lib/db/brain.ts` — Brain entity graph (`brain_edges`); `proposals.ts` / `self-checks.ts`
+- `src/lib/context-graph.ts` — User Context Graph assembler (`/api/context/graph`)
+- `src/app/ops/` — Agent Ops Kanban; `src/app/context/` — User Context Graph view
 - `src/app/browse/` — user-facing secure reader
 - `src/lib/workflow/` — workflow executor and delivery
 - `src/middleware.ts` — JWT + role enforcement
-- `worker.js` — background scheduler
+- `worker.js` — background scheduler + idle self-improvement tick
 - `mcp-servers/secure-browser/` — Secure Browser MCP
 
 ## Environment variables
@@ -155,8 +215,26 @@ materially with larger ones (8B+). Pull and select models under **Models**.
 | `LOCALMIND_USE_GRAPHS=0` | Disable task-graph path for `runAgentCollect` |
 | `LOCALMIND_IN_PROCESS_SCHEDULER=1` | Run cron inside Next.js (dev without worker) |
 | `BRAVE_API_KEY` | Brave Search API for `web_search` |
+| `LOCALMIND_EMBED_MODEL` | Local embedding model for RAG / Context Broker (default `nomic-embed-text`) |
+| `LM_SELF_IMPROVE` | `propose` lets the idle cycle write proposal cards to the Ops board; `off` (default) disables it entirely. No auto-build/auto-merge value exists |
+| `LM_IDLE_RUN_TESTS` | `0` disables the idle test runner (default: runs when idle-eligible) |
+| `LM_AGENT_BRIDGE=0` | Disable the Electron CDP bridge for "Grant Sora" on tabs |
 | `PLAYWRIGHT_BROWSERS_PATH` | Optional; Secure Browser falls back to `~/Library/Caches/ms-playwright` if incomplete |
 | `SECURE_BROWSER_DEVICE` | `cpu` \| `mps` \| `cuda` for the injection scanner |
+
+The web-search backend is selectable in **Settings** (`web_search_provider`:
+`auto` · `brave` · `you` · `duckduckgo`); `you` uses the you.com API with a key
+stored encrypted in `api_keys`. `auto` prefers you.com if keyed, then Brave,
+then DuckDuckGo — so the local-first default needs no key.
+
+## Dependencies
+
+CI (`.github/workflows/ci.yml`) runs `npm ci && lint && test && tsc && build` plus
+an isolation check on every PR. **Renovate** (`renovate.json`) opens dependency
+PRs on an off-hours schedule: minor/patch are grouped and auto-merged **only when
+CI is green**; majors always get their own reviewable PR and never auto-merge;
+`next`, `react`, `electron`, `better-sqlite3`, and `playwright` are pinned and
+upgraded deliberately by a human.
 
 ## Non-negotiables
 
