@@ -151,9 +151,14 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/ops/proposals", methods: ["POST"], role: "owner" },
   { path: "/api/ops/proposals/*", methods: ["POST"], role: "owner" },
   { path: "/api/ops/self-checks", methods: ["GET"], role: "authenticated" },
+  { path: "/api/ops/meta", methods: ["GET"], role: "authenticated" },
 
   // --- User Context Graph (per-user; read-only in phase 1, §12) ---
   { path: "/api/context/graph", methods: ["GET"], role: "authenticated" },
+  { path: "/api/context/meta", methods: ["GET"], role: "authenticated" },
+
+  // --- Brain entity graph (queryable) ---
+  { path: "/api/brain/edges", methods: ["GET"], role: "authenticated" },
 
   // --- V5: Long-running jobs ---
   { path: "/api/jobs", methods: ["GET", "POST"], role: "authenticated" },

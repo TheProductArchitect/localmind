@@ -6,19 +6,23 @@ import { listEdges, type BrainEdge } from "./db/brain";
 // world — goals, needs, people, preferences — assembled from existing stores.
 // Distinct from the Ops board (agent activity). Read-mostly; the user steers it.
 
-export type NodeKind =
-  | "user"
-  | "goal"
-  | "need"
-  | "project"
-  | "person"
-  | "commitment"
-  | "preference"
-  | "interest"
-  | "resource"
-  | "entity";
+// Taxonomies as runtime data so they're queryable via /api/context/meta and
+// the type is derived from a single source.
+export const NODE_KINDS = [
+  "user", "goal", "need", "project", "person",
+  "commitment", "preference", "interest", "resource", "entity",
+] as const;
+export type NodeKind = (typeof NODE_KINDS)[number];
 
-export type Source = "stated" | "inferred" | "imported";
+export const EDGE_KINDS = [
+  "wants", "needs", "responsible_for", "knows", "cares_about",
+  "part_of", "involves", "due", "prefers", "blocks", "about",
+  "mentioned_in", "works_at", "related_to",
+] as const;
+export type EdgeKind = (typeof EDGE_KINDS)[number];
+
+export const SOURCES = ["stated", "inferred", "imported"] as const;
+export type Source = (typeof SOURCES)[number];
 
 export type ContextNode = {
   id: string;

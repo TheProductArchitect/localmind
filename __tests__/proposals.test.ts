@@ -11,6 +11,8 @@ import {
   listProposals,
   setProposalStatus,
   canTransition,
+  PROPOSAL_STATUSES,
+  PROPOSAL_TRANSITIONS,
 } from "../src/lib/db/proposals";
 import { recordSelfCheck, listSelfChecks } from "../src/lib/db/self-checks";
 import { bucketLanes, type AgentProcess } from "../src/lib/db/agent-processes";
@@ -61,6 +63,17 @@ describe("improvement_proposals lifecycle", () => {
     expect(listProposals("proposed")).toHaveLength(1);
     expect(listProposals("rejected")).toHaveLength(1);
     expect(listProposals()).toHaveLength(2);
+  });
+});
+
+describe("queryable proposal contract", () => {
+  it("every status has a transition entry and all targets are valid statuses", () => {
+    for (const s of PROPOSAL_STATUSES) {
+      expect(PROPOSAL_TRANSITIONS[s]).toBeDefined();
+      for (const target of PROPOSAL_TRANSITIONS[s]) {
+        expect(PROPOSAL_STATUSES).toContain(target);
+      }
+    }
   });
 });
 

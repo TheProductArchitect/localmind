@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { assembleContextGraph, USER_NODE_ID } from "../src/lib/context-graph";
+import { assembleContextGraph, USER_NODE_ID, NODE_KINDS } from "../src/lib/context-graph";
 
 function goal(over: any = {}) {
   return {
@@ -41,6 +41,13 @@ describe("assembleContextGraph", () => {
     const g = assembleContextGraph({ goals: [], memory: [], brainEdges: [edge()] });
     expect(g.nodes.find((n) => n.id === "entity:alice")?.source).toBe("inferred");
     expect(g.links).toContainEqual({ source: "entity:alice", target: "entity:acme", type: "works_at" });
+  });
+
+  it("only emits node kinds declared in the queryable NODE_KINDS taxonomy", () => {
+    const g = assembleContextGraph({
+      goals: [goal()], memory: [{ key: "tone", value: "concise" }], brainEdges: [edge()],
+    });
+    for (const n of g.nodes) expect(NODE_KINDS).toContain(n.kind);
   });
 
   it("dedupes shared entity nodes across edges", () => {

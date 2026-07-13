@@ -188,7 +188,7 @@ export default function OpsPage() {
     return (
       <Card key={p.process_id} className="p-3 space-y-2">
         <div className="flex items-start gap-2">
-          <Icon className={`h-4 w-4 mt-0.5 shrink-0 ${meta.color}`} aria-label={meta.label} />
+          <Icon className="h-4 w-4 mt-0.5 shrink-0" style={{ color: meta.color }} aria-label={meta.label} />
           <div className="flex-1 min-w-0">
             <p className="font-medium text-sm truncate">{p.display_name}</p>
             <p className="text-xs text-muted-foreground truncate">
@@ -274,7 +274,7 @@ export default function OpsPage() {
                 onClick={() => setFilter(pillarFilter === key ? null : key)}
                 className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border ${pillarFilter === key ? "bg-muted border-border" : "border-transparent text-muted-foreground hover:bg-muted/50"}`}
               >
-                <Icon className={`h-3 w-3 ${m.color}`} /> {m.label}
+                <Icon className="h-3 w-3" style={{ color: m.color }} /> {m.label}
               </button>
             );
           })}
@@ -363,7 +363,7 @@ function PillarView({
         return (
           <section key={pillar}>
             <div className="flex items-center gap-2 mb-2">
-              <Icon className={`h-4 w-4 ${m.color}`} />
+              <Icon className="h-4 w-4" style={{ color: m.color }} />
               <h2 className="text-sm font-medium">{m.label}</h2>
               <Badge variant="outline">{items.length}</Badge>
             </div>

@@ -17,9 +17,11 @@ export type ProcessStatus =
   | "cancelled"
   | "pending";
 
-// The five capability pillars (§6) plus `maintain` for idle/self-upkeep work.
-export const PILLARS = ["ideate", "research", "execute", "coordinate", "communicate", "maintain"] as const;
-export type Pillar = (typeof PILLARS)[number];
+// Pillar taxonomy lives in a pure, client-safe module (../pillars) so it can be
+// imported by client components without dragging in the DB layer. Re-exported
+// here for callers that already import from agent-processes.
+export { PILLARS, PILLAR_INFO, type Pillar } from "../pillars";
+import type { Pillar } from "../pillars";
 
 export type AgentProcess = {
   process_id: string;
@@ -167,7 +169,8 @@ function safeParse(s: string): Record<string, unknown> {
   }
 }
 
-export type BoardLane = "proposals" | "queued" | "running" | "needs_you" | "done" | "failed";
+export const BOARD_LANES = ["proposals", "queued", "running", "needs_you", "done", "failed"] as const;
+export type BoardLane = (typeof BOARD_LANES)[number];
 export type Board = {
   lanes: Record<BoardLane, AgentProcess[]>;
   counts: Record<BoardLane, number>;

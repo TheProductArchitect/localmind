@@ -4,13 +4,15 @@ import { getConfigDb } from ".";
 // The self-improvement proposal lifecycle (§7.2). Sora may only ever create a
 // card at `proposed`; the owner's approval is what advances it to `approved`
 // (which authorizes the build). No transition writes or runs code by itself.
-export type ProposalStatus =
-  | "proposed"
-  | "approved"
-  | "building"
-  | "ready_for_review"
-  | "rejected"
-  | "merged";
+export const PROPOSAL_STATUSES = [
+  "proposed",
+  "approved",
+  "building",
+  "ready_for_review",
+  "rejected",
+  "merged",
+] as const;
+export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 
 export type ImprovementProposal = {
   id: string;
@@ -61,8 +63,10 @@ export function listProposals(status?: ProposalStatus): ImprovementProposal[] {
     .all() as ImprovementProposal[];
 }
 
-/** Valid forward transitions. Enforced so a bug can't skip the approval gate. */
-const TRANSITIONS: Record<ProposalStatus, ProposalStatus[]> = {
+/** Valid forward transitions. Enforced so a bug can't skip the approval gate.
+ *  Exported (read-only) so the contract is queryable via /api/ops/meta — the
+ *  rules stay fixed in code, but any client can discover them. */
+export const PROPOSAL_TRANSITIONS: Record<ProposalStatus, ProposalStatus[]> = {
   proposed: ["approved", "rejected"],
   approved: ["building", "rejected"],
   building: ["ready_for_review", "rejected"],
@@ -72,7 +76,7 @@ const TRANSITIONS: Record<ProposalStatus, ProposalStatus[]> = {
 };
 
 export function canTransition(from: ProposalStatus, to: ProposalStatus): boolean {
-  return TRANSITIONS[from]?.includes(to) ?? false;
+  return PROPOSAL_TRANSITIONS[from]?.includes(to) ?? false;
 }
 
 export function setProposalStatus(
