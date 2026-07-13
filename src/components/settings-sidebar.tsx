@@ -53,8 +53,11 @@ export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]["id"];
 const HIDDEN_ROUTES = [
   "/",          // chat
   "/work",
+  "/ops",       // Agent Ops board — full-bleed workspace surface
   "/agents",
+  "/browse",    // Browse has its own chrome + Sora panel; no config sidebar
   "/knowledge",
+  "/context",   // User Context Graph — full-bleed workspace surface
   "/fleet",
   "/today",
   "/login",
