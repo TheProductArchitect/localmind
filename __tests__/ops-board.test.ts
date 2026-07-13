@@ -6,7 +6,8 @@ import { runMigrations } from "../src/lib/db/migrations";
 function proc(over: Partial<AgentProcess>): AgentProcess {
   return {
     process_id: "p",
-    process_type: "chat",
+    // Default to a task type; the board excludes chat-type processes.
+    process_type: "long_running_job",
     display_name: "x",
     owner_user_id: null,
     agent_name: null,
@@ -54,6 +55,26 @@ describe("bucketLanes", () => {
     const extra = [proc({ process_id: "wf", status: "waiting_confirmation" })];
     const board = bucketLanes([], [], extra);
     expect(board.lanes.needs_you.map((p) => p.process_id)).toEqual(["wf"]);
+  });
+
+  it("excludes ordinary chat turns — the board is for tasks, not chat", () => {
+    const active = [
+      proc({ process_id: "chat1", process_type: "chat", status: "running" }),
+      proc({ process_id: "job1", process_type: "long_running_job", status: "running" }),
+      proc({ process_id: "sched1", process_type: "scheduled_task", status: "pending" }),
+    ];
+    const recent = [
+      proc({ process_id: "chat2", process_type: "chat", status: "completed", completed_at: 1 }),
+      proc({ process_id: "job2", process_type: "long_running_job", status: "completed", completed_at: 1 }),
+    ];
+    const board = bucketLanes(active, recent);
+    expect(board.lanes.running.map((p) => p.process_id)).toEqual(["job1"]);
+    expect(board.lanes.queued.map((p) => p.process_id)).toEqual(["sched1"]);
+    expect(board.lanes.done.map((p) => p.process_id)).toEqual(["job2"]);
+    // No chat-type process appears in any lane.
+    const all = Object.values(board.lanes).flat().map((p) => p.process_id);
+    expect(all).not.toContain("chat1");
+    expect(all).not.toContain("chat2");
   });
 });
 

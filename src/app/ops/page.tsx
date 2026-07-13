@@ -249,6 +249,9 @@ export default function OpsPage() {
           <div>
             <p className="lm-micro mb-2">Ops</p>
             <h1 className="lm-display">Agent Ops board</h1>
+            <p className="text-xs text-muted-foreground mt-1">
+              Tasks running outside the chat window — jobs, schedules, monitors, subagents, and proposals.
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" variant={groupByPillar ? "outline" : "default"} onClick={() => setGrouping(false)}>Kanban</Button>

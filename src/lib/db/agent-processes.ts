@@ -191,9 +191,19 @@ function listRecentlyCompleted(ownerUserId: string | null | undefined, windowMs 
     .all(cutoff) as AgentProcess[];
 }
 
+// The Ops board is a *task* board, not a chat log. Ordinary chat turns complete
+// within the chat window and are tracked in /orchestration — they do not belong
+// on the board. Only work that runs outside the chat window or can't finish
+// within it does: scheduled tasks, monitors, long-running jobs, workflows,
+// subagents (registered as long_running_job), and self-improvement proposals.
+export function isBoardTask(p: AgentProcess): boolean {
+  return p.process_type !== "chat";
+}
+
 /** Sort a flat list of processes into Kanban lanes by status. Pure — takes the
- *  rows so it stays trivially testable. `needsYouExtra` folds in non-process
- *  approvals (e.g. pending workflow approvals) that also block the user. */
+ *  rows so it stays trivially testable. Chat turns are filtered out (see
+ *  isBoardTask). `needsYouExtra` folds in non-process approvals (e.g. pending
+ *  workflow approvals) that also block the user. */
 export function bucketLanes(
   active: AgentProcess[],
   recent: AgentProcess[],
@@ -209,11 +219,13 @@ export function bucketLanes(
     failed: [],
   };
   for (const p of active) {
+    if (!isBoardTask(p)) continue;
     if (p.status === "pending") lanes.queued.push(p);
     else if (p.status === "running") lanes.running.push(p);
     else if (p.status === "waiting_confirmation" || p.status === "paused") lanes.needs_you.push(p);
   }
   for (const p of recent) {
+    if (!isBoardTask(p)) continue;
     if (p.status === "completed") lanes.done.push(p);
     else if (p.status === "failed" || p.status === "cancelled") lanes.failed.push(p);
   }
