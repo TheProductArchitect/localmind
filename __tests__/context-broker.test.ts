@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const semanticSearch = vi.fn();
 vi.mock("../src/lib/knowledge/search", () => ({
@@ -43,13 +43,22 @@ describe("packWithinBudget", () => {
 });
 
 describe("defaultBudgetTokens", () => {
-  beforeEach(() => { settings = { context_window: 8000 }; });
+  const origFraction = process.env.LM_CONTEXT_BUDGET_FRACTION;
+  beforeEach(() => { settings = { context_window: 8000 }; delete process.env.LM_CONTEXT_BUDGET_FRACTION; });
+  afterEach(() => {
+    if (origFraction === undefined) delete process.env.LM_CONTEXT_BUDGET_FRACTION;
+    else process.env.LM_CONTEXT_BUDGET_FRACTION = origFraction;
+  });
   it("is a fraction of the context window", () => {
     expect(defaultBudgetTokens()).toBe(1200); // 8000 * 0.15
   });
   it("falls back when no context window is set", () => {
     settings = {};
     expect(defaultBudgetTokens()).toBeGreaterThan(0);
+  });
+  it("honors the LM_CONTEXT_BUDGET_FRACTION override (programmatic, not hard-coded)", () => {
+    process.env.LM_CONTEXT_BUDGET_FRACTION = "0.25";
+    expect(defaultBudgetTokens()).toBe(2000); // 8000 * 0.25
   });
 });
 

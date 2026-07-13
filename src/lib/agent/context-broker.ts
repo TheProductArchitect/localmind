@@ -31,15 +31,30 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-/** Fraction of the model's context window the broker is allowed to spend on
- *  retrieved memory/brain context. Kept small so the turn stays lean. */
-const DEFAULT_BUDGET_FRACTION = 0.15;
-const FLOOR_BUDGET_TOKENS = 400;
+// Retrieval tuning is configuration, not magic: each value derives from the
+// live context-window setting and is overridable via env so it can be tuned
+// without a code change. Read at call time so overrides take effect immediately.
+function num(envVar: string, fallback: number): number {
+  const v = Number(process.env[envVar]);
+  return Number.isFinite(v) && v > 0 ? v : fallback;
+}
+/** Fraction of the model's context window the broker may spend on retrieved
+ *  memory/brain context. Kept small so the turn stays lean. */
+export function budgetFraction(): number {
+  return num("LM_CONTEXT_BUDGET_FRACTION", 0.15);
+}
+export function floorBudgetTokens(): number {
+  return num("LM_CONTEXT_FLOOR_TOKENS", 400);
+}
+export function defaultTopK(): number {
+  return num("LM_CONTEXT_TOPK", 6);
+}
 
 export function defaultBudgetTokens(): number {
   const cw = Number(getSettings().context_window) || 0;
-  if (cw > 0) return Math.max(FLOOR_BUDGET_TOKENS, Math.floor(cw * DEFAULT_BUDGET_FRACTION));
-  return FLOOR_BUDGET_TOKENS * 2;
+  const floor = floorBudgetTokens();
+  if (cw > 0) return Math.max(floor, Math.floor(cw * budgetFraction()));
+  return floor * 2;
 }
 
 function tokenize(s: string): Set<string> {
@@ -114,7 +129,7 @@ export async function retrieveContext(opts: {
   topK?: number;
 }): Promise<BrokerResult> {
   const budgetTokens = opts.budgetTokens ?? defaultBudgetTokens();
-  const topK = opts.topK ?? 6;
+  const topK = opts.topK ?? defaultTopK();
 
   const candidates: ContextItem[] = [];
 

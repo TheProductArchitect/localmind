@@ -216,6 +216,9 @@ materially with larger ones (8B+). Pull and select models under **Models**.
 | `LOCALMIND_IN_PROCESS_SCHEDULER=1` | Run cron inside Next.js (dev without worker) |
 | `BRAVE_API_KEY` | Brave Search API for `web_search` |
 | `LOCALMIND_EMBED_MODEL` | Local embedding model for RAG / Context Broker (default `nomic-embed-text`) |
+| `LM_CONTEXT_BUDGET_FRACTION` | Fraction of the context window the Context Broker may spend on retrieved context (default `0.15`) |
+| `LM_CONTEXT_FLOOR_TOKENS` | Minimum retrieval budget in tokens (default `400`) |
+| `LM_CONTEXT_TOPK` | Max retrieved chunks per turn (default `6`) |
 | `LM_SELF_IMPROVE` | `propose` lets the idle cycle write proposal cards to the Ops board; `off` (default) disables it entirely. No auto-build/auto-merge value exists |
 | `LM_IDLE_RUN_TESTS` | `0` disables the idle test runner (default: runs when idle-eligible) |
 | `LM_AGENT_BRIDGE=0` | Disable the Electron CDP bridge for "Grant Sora" on tabs |
