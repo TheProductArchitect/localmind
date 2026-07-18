@@ -41,7 +41,7 @@ function KnowledgeInner() {
   }, [params]);
 
   return (
-    <div className="mx-auto max-w-4xl px-10 py-16">
+    <div className="mx-auto max-w-4xl px-5 sm:px-10 py-10 sm:py-16">
       <header className="mb-12">
         <p className="lm-micro mb-2">Knowledge</p>
         <h1 className="lm-display">What Sora knows</h1>
@@ -320,7 +320,7 @@ function NotesTab() {
   }
 
   return (
-    <div className="grid gap-8" style={{ gridTemplateColumns: "220px 1fr" }}>
+    <div className="grid gap-8 grid-cols-1 md:grid-cols-[200px_1fr]">
       <aside className="space-y-1">
         <button onClick={create} className="lm-action w-full justify-center" data-pulse="true">
           <Plus className="h-3.5 w-3.5" /> New note

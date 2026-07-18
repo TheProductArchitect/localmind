@@ -771,6 +771,14 @@ function ChatInner() {
           overflow: hidden;
         }
         @media (max-width: 1100px) { .lm-chat { grid-template-columns: 200px 1fr 0; } .lm-sora { display: none; } }
+        /* Tablet/phone: narrow the conversations strip so the thread keeps room.
+           The left Rail becomes a bottom bar under md, freeing its width. */
+        @media (max-width: 680px) { .lm-chat { grid-template-columns: 148px 1fr 0; } }
+        @media (max-width: 680px) {
+          .lm-thread__head { padding: 12px 14px; flex-wrap: wrap; gap: 8px; row-gap: 8px; }
+          .lm-thread__scroll { padding: 24px 14px 48px; }
+          .lm-composer { padding: 12px 14px 16px; }
+        }
 
         /* === Conversations strip === */
         .lm-conv {

@@ -243,8 +243,8 @@ export default function OpsPage() {
   }
 
   return (
-    <div className="flex h-full">
-      <div className="flex-1 overflow-hidden flex flex-col px-8 py-10">
+    <div className="relative flex h-full">
+      <div className="flex-1 overflow-hidden flex flex-col px-4 sm:px-8 py-6 sm:py-10 min-w-0">
         <div className="flex items-end justify-between gap-6 mb-4 shrink-0">
           <div>
             <p className="lm-micro mb-2">Ops</p>
@@ -309,7 +309,7 @@ export default function OpsPage() {
       </div>
 
       {traceProc && (
-        <aside className="w-[420px] border-l flex flex-col bg-muted/10">
+        <aside className="absolute inset-0 z-20 flex flex-col border-l bg-background sm:static sm:z-auto sm:w-[420px] sm:bg-muted/10">
           <div className="border-b px-4 py-2 flex items-center gap-2">
             <p className="text-sm font-medium flex-1 truncate">{traceProc.display_name}</p>
             <Badge variant={STATUS_TONE[traceProc.status] || "outline"}>{traceProc.status}</Badge>
