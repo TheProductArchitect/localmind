@@ -14,6 +14,7 @@ import {
 import { approxTokens } from "../utils";
 import { startProcess, updateProcess, completeProcess, type Pillar } from "../db/agent-processes";
 import { classifyPillar } from "./pillar-classify";
+import { parseTextToolCalls } from "./text-tool-calls";
 import { unregisterProcess } from "./process-registry";
 import { resolveRoutedModel } from "./routing";
 
@@ -31,6 +32,7 @@ export type SSEEvent =
   | { type: "done"; conversationId: string; title: string; tokenCount: number }
   | { type: "context_compressed" }
   | { type: "loop_suspended"; tool: string; repeats: number; reason: string }
+  | { type: "tool_text_recovered" }
   | { type: "error"; message: string; code: string };
 
 const MAX_ITERATIONS = 12;
@@ -272,11 +274,23 @@ export async function* runAgent(
       }
 
       if (toolCalls.length === 0) {
-        // Text-only response: loop ends
-        if (iterText.trim()) {
-          messages.push({ role: "assistant", content: iterText });
+        // Recovery: small models often narrate a tool call as raw JSON text
+        // instead of emitting a structured call. If this "text-only" response
+        // is really an attempted tool call, turn it back into one and run it
+        // through the normal gated path below — otherwise the action never
+        // happens and the JSON leaks to the user.
+        const recovered = parseTextToolCalls(iterText, (n) => toolMap.has(n));
+        if (recovered.length === 0) {
+          // Genuine text response: loop ends.
+          if (iterText.trim()) {
+            messages.push({ role: "assistant", content: iterText });
+          }
+          break;
         }
-        break;
+        // Tell the client to drop the leaked JSON bubble; don't persist it.
+        yield { type: "tool_text_recovered" };
+        toolCalls.push(...recovered);
+        iterText = "";
       }
 
       // Record assistant turn with tool calls

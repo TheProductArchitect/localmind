@@ -81,6 +81,16 @@ export function BrowseSoraPanel({ browseSessionId, onBrowseAction, onHide }: Pro
             });
           }
           if (ev.type === "tool_call_start" && ev.toolName === "browse_session") onBrowseAction?.();
+          if (ev.type === "tool_text_recovered") {
+            // Drop a leaked raw-JSON tool call the engine recovered into a real call.
+            assistant = "";
+            setMessages((m) => {
+              const copy = [...m];
+              const last = copy[copy.length - 1];
+              if (last?.role === "assistant") copy[copy.length - 1] = { role: "assistant", content: "" };
+              return copy;
+            });
+          }
         }
       }
       if (!assistant) setMessages((m) => [...m, { role: "assistant", content: "(No response)" }]);

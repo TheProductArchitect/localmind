@@ -450,6 +450,11 @@ function ChatInner() {
         });
       } else if (ev.type === "confirmation_timeout") {
         return next.filter((i) => !(i.kind === "confirmation" && i.c.toolCallId === ev.toolCallId));
+      } else if (ev.type === "tool_text_recovered") {
+        // The model emitted a tool call as raw JSON text; the engine recovered
+        // it into a real call. Clear the leaked JSON from the current bubble.
+        const idx = lastAssistant();
+        if (idx >= 0) next[idx] = { kind: "assistant", content: "" };
       } else if (ev.type === "done") {
         if (autoRead) {
           const idx = lastAssistant();
