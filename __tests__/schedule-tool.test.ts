@@ -11,25 +11,29 @@ type Task = {
   last_run_at: number | null;
   last_output: string | null;
   creator_user_id: string | null;
+  run_at: number | null;
 };
 
 let store: Task[] = [];
-const createTask = vi.fn((o: { name: string; cron: string; prompt: string; delivery_channel?: string; creator?: string }) => {
-  const t: Task = {
-    id: "task1",
-    name: o.name,
-    cron: o.cron,
-    prompt: o.prompt,
-    delivery_channel: o.delivery_channel || "browser",
-    enabled: 1,
-    created_at: Date.now(),
-    last_run_at: null,
-    last_output: null,
-    creator_user_id: o.creator ?? null,
-  };
-  store.push(t);
-  return t;
-});
+const createTask = vi.fn(
+  (o: { name: string; cron: string; prompt: string; delivery_channel?: string; creator?: string; run_at?: number | null }) => {
+    const t: Task = {
+      id: "task1",
+      name: o.name,
+      cron: o.cron,
+      prompt: o.prompt,
+      delivery_channel: o.delivery_channel || "browser",
+      enabled: 1,
+      created_at: Date.now(),
+      last_run_at: null,
+      last_output: null,
+      creator_user_id: o.creator ?? null,
+      run_at: o.run_at ?? null,
+    };
+    store.push(t);
+    return t;
+  }
+);
 
 vi.mock("../src/lib/db/automations", () => ({
   listTasks: () => store,
@@ -59,7 +63,7 @@ vi.mock("../src/lib/db/queries", () => ({
   getConversation: (_id: string) => ({ owner_user_id: "owner-1" }),
 }));
 
-import { scheduleTool } from "../src/lib/tools/schedule";
+import { scheduleTool, parseWhen } from "../src/lib/tools/schedule";
 
 const ctx = { conversationId: "c1", approvedDirs: [] };
 
@@ -97,7 +101,7 @@ describe("schedule_task tool", () => {
     const arg = createTask.mock.calls[0][0];
     expect(arg.cron).toBe("30 7 * * 1-5");
     expect(arg.creator).toBe("owner-1");
-    expect(res.output).toContain("30 7 * * 1-5");
+    expect(res.output).toContain("weekdays at 07:30");
   });
 
   it("create passes through an explicit 5-field cron unchanged", async () => {
@@ -108,13 +112,14 @@ describe("schedule_task tool", () => {
     expect(createTask.mock.calls[0][0].cron).toBe("0 3 * * *");
   });
 
-  it("rejects a delivery channel that is not enabled", async () => {
+  it("falls back to browser (not a hard failure) when the channel isn't connected", async () => {
     const res = await scheduleTool.execute(
       { operation: "create", name: "x", schedule: "daily at 9", prompt: "p", delivery_channel: "telegram" },
       ctx
     );
-    expect(res.ok).toBe(false);
-    expect(res.output).toContain("not enabled");
+    expect(res.ok).toBe(true);
+    expect(createTask.mock.calls[0][0].delivery_channel).toBe("browser");
+    expect(res.output).toMatch(/isn't connected/);
   });
 
   it("allows an enabled delivery channel", async () => {
@@ -166,5 +171,49 @@ describe("schedule_task tool", () => {
     const res = await scheduleTool.execute({ operation: "update", id: "task1", schedule: "every hour" }, ctx);
     expect(res.ok).toBe(true);
     expect(store[0].cron).toBe("0 * * * *");
+  });
+
+  it("creates a one-shot reminder from a relative time (fixes 'remind me in 4 minutes')", async () => {
+    const before = Date.now();
+    const res = await scheduleTool.execute(
+      { operation: "create", schedule: "in 4 minutes", prompt: "Drink a glass of water" },
+      ctx
+    );
+    expect(res.ok).toBe(true);
+    const arg = createTask.mock.calls[0][0];
+    expect(arg.cron).toBe("@once");
+    expect(arg.run_at).toBeGreaterThanOrEqual(before + 4 * 60_000 - 50);
+    expect(arg.run_at).toBeLessThanOrEqual(Date.now() + 4 * 60_000 + 50);
+    // name auto-derived from the prompt when omitted
+    expect(arg.name).toMatch(/Drink a glass of water/);
+  });
+
+  it("recovers from a small model's sloppy call (set_enabled with schedule+prompt → create)", async () => {
+    const res = await scheduleTool.execute(
+      { operation: "set_enabled", enabled: "true", schedule: "in 4 minutes", prompt: "Drink water" },
+      ctx
+    );
+    expect(res.ok).toBe(true);
+    expect(createTask).toHaveBeenCalledOnce();
+  });
+});
+
+describe("parseWhen", () => {
+  it("treats relative times as one-shot run_at", () => {
+    const before = Date.now();
+    const w = parseWhen("in 2 hours");
+    expect(w.cron).toBeUndefined();
+    expect(w.runAt).toBeGreaterThanOrEqual(before + 2 * 3_600_000 - 50);
+  });
+  it("passes an explicit cron through", () => {
+    expect(parseWhen("0 3 * * *")).toEqual({ cron: "0 3 * * *" });
+  });
+  it("treats recurring phrasing as cron", () => {
+    expect(parseWhen("every weekday at 7:30")).toEqual({ cron: "30 7 * * 1-5" });
+  });
+  it("handles 'tomorrow at 9' as a one-shot", () => {
+    const w = parseWhen("tomorrow at 9");
+    expect(w.runAt).toBeGreaterThan(Date.now());
+    expect(w.cron).toBeUndefined();
   });
 });

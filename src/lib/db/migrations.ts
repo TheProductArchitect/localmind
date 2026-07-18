@@ -1176,6 +1176,17 @@ configMigrations.push({
   },
 });
 
+// v26: one-shot reminders. Scheduled tasks were cron-only (recurring); a
+// "remind me in 4 minutes" is a one-time task. `run_at` (epoch ms) marks a
+// one-shot: the worker fires it once when due, then disables it. Recurring
+// tasks keep run_at NULL and continue to match on cron.
+configMigrations.push({
+  version: 26,
+  up: (db) => {
+    db.exec("ALTER TABLE scheduled_tasks ADD COLUMN run_at INTEGER;");
+  },
+});
+
 const knowledgeMigrations: Migration[] = [
   {
     version: 1,

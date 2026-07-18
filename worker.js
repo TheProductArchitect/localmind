@@ -105,9 +105,20 @@ async function tick() {
   }
 
   try {
-    // Scheduled tasks — fire once per matching minute.
+    // One-shot reminders — fire as soon as due (every tick for ~5s precision),
+    // then disable so they run exactly once.
+    const dueOneShots = d
+      .prepare("SELECT * FROM scheduled_tasks WHERE enabled=1 AND run_at IS NOT NULL AND run_at <= ?")
+      .all(Date.now());
+    for (const t of dueOneShots) {
+      console.log(`[worker] running one-shot reminder: ${t.name}`);
+      await post("/api/internal/run-task", { taskId: t.id });
+      d.prepare("UPDATE scheduled_tasks SET enabled=0 WHERE id=?").run(t.id);
+    }
+
+    // Recurring scheduled tasks (run_at IS NULL) — fire once per matching minute.
     if (newMinute) {
-      const tasks = d.prepare("SELECT * FROM scheduled_tasks WHERE enabled=1").all();
+      const tasks = d.prepare("SELECT * FROM scheduled_tasks WHERE enabled=1 AND run_at IS NULL").all();
       for (const t of tasks) {
         const ranThisMinute = t.last_run_at && new Date(t.last_run_at).getMinutes() === now.getMinutes()
           && Math.abs(Date.now() - t.last_run_at) < 90000;

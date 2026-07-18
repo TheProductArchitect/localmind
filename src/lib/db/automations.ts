@@ -13,6 +13,8 @@ export type ScheduledTask = {
   created_at: number;
   last_run_at: number | null;
   last_output: string | null;
+  // One-shot reminders set run_at (epoch ms); recurring tasks leave it NULL.
+  run_at: number | null;
 };
 
 export function listTasks(): ScheduledTask[] {
@@ -21,12 +23,27 @@ export function listTasks(): ScheduledTask[] {
 export function getTask(id: string): ScheduledTask | null {
   return (getConfigDb().prepare("SELECT * FROM scheduled_tasks WHERE id=?").get(id) as ScheduledTask) || null;
 }
-export function createTask(o: { name: string; cron: string; prompt: string; delivery_channel?: string; creator?: string }): ScheduledTask {
+export function createTask(o: {
+  name: string;
+  cron: string;
+  prompt: string;
+  delivery_channel?: string;
+  creator?: string;
+  run_at?: number | null;
+}): ScheduledTask {
   const id = nanoid(12);
   getConfigDb()
-    .prepare("INSERT INTO scheduled_tasks (id,name,creator_user_id,cron,prompt,delivery_channel,enabled,created_at) VALUES (?,?,?,?,?,?,1,?)")
-    .run(id, o.name, o.creator ?? null, o.cron, o.prompt, o.delivery_channel || "browser", Date.now());
+    .prepare(
+      "INSERT INTO scheduled_tasks (id,name,creator_user_id,cron,prompt,delivery_channel,enabled,created_at,run_at) VALUES (?,?,?,?,?,?,1,?,?)"
+    )
+    .run(id, o.name, o.creator ?? null, o.cron, o.prompt, o.delivery_channel || "browser", Date.now(), o.run_at ?? null);
   return getTask(id)!;
+}
+/** One-shot tasks that are due (run_at reached) and still enabled. */
+export function listDueOneShots(now = Date.now()): ScheduledTask[] {
+  return getConfigDb()
+    .prepare("SELECT * FROM scheduled_tasks WHERE enabled=1 AND run_at IS NOT NULL AND run_at <= ?")
+    .all(now) as ScheduledTask[];
 }
 export function recordTaskRun(id: string, output: string) {
   getConfigDb().prepare("UPDATE scheduled_tasks SET last_run_at=?, last_output=? WHERE id=?")
