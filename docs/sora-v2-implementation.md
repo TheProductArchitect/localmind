@@ -24,10 +24,10 @@ in-memory DB. Full suite: 32 files, 221 tests. Typecheck + lint clean.
 
 ## Integration caveats (follow-ups)
 
-- **Context Broker** is wired into the async `assembleSystemPrompt` and fully
-  unit-tested, but the engine still builds prompts via the *sync* path. Making
-  retrieval live in production chat is a small change: pass the turn query and
-  switch that one call to the async assembler.
+- **Context Broker** is now live in the engine: each main-chat turn retrieves
+  the relevant memory/brain/knowledge slice for the user's query and folds a
+  cited brief (within a token budget) into the system prompt — local, best-effort,
+  and silent when nothing relevant is found. (Subagents don't run it yet.)
 - **Self-improve Gate 2 build** (`pi_code` branch/PR) is authorized + audited by
   the approve endpoint; the actual build runs in the worker and isn't exercised
   in CI. Guardrails (approval-gated, human-merge-only, no auto-build/-merge) are

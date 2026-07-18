@@ -247,6 +247,24 @@ export async function* runAgent(
     /* history budgeting is best-effort — proceed with full history if it fails */
   }
 
+  // Context Broker (§7.3): retrieve only the *relevant* slice of memory / brain
+  // / knowledge for this turn and fold a cited brief (within a token budget)
+  // into the system prompt — "only what's needed", not a full dump. Main chat
+  // only; retrieval is local (Ollama embeddings) and best-effort. Nothing is
+  // injected when nothing relevant is found, so it adds no noise on empty KBs.
+  if (!opts?.allowedTools && userMessage && userMessage.trim()) {
+    try {
+      const { retrieveContext } = await import("./context-broker");
+      const res = await retrieveContext({ query: userMessage, userId: convOwner });
+      if (res.items.length > 0) {
+        const sys = messages[0];
+        messages[0] = { ...sys, content: (sys.content || "") + "\n\n" + res.brief };
+      }
+    } catch {
+      /* retrieval is best-effort — proceed without injected context */
+    }
+  }
+
   let processOutcome: "completed" | "failed" | "cancelled" = "completed";
 
   try {
