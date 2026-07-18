@@ -15,6 +15,8 @@ import { approxTokens } from "../utils";
 import { startProcess, updateProcess, completeProcess, type Pillar } from "../db/agent-processes";
 import { classifyPillar } from "./pillar-classify";
 import { parseTextToolCalls } from "./text-tool-calls";
+import { splitHistory, recentWindowSize } from "./history-context";
+import { ensureConversationSummary } from "./history-summary";
 import { unregisterProcess } from "./process-registry";
 import { resolveRoutedModel } from "./routing";
 
@@ -211,37 +213,43 @@ export async function* runAgent(
     });
   });
 
-  // Context window overflow prevention — compress old turns if the history is large.
+  // Intelligent history (§ "don't dump the whole conversation"): keep the most
+  // recent turns verbatim, fold everything older into a maintained rolling
+  // summary, and leave the raw older messages retrievable via the `recall`
+  // tool. Short conversations are untouched.
   const ctxWindow = resolveContextWindow(settings.context_window, activeModel);
-  const estTokens = messages.reduce((s, m) => s + approxTokens((m as any).content || ""), 0);
-  if (estTokens > ctxWindow * 0.8 && messages.length > 6) {
-    try {
-      const cutoff = 1 + Math.floor((messages.length - 1) * 0.6);
-      const toSummarise = messages.slice(1, cutoff);
-      const transcript = toSummarise
-        .map((m) => `${m.role}: ${((m as any).content || "").slice(0, 1500)}`)
-        .join("\n");
-      let summary = "";
-      for await (const d of getProvider().chat({
-        model: activeModel,
-        messages: [
-          { role: "system", content: "Summarise the conversation below in 200-400 words, preserving key facts, decisions, and any file paths." },
-          { role: "user", content: transcript },
-        ],
-        tools: [],
-        signal,
-        contextWindow: ctxWindow,
-      })) {
-        if (d.type === "text") summary += d.delta;
+  try {
+    const RECENT = recentWindowSize();
+    const nonSystem = messages.slice(1);
+    if (nonSystem.length > RECENT) {
+      const { older, recent } = splitHistory(nonSystem, RECENT);
+      if (older.length > 0) {
+        const summary = await ensureConversationSummary(conversationId, older, {
+          model: activeModel,
+          signal,
+          contextWindow: ctxWindow,
+        });
+        if (summary) {
+          // Fold the summary into the system message — provider-safe (no extra
+          // message roles / ordering concerns) — and drop the raw older turns.
+          const sys = messages[0];
+          const merged: ChatMessage = {
+            ...sys,
+            content:
+              (sys.content || "") +
+              "\n\n## Earlier conversation (summarized)\n" +
+              summary +
+              "\n(Older messages aren't shown verbatim — call the `recall` tool to fetch specific past messages if you need a detail from earlier.)",
+          };
+          messages.length = 0;
+          messages.push(merged, ...recent);
+          contextCompressed = true;
+        }
+        // If no summary could be produced, fall through with full history.
       }
-      messages.splice(1, cutoff - 1, {
-        role: "assistant",
-        content: "Summary of earlier conversation: " + summary.trim(),
-      });
-      contextCompressed = true;
-    } catch {
-      /* compression is best-effort — proceed with full history if it fails */
     }
+  } catch {
+    /* history budgeting is best-effort — proceed with full history if it fails */
   }
 
   let processOutcome: "completed" | "failed" | "cancelled" = "completed";

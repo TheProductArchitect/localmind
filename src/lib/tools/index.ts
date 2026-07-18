@@ -20,6 +20,7 @@ import { installMcpServerTool } from "./install-mcp";
 import { remindersTool } from "./reminders";
 import { contactsTool } from "./contacts";
 import { scheduleTool } from "./schedule";
+import { recallTool } from "./recall";
 import { webResearchTool } from "./web-research";
 import { readSecureWebpageTool, SECURE_BROWSER_MCP_NAME } from "./read-secure-webpage";
 import { browseSessionTool } from "./browse-session";
@@ -37,6 +38,7 @@ const BUILTIN: Tool[] = [
   remindersTool,
   contactsTool,
   scheduleTool,
+  recallTool,
   webResearchTool,
   readSecureWebpageTool,
   browseSessionTool,

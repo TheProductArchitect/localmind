@@ -1298,6 +1298,23 @@ const convMigrations: Migration[] = [
       db.exec("ALTER TABLE conversations ADD COLUMN owner_user_id TEXT;");
     },
   },
+  {
+    // v3: rolling conversation summary for intelligent history. Instead of
+    // dumping every past message into context, older turns are folded into a
+    // maintained summary (covered_count = how many leading messages it covers)
+    // and the raw messages stay queryable via the `recall` tool.
+    version: 3,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE conversation_summaries (
+          conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+          summary TEXT NOT NULL,
+          covered_count INTEGER NOT NULL DEFAULT 0,
+          updated_at INTEGER NOT NULL
+        );
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database, kind: "config" | "conversations" | "knowledge") {
