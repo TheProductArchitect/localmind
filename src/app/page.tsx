@@ -162,6 +162,19 @@ function ChatInner() {
   }
 
   const threadRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-grow the composer to fit its content (up to a cap) so large pastes are
+  // visible instead of stuck on one line. Runs on every input change and on
+  // programmatic changes (prefill, clear-after-send).
+  const autoGrowComposer = useCallback(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const max = Math.max(160, Math.round(window.innerHeight * 0.5));
+    el.style.height = `${Math.min(el.scrollHeight, max)}px`;
+  }, []);
+  useEffect(() => { autoGrowComposer(); }, [input, autoGrowComposer]);
 
   const loadConversations = useCallback(async () => {
     const r = await fetch("/api/conversations");
@@ -828,6 +841,7 @@ function ChatInner() {
               <Paperclip className="h-4 w-4" />
             </button>
             <Textarea
+              ref={composerRef}
               rows={1}
               placeholder={runOnPeer ? "Message Sora on the selected peer…" : "Message Sora…"}
               value={input}
@@ -1159,7 +1173,8 @@ function ChatInner() {
           resize: none;
           outline: none;
           min-height: 46px;
-          max-height: 200px;
+          max-height: 50vh;
+          overflow-y: auto;
         }
         .lm-composer :global(.lm-composer__input:focus) {
           border-color: hsl(0 0% 100% / 0.24);
