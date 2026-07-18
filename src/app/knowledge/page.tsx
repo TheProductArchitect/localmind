@@ -397,7 +397,7 @@ function NotesTab() {
 /* Memory                                                       */
 /* ============================================================ */
 
-type MemoryEntry = { id: string; content: string; kind?: string; created_at?: number };
+type MemoryEntry = { id: string; key: string; value: string; content?: string; updated_at?: number };
 
 function MemoryTab() {
   const [entries, setEntries] = useState<MemoryEntry[]>([]);
@@ -417,7 +417,8 @@ function MemoryTab() {
     setEntries((cur) => cur.filter((e) => e.id !== id));
   }
 
-  const visible = entries.filter((e) => !filter || (e.content || "").toLowerCase().includes(filter.toLowerCase()));
+  const text = (e: MemoryEntry) => `${e.key ?? ""} ${e.value ?? e.content ?? ""}`.toLowerCase();
+  const visible = entries.filter((e) => !filter || text(e).includes(filter.toLowerCase()));
 
   return (
     <div>
@@ -445,8 +446,8 @@ function MemoryTab() {
           <div key={m.id} className="lm-row">
             <span className="lm-row__icon"><Brain className="h-4 w-4" /></span>
             <div className="lm-row__main">
-              <p className="lm-row__title" style={{ whiteSpace: "pre-wrap" }}>{m.content}</p>
-              {m.kind && <p className="lm-micro" style={{ textTransform: "none", letterSpacing: 0 }}>{m.kind}</p>}
+              <p className="lm-row__title">{m.key}</p>
+              <p className="lm-micro" style={{ textTransform: "none", letterSpacing: 0, whiteSpace: "pre-wrap" }}>{m.value ?? m.content}</p>
             </div>
             <button onClick={() => del(m.id)} className="lm-row__del" aria-label="Delete entry" data-pulse="true">
               <Trash2 className="h-3.5 w-3.5" />

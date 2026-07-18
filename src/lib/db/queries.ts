@@ -114,7 +114,12 @@ export type MemoryItem = {
 export function listMemory(userId?: string): MemoryItem[] {
   const db = getConfigDb();
   if (userId) {
-    return db.prepare("SELECT * FROM memory WHERE user_id=? ORDER BY created_at").all(userId) as MemoryItem[];
+    // Include unowned (user_id IS NULL) memory — the memory tool writes with the
+    // conversation's owner, which is null on single-operator/localhost setups.
+    // Without this, memory Sora saves never shows for the logged-in owner.
+    return db
+      .prepare("SELECT * FROM memory WHERE user_id IS NULL OR user_id=? ORDER BY created_at")
+      .all(userId) as MemoryItem[];
   }
   return db.prepare("SELECT * FROM memory ORDER BY created_at").all() as MemoryItem[];
 }
