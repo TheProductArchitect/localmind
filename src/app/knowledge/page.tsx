@@ -15,15 +15,17 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "@/components/toast";
 import { NoteGraph } from "@/components/note-graph";
-import { Search, Plus, RefreshCw, Trash2, Upload, FileText, StickyNote, Share2, Wifi, Brain } from "lucide-react";
+import { ContextGraphView } from "@/components/context-graph-view";
+import { Search, Plus, RefreshCw, Trash2, Upload, FileText, StickyNote, Share2, Wifi, Brain, Waypoints } from "lucide-react";
 
-type TabId = "search" | "documents" | "notes" | "memory" | "sharing" | "peer";
+type TabId = "search" | "documents" | "notes" | "memory" | "context" | "sharing" | "peer";
 
 const TABS: { id: TabId; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "search",    label: "Search",     Icon: Search },
   { id: "documents", label: "Documents",  Icon: FileText },
   { id: "notes",     label: "Notes",      Icon: StickyNote },
   { id: "memory",    label: "Memory",     Icon: Brain },
+  { id: "context",   label: "About you",  Icon: Waypoints },
   { id: "sharing",   label: "Sharing",    Icon: Share2 },
   { id: "peer",      label: "Peer search", Icon: Wifi },
 ];
@@ -71,6 +73,7 @@ function KnowledgeInner() {
         {tab === "documents" && <DocsTab />}
         {tab === "notes"     && <NotesTab />}
         {tab === "memory"    && <MemoryTab />}
+        {tab === "context"   && <ContextGraphView />}
         {tab === "sharing"   && <SharingTab />}
         {tab === "peer"      && <PeerSearchTab />}
       </div>

@@ -19,7 +19,7 @@ import {
   Shield, ScrollText, BarChart3, Activity, Users, Sparkles, Code2,
   Boxes, Search, ArrowUpRight, PanelLeftClose, PanelLeftOpen,
   Workflow, BookOpen, Plug, Box, Package, Network, Calendar,
-  Database, Brain,
+  Database, Brain, Antenna,
 } from "lucide-react";
 
 // In-page section tabs. Tools intentionally moved OUT of this list — it now
@@ -28,6 +28,7 @@ import {
 // Tools section when reached via ?section=Tools (see settings/page.tsx).
 export const SETTINGS_SECTIONS = [
   { id: "General",          Icon: SettingsIcon },
+  { id: "Reach",            Icon: Antenna },
   { id: "Network",          Icon: Wifi },
   { id: "Providers",        Icon: Plug2 },
   { id: "Communications",   Icon: MessagesSquare },

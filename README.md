@@ -3,7 +3,7 @@
 A local-first AI control panel for Mac. Chat with **Sora**, your personal assistant —
 automate workflows, search and read the web, control your Mac, and audit everything
 in the browser. Watch every agent on the **Ops board**, keep a personal **Brain**,
-and steer what Sora knows about you in the **Context Graph**. Nothing leaves your
+and steer what Sora knows about you in the Knowledge hub. Nothing leaves your
 machine unless you choose a cloud provider.
 
 ## Install
@@ -135,13 +135,21 @@ retrieves only the top-relevant slices per turn: it embeds the query locally
 citations within a **token budget** (default 15% of the context window), with an
 explicit "not in memory" note when coverage is thin. Retrieval is 100% local.
 
-### User Context Graph (`/context`)
+### User Context Graph (Knowledge → "About you")
 
 A durable, user-rooted view of what Sora understands about **you** — goals,
 preferences, people, and topics — assembled from goals + memory + the Brain and
-rendered as a force graph (its own rail glyph). Inferred nodes are visually
-distinct from stated ones. Read-only in phase 1; per-user scoped; nothing leaves
-the machine. Distinct from `/ops`, which tracks the *agent's* activity.
+rendered as a force graph. It lives as the **"About you"** tab inside
+`/knowledge`, so "what Sora knows" and "what Sora knows about you" sit on one
+page. Inferred nodes are visually distinct from stated ones. Read-only in phase 1;
+per-user scoped; nothing leaves the machine. Distinct from `/ops`, which tracks
+the *agent's* activity. (`/context` redirects to `/knowledge?tab=context`.)
+
+### Reach (Settings → "What Sora can reach")
+
+One place to see and govern everything Sora can act on or reach through — its
+tools (with permission tiers), the channels it messages on, its web access
+(kill switch + per-site grants), and MCP/plugin integrations.
 
 ### Idle self-improvement (opt-in, two-gate)
 
@@ -199,7 +207,8 @@ materially with larger ones (8B+). Pull and select models under **Models**.
 - `src/lib/tools/` — built-in tools (`read-secure-webpage`, web research, subagent, `schedule`, …)
 - `src/lib/db/brain.ts` — Brain entity graph (`brain_edges`); `proposals.ts` / `self-checks.ts`
 - `src/lib/context-graph.ts` — User Context Graph assembler (`/api/context/graph`)
-- `src/app/ops/` — Agent Ops Kanban; `src/app/context/` — User Context Graph view
+- `src/components/context-graph-view.tsx` — the "About you" tab (in `/knowledge`)
+- `src/app/ops/` — Agent Ops Kanban board
 - `src/app/browse/` — user-facing secure reader
 - `src/lib/workflow/` — workflow executor and delivery
 - `src/middleware.ts` — JWT + role enforcement

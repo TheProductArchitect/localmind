@@ -20,8 +20,7 @@ import {
   Workflow,         // Work
   Columns3,         // Ops (Kanban)
   Globe,            // Browse
-  BookOpen,         // Knowledge
-  Waypoints,        // Context graph
+  BookOpen,         // Knowledge (incl. the "About you" context graph)
   Wifi,             // Fleet
   SlidersHorizontal,// Settings
 } from "lucide-react";
@@ -40,8 +39,7 @@ const DESTS: Dest[] = [
   { href: "/work",      label: "Work",      Icon: Workflow,          matches: ["/work", "/graphs", "/orchestration", "/automations", "/agents"] },
   { href: "/ops",       label: "Ops",       Icon: Columns3,          matches: ["/ops"] },
   { href: "/browse",    label: "Browse",    Icon: Globe,             matches: ["/browse"] },
-  { href: "/knowledge", label: "Knowledge", Icon: BookOpen,          matches: ["/knowledge", "/memory", "/data"] },
-  { href: "/context",   label: "Context",   Icon: Waypoints,         matches: ["/context"] },
+  { href: "/knowledge", label: "Knowledge", Icon: BookOpen,          matches: ["/knowledge", "/memory", "/data", "/context"] },
   { href: "/fleet",     label: "Fleet",     Icon: Wifi,              matches: ["/fleet", "/mcp", "/models", "/plugins"] },
   { href: "/settings",  label: "Settings",  Icon: SlidersHorizontal, matches: ["/settings", "/permissions", "/access", "/audit", "/analytics", "/system", "/devpm", "/agent"] },
 ];

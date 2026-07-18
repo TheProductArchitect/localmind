@@ -1,10 +1,11 @@
 "use client";
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { Button, Card, Input, Badge } from "@/components/ui";
 import { toast } from "@/components/toast";
 import {
-  RefreshCw, ExternalLink, CheckCircle2, AlertCircle,
+  RefreshCw, ExternalLink, CheckCircle2, AlertCircle, Wrench, MessagesSquare, Globe, Boxes,
 } from "lucide-react";
 import { SETTINGS_SECTIONS, type SettingsSectionId, type HiddenSectionId } from "@/components/settings-sidebar";
 
@@ -28,6 +29,7 @@ function SettingsBody() {
         <p className="lm-micro mb-2">{section}</p>
         <h1 className="lm-display mb-10">{sectionTitle(section)}</h1>
         {section === "General"        && <GeneralSection />}
+        {section === "Reach"          && <ReachSection />}
         {section === "Tools"          && <ToolsSection />}
           {section === "Network"        && <NetworkSection />}
           {section === "Providers"      && <ProvidersSection />}
@@ -52,6 +54,7 @@ export default function SettingsPage() {
 function sectionTitle(id: SectionId): string {
   return {
     "General":        "How Sora behaves",
+    "Reach":          "What Sora can reach",
     "Tools":          "What Sora is allowed to do",
     "Network":        "Where Sora can be reached",
     "Providers":      "External model providers",
@@ -717,6 +720,54 @@ const FLOOR_ACTIONS = new Set([
   "send_email", "make_call", "post_message", "git_force_push", "git_reset_hard",
   "install_mcp",
 ]);
+
+// "What Sora can reach" — one view over everything Sora can act on or reach
+// out through: its tools, the channels it messages on, its web access, and the
+// MCP/plugin integrations. Composes the existing surfaces so there's a single
+// place to see and govern Sora's reach.
+function ReachSubhead({ Icon, title, hint }: { Icon: React.ComponentType<{ className?: string }>; title: string; hint: string }) {
+  return (
+    <div className="flex items-start gap-2 mb-4">
+      <Icon className="h-4 w-4 mt-0.5 text-muted-foreground" />
+      <div>
+        <p className="text-sm font-medium">{title}</p>
+        <p className="text-xs text-muted-foreground">{hint}</p>
+      </div>
+    </div>
+  );
+}
+
+function ReachSection() {
+  return (
+    <div className="space-y-14">
+      <section>
+        <ReachSubhead Icon={Wrench} title="What Sora can do" hint="Built-in tools and their permission tiers (allow / ask / pin)." />
+        <ToolsSection />
+      </section>
+      <section>
+        <ReachSubhead Icon={MessagesSquare} title="How Sora reaches out" hint="Channels Sora can send and receive on." />
+        <CommsSection />
+      </section>
+      <section>
+        <ReachSubhead Icon={Globe} title="Web access" hint="Kill switch and per-site grants for every web-reaching tool." />
+        <WebAccessCard />
+      </section>
+      <section>
+        <ReachSubhead Icon={Boxes} title="Integrations & MCP" hint="External servers and plugins Sora can call out to." />
+        <Card className="p-4">
+          <div className="flex flex-wrap gap-2">
+            <Link href="/mcp" className="inline-flex items-center gap-1.5 text-sm rounded-md border border-border px-3 py-1.5 hover:bg-muted/60">
+              MCP servers <ExternalLink className="h-3.5 w-3.5" />
+            </Link>
+            <Link href="/plugins" className="inline-flex items-center gap-1.5 text-sm rounded-md border border-border px-3 py-1.5 hover:bg-muted/60">
+              Plugins <ExternalLink className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </Card>
+      </section>
+    </div>
+  );
+}
 
 function ToolsSection() {
   const [tools, setTools] = useState<ToolRow[]>([]);

@@ -36,7 +36,7 @@ const COMMANDS: Command[] = [
   { label: "Knowledge base",    href: "/knowledge",  group: "Knowledge" },
   { label: "Browse the web", href: "/browse", group: "Knowledge" },
   { label: "Memory",            href: "/knowledge?tab=memory", group: "Knowledge" },
-  { label: "My context — what Sora knows about me", href: "/context", group: "Knowledge" },
+  { label: "My context — what Sora knows about me", href: "/knowledge?tab=context", group: "Knowledge" },
   { label: "Data tables",       href: "/data",       group: "Knowledge" },
 
   // Fleet
