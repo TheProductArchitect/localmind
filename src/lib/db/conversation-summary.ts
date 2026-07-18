@@ -18,6 +18,15 @@ export function getConversationSummary(conversationId: string): ConversationSumm
   );
 }
 
+/** Most recently updated (non-deleted) conversation ids — for idle precompute. */
+export function listRecentConversationIds(limit = 5): string[] {
+  return (
+    getConvDb()
+      .prepare("SELECT id FROM conversations WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?")
+      .all(limit) as { id: string }[]
+  ).map((r) => r.id);
+}
+
 export function upsertConversationSummary(conversationId: string, summary: string, coveredCount: number): void {
   getConvDb()
     .prepare(

@@ -17,6 +17,7 @@ import { classifyPillar } from "./pillar-classify";
 import { parseTextToolCalls } from "./text-tool-calls";
 import { splitHistory, recentWindowSize } from "./history-context";
 import { ensureConversationSummary } from "./history-summary";
+import { buildConversationMessages } from "./conversation-messages";
 import { unregisterProcess } from "./process-registry";
 import { resolveRoutedModel } from "./routing";
 
@@ -139,22 +140,15 @@ export async function* runAgent(
     });
   }
 
-  // Build message history
-  const history = getMessages(conversationId);
+  // Build message history via the shared builder (also used by the idle
+  // summary precompute, so covered_count stays consistent between them).
   const convOwner = getConversation(conversationId)?.owner_user_id || undefined;
   const systemContent =
     (opts?.systemPrefix ? opts.systemPrefix + "\n\n" : "") + buildSystemPrompt(convOwner);
-  const messages: ChatMessage[] = [{ role: "system", content: systemContent }];
-  for (const m of history) {
-    if (m.role === "user" || m.role === "assistant") {
-      messages.push({ role: m.role, content: m.content });
-    } else if (m.role === "tool") {
-      try {
-        const parsed = JSON.parse(m.content);
-        messages.push({ role: "tool", content: parsed.output, tool_call_id: parsed.id, name: parsed.name });
-      } catch {}
-    }
-  }
+  const messages: ChatMessage[] = [
+    { role: "system", content: systemContent },
+    ...buildConversationMessages(conversationId),
+  ];
 
   const provider = getProvider();
   const allTools = await listAllTools();
@@ -181,7 +175,8 @@ export async function* runAgent(
   let toolCallCount = 0;
 
   // ---- Orchestration: register this chat as an agent process. ----
-  const firstUserText = history.find((m) => m.role === "user")?.content || userMessage;
+  const firstUserText =
+    (messages.find((m) => m.role === "user")?.content as string | undefined) || userMessage;
   const processDisplay = opts?.processDisplayName || firstUserText.slice(0, 80).replace(/\s+/g, " ").trim() || "Chat";
   // Subagent spawns pass metadata with `kind: "subagent"` etc. The kind drives
   // both the process_type used here AND the agent_name shown in the
