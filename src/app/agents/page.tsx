@@ -23,7 +23,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Orb } from "@/components/orb";
-import { Workflow, ChevronRight, Sparkles, History, BookOpen, CheckCircle2, XCircle } from "lucide-react";
+import { Workflow, Sparkles, History, BookOpen, CheckCircle2, XCircle } from "lucide-react";
 import { HowItWorks } from "@/components/how-it-works";
 
 type Proc = {
@@ -404,7 +404,6 @@ export default function AgentsPage() {
                 <span className="lm-micro" style={{ textTransform: "none", letterSpacing: 0, color: "hsl(0 0% 100% / 0.4)" }}>
                   {elapsed(prof.lastAt)} ago
                 </span>
-                <ChevronRight className="h-3.5 w-3.5" style={{ color: "hsl(0 0% 100% / 0.2)" }} />
               </div>
             );
           })

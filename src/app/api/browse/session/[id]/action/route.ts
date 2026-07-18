@@ -12,9 +12,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "action.type is required." }, { status: 400 });
   }
 
-  const sessionId = await ensureBrowseSession(pathId === "new" ? null : pathId);
-  const result = await browseAction(sessionId, action);
-  if (!result.ok) return NextResponse.json({ error: result.error, sessionId }, { status: 400 });
-  const snap = await browseSnapshot(sessionId);
-  return NextResponse.json(snap);
+  try {
+    const sessionId = await ensureBrowseSession(pathId === "new" ? null : pathId);
+    const result = await browseAction(sessionId, action);
+    if (!result.ok) return NextResponse.json({ error: result.error, sessionId }, { status: 400 });
+    const snap = await browseSnapshot(sessionId);
+    return NextResponse.json(snap);
+  } catch (e: any) {
+    if (e?.code === "SESSION_EXPIRED") {
+      return NextResponse.json({ error: e.message, expired: true }, { status: 410 });
+    }
+    return NextResponse.json({ error: e?.message || "Action failed." }, { status: 500 });
+  }
 }

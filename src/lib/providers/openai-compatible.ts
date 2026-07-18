@@ -6,6 +6,8 @@ type Config = {
   name: string;
   baseUrl: string;
   defaultModels: { name: string }[];
+  /** When true, chat works without a saved API key (local servers). */
+  apiKeyOptional?: boolean;
 };
 
 const CONFIGS: Record<string, Config> = {
@@ -24,9 +26,15 @@ const CONFIGS: Record<string, Config> = {
     baseUrl: "https://openrouter.ai/api/v1",
     defaultModels: [{ name: "anthropic/claude-3.5-sonnet" }, { name: "openai/gpt-4o-mini" }],
   },
+  lmstudio: {
+    name: "lmstudio",
+    baseUrl: `${(process.env.LMSTUDIO_HOST || "http://localhost:1234").replace(/\/$/, "")}/v1`,
+    defaultModels: [],
+    apiKeyOptional: true,
+  },
 };
 
-function toOpenAIMessages(messages: ChatMessage[]) {
+export function toOpenAIMessages(messages: ChatMessage[]) {
   return messages.map((m) => {
     if (m.role === "tool") {
       return { role: "tool", content: m.content, tool_call_id: m.tool_call_id };
@@ -42,6 +50,18 @@ function toOpenAIMessages(messages: ChatMessage[]) {
         })),
       };
     }
+    if (m.role === "user" && m.images?.length) {
+      return {
+        role: "user",
+        content: [
+          { type: "text", text: m.content || "" },
+          ...m.images.map((img) => ({
+            type: "image_url",
+            image_url: { url: img.startsWith("data:") ? img : `data:image/jpeg;base64,${img}` },
+          })),
+        ],
+      };
+    }
     return { role: m.role, content: (m as any).content };
   });
 }
@@ -53,11 +73,11 @@ export function makeOpenAICompatibleProvider(key: keyof typeof CONFIGS): Provide
 
     async testConnection() {
       const apiKey = getApiKey(cfg.name);
-      if (!apiKey) return { ok: false, error: "No API key saved" };
+      if (!apiKey && !cfg.apiKeyOptional) return { ok: false, error: "No API key saved" };
       try {
-        const r = await fetch(`${cfg.baseUrl}/models`, {
-          headers: { Authorization: `Bearer ${apiKey}` },
-        });
+        const headers: Record<string, string> = {};
+        if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+        const r = await fetch(`${cfg.baseUrl}/models`, { headers });
         return r.ok ? { ok: true } : { ok: false, error: `HTTP ${r.status}` };
       } catch (e: any) {
         return { ok: false, error: e?.message || "Connection failed" };
@@ -66,11 +86,11 @@ export function makeOpenAICompatibleProvider(key: keyof typeof CONFIGS): Provide
 
     async getModels() {
       const apiKey = getApiKey(cfg.name);
-      if (!apiKey) return cfg.defaultModels;
+      if (!apiKey && !cfg.apiKeyOptional) return cfg.defaultModels;
       try {
-        const r = await fetch(`${cfg.baseUrl}/models`, {
-          headers: { Authorization: `Bearer ${apiKey}` },
-        });
+        const headers: Record<string, string> = {};
+        if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+        const r = await fetch(`${cfg.baseUrl}/models`, { headers });
         if (!r.ok) return cfg.defaultModels;
         const j = (await r.json()) as any;
         return (j.data || []).map((m: any) => ({ name: m.id }));
@@ -81,11 +101,15 @@ export function makeOpenAICompatibleProvider(key: keyof typeof CONFIGS): Provide
 
     async *chat({ model, messages, tools, signal }): AsyncGenerator<ProviderDelta> {
       const apiKey = getApiKey(cfg.name);
-      if (!apiKey) throw new Error(`No API key configured for ${cfg.name}`);
+      if (!apiKey && !cfg.apiKeyOptional) throw new Error(`No API key configured for ${cfg.name}`);
+
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+      else if (cfg.apiKeyOptional) headers.Authorization = "Bearer lm-studio";
 
       const r = await fetch(`${cfg.baseUrl}/chat/completions`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+        headers,
         body: JSON.stringify({
           model,
           messages: toOpenAIMessages(messages),

@@ -41,7 +41,16 @@ export function ContextGraphView() {
   const kinds = graph ? ([...new Set(graph.nodes.map((n) => n.kind).filter(Boolean))] as string[]) : [];
   const filtered: Graph | null = graph
     ? kindFilter
-      ? { nodes: graph.nodes.filter((n) => n.kind === kindFilter || n.kind === "user"), links: graph.links }
+      ? (() => {
+          const nodes = graph.nodes.filter((n) => n.kind === kindFilter || n.kind === "user");
+          const ids = new Set(nodes.map((n) => n.id));
+          const links = graph.links.filter((l) => {
+            const src = typeof l.source === "string" ? l.source : (l.source as { id?: string })?.id;
+            const tgt = typeof l.target === "string" ? l.target : (l.target as { id?: string })?.id;
+            return !!src && !!tgt && ids.has(src) && ids.has(tgt);
+          });
+          return { nodes, links };
+        })()
       : graph
     : null;
   const meaningful = graph && graph.nodes.length > 1;

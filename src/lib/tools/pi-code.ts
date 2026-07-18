@@ -61,7 +61,9 @@ function piAvailable(): { ok: boolean; version?: string; reason?: string } {
 
 export const piCodeTool: Tool = {
   actionType: "write_files",
-  classify: (i) => (i.operation === "status" ? "read_files" : "write_files"),
+  // `run` spawns an autonomous coding agent that can execute arbitrary shell
+  // in the workspace — always confirm, even in auto mode.
+  classify: (i) => (i.operation === "status" ? "read_files" : "destructive_shell"),
   preview: (i) => {
     if (i.operation === "status") return "Check if the pi.dev coding agent is available";
     return `Run pi coding agent in "${i.cwd}" on: ${String(i.goal ?? "").slice(0, 120)}`;

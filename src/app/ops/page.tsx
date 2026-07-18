@@ -141,10 +141,17 @@ export default function OpsPage() {
       return;
     }
     if (meta.kind === "proposal" && meta.proposal_id) {
-      const path = approved ? "approve" : "reject";
+      // ready_for_review → merge; proposed → approve. Reject works from either.
+      const path = !approved
+        ? "reject"
+        : meta.proposal_status === "ready_for_review"
+          ? "merge"
+          : "approve";
       const r = await fetch(`/api/ops/proposals/${meta.proposal_id}/${path}`, { method: "POST" });
       if (!r.ok) toast("Could not update proposal", "error");
-      else toast(approved ? "Approved — Sora may now build a branch/PR for review." : "Proposal rejected.", "success");
+      else if (!approved) toast("Proposal rejected.", "success");
+      else if (path === "merge") toast("Marked as merged.", "success");
+      else toast("Approved — Sora may now build a branch/PR for review.", "success");
       refresh();
       return;
     }
@@ -215,7 +222,8 @@ export default function OpsPage() {
           {isApproval ? (
             <>
               <Button size="sm" onClick={() => resolveApproval(p, true)}>
-                <Check className="h-3 w-3" /> Approve
+                <Check className="h-3 w-3" />{" "}
+                {metaOf(p).proposal_status === "ready_for_review" ? "Merge" : "Approve"}
               </Button>
               <Button size="sm" variant="ghost" onClick={() => resolveApproval(p, false)}>
                 <X className="h-3 w-3" /> Deny

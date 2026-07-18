@@ -13,11 +13,16 @@ export async function GET() {
 export async function PATCH(req: NextRequest) {
   const body = await req.json();
   const patch: any = {};
+  // Keys the UI is allowed to write. Omitting a field silently drops it —
+  // agent_mode / idle_* / web_search_provider were previously missing, which
+  // made the mode toggle and idle/search-provider settings appear to save but
+  // never persist.
   const allowed = [
     "assistant_name", "personality", "theme", "locale", "active_profile_id",
     "provider", "active_model", "lan_enabled", "port", "https_enabled",
     "approved_dirs", "onboarded", "chat_font_size", "auto_backup", "backup_dir",
-    "context_window", "web_access_killed",
+    "context_window", "web_access_killed", "agent_mode",
+    "web_search_provider", "idle_work_enabled", "idle_start_hour", "idle_end_hour",
   ];
   for (const k of allowed) {
     if (k in body) patch[k] = body[k];

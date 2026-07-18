@@ -21,6 +21,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const snap = await browseSnapshot(sessionId);
     return NextResponse.json(snap);
   } catch (e: any) {
+    if (e?.code === "SESSION_EXPIRED") {
+      return NextResponse.json({ error: e.message, expired: true }, { status: 410 });
+    }
     const msg = e?.message || "Browser failed.";
     if (/Executable doesn't exist|playwright install/i.test(msg)) {
       return NextResponse.json(

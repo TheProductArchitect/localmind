@@ -636,68 +636,7 @@ function ProvidersSection() {
   );
 }
 
-function McpSection() {
-  const [servers, setServers] = useState<any[]>([]);
-  const [form, setForm] = useState({ name: "", url: "", description: "", tier: "ask" });
-  const load = () => fetch("/api/mcp").then((r) => r.json()).then((j) => setServers(j.servers || []));
-  useEffect(() => { load(); }, []);
 
-  async function test() {
-    const r = await fetch("/api/mcp/test", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ url: form.url }),
-    });
-    const j = await r.json();
-    toast(j.ok ? `Reachable — tools: ${j.tools?.join(", ") || "none"}` : j.error, j.ok ? "success" : "error");
-  }
-  async function add() {
-    if (!form.name || !form.url) return;
-    await fetch("/api/mcp", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify(form),
-    });
-    setForm({ name: "", url: "", description: "", tier: "ask" });
-    load();
-  }
-  async function remove(id: string) {
-    await fetch(`/api/mcp?id=${id}`, { method: "DELETE" });
-    load();
-  }
-
-  return (
-    <div className="space-y-4">
-      <h1 className="text-xl font-semibold">MCP Servers</h1>
-      <p className="text-xs text-muted-foreground">
-        Add custom Model Context Protocol servers. Their tools go through the same audit log and
-        permission guard as built-in tools.
-      </p>
-      <Card className="p-4 space-y-2">
-        <Input placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-        <Input placeholder="URL (SSE endpoint)" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
-        <Input placeholder="Description (optional)" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-        <select value={form.tier} onChange={(e) => setForm({ ...form, tier: e.target.value })}
-          className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm">
-          <option value="allow">Always Allow</option>
-          <option value="ask">Ask First</option>
-          <option value="pin">Never Without PIN</option>
-        </select>
-        <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={test}>Test connection</Button>
-          <Button size="sm" onClick={add}>Add server</Button>
-        </div>
-      </Card>
-      {servers.map((s) => (
-        <Card key={s.id} className="p-3 flex items-center gap-2">
-          <div className="flex-1">
-            <p className="font-medium text-sm">{s.name}</p>
-            <p className="text-xs text-muted-foreground">{s.url} · tier: {s.tier}</p>
-          </div>
-          <Button size="sm" variant="ghost" onClick={() => remove(s.id)}>Remove</Button>
-        </Card>
-      ))}
-    </div>
-  );
-}
 
 type ToolRow = { name: string; description: string; action_type: string };
 type McpServerRow = {

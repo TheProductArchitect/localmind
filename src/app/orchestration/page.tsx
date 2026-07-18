@@ -1,5 +1,6 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Button, Card, Badge, Input, Textarea } from "@/components/ui";
 import { toast } from "@/components/toast";
 import { Network, Eye, Pause, Play, X, Clock, RefreshCw, Plus, Zap, Send, BookOpen, ChevronDown } from "lucide-react";
@@ -65,6 +66,18 @@ type LongJob = {
 };
 
 export default function OrchestrationPage() {
+  return (
+    <Suspense fallback={<div className="p-10 text-sm text-muted-foreground">Loading…</div>}>
+      <OrchestrationPageInner />
+    </Suspense>
+  );
+}
+
+function OrchestrationPageInner() {
+  const searchParams = useSearchParams();
+  const deepProcessId = searchParams.get("process");
+  const deepJobId = searchParams.get("job");
+  const deepOpened = useRef(false);
   const [active, setActive] = useState<Proc[]>([]);
   const [history, setHistory] = useState<Proc[]>([]);
   const [jobs, setJobs] = useState<LongJob[]>([]);
@@ -171,7 +184,11 @@ export default function OrchestrationPage() {
     refresh();
   }
 
-  function openTrace(p: Proc) {
+  const openTrace = useCallback((p: Proc) => {
+    // Close any prior SSE before attaching a new one — otherwise switching
+    // traces leaks EventSources until unmount.
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
     setTraceProc(p);
     setTraceEvents([]);
 
@@ -198,7 +215,7 @@ export default function OrchestrationPage() {
         es.onerror = () => { es.close(); eventSourceRef.current = null; };
       } catch { /* ignore */ }
     }
-  }
+  }, [refresh]);
 
   function closeTrace() {
     eventSourceRef.current?.close();
@@ -206,6 +223,22 @@ export default function OrchestrationPage() {
     setTraceProc(null);
     setTraceEvents([]);
   }
+
+  // Deep-link: /orchestration?process=<id> opens that process's trace once.
+  useEffect(() => {
+    if (!loaded || !deepProcessId || deepOpened.current) return;
+    const p = [...active, ...history].find((x) => x.process_id === deepProcessId);
+    if (!p) return;
+    deepOpened.current = true;
+    openTrace(p);
+  }, [loaded, deepProcessId, active, history, openTrace]);
+
+  // Deep-link: /orchestration?job=<id> scrolls to that job card.
+  useEffect(() => {
+    if (!loaded || !deepJobId) return;
+    const el = document.getElementById(`job-${deepJobId}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [loaded, deepJobId, jobs]);
 
   // Clean up SSE on unmount.
   useEffect(() => () => { eventSourceRef.current?.close(); }, []);
@@ -306,7 +339,12 @@ export default function OrchestrationPage() {
               {jobs.map((j) => {
                 const done = ["completed", "failed", "cancelled"].includes(j.status);
                 return (
-                  <Card key={j.job_id} className="p-3">
+                  <Card
+                    key={j.job_id}
+                    id={`job-${j.job_id}`}
+                    className="p-3"
+                    style={deepJobId === j.job_id ? { outline: "1px solid hsl(0 0% 100% / 0.35)" } : undefined}
+                  >
                     <div className="flex items-start gap-2">
                       <Badge variant="outline">Job</Badge>
                       <div className="flex-1 min-w-0">

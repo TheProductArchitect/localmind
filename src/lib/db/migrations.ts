@@ -1187,6 +1187,24 @@ configMigrations.push({
   },
 });
 
+// v27: refresh Sora's enabled_tools — schedule_task / recall / browse_session
+// shipped after the v11 seed and were never backfilled on existing installs.
+configMigrations.push({
+  version: 27,
+  up: (db) => {
+    const tools = JSON.stringify([
+      "memory", "knowledge_base", "web_search", "time", "filesystem",
+      "calendar", "email", "browser", "browse_session", "peer_knowledge",
+      "datastore", "spreadsheet", "check_resources", "spawn_subagent",
+      "spawn_subagents_parallel", "schedule_task", "recall",
+      "web_research", "read_secure_webpage",
+    ]);
+    db.prepare(
+      "UPDATE personas SET enabled_tools=?, updated_at=? WHERE persona_id='persona-sora'"
+    ).run(tools, Date.now());
+  },
+});
+
 const knowledgeMigrations: Migration[] = [
   {
     version: 1,
@@ -1327,17 +1345,19 @@ const convMigrations: Migration[] = [
 
 export function runMigrations(db: Database.Database, kind: "config" | "conversations" | "knowledge") {
   db.exec("CREATE TABLE IF NOT EXISTS _schema (version INTEGER PRIMARY KEY)");
-  const cur = db.prepare("SELECT MAX(version) AS v FROM _schema").get() as { v: number | null };
-  const current = cur.v ?? 0;
+  const applied = new Set(
+    (db.prepare("SELECT version FROM _schema").all() as { version: number }[]).map((r) => r.version)
+  );
   const set =
     kind === "config" ? configMigrations : kind === "knowledge" ? knowledgeMigrations : convMigrations;
-  for (const m of set) {
-    if (m.version > current) {
-      const tx = db.transaction(() => {
-        m.up(db);
-        db.prepare("INSERT INTO _schema (version) VALUES (?)").run(m.version);
-      });
-      tx();
-    }
+  // Sort by version so declaration order in the array can't skip or reorder
+  // migrations (MAX(version) previously skipped any lower version inserted late).
+  const pending = [...set].filter((m) => !applied.has(m.version)).sort((a, b) => a.version - b.version);
+  for (const m of pending) {
+    const tx = db.transaction(() => {
+      m.up(db);
+      db.prepare("INSERT INTO _schema (version) VALUES (?)").run(m.version);
+    });
+    tx();
   }
 }

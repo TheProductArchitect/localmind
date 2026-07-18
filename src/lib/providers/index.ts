@@ -22,6 +22,9 @@ export function getProviderByName(name: string): Provider {
     case "openrouter":
       p = makeOpenAICompatibleProvider("openrouter");
       break;
+    case "lmstudio":
+      p = makeOpenAICompatibleProvider("lmstudio");
+      break;
     case "ollama":
     default:
       p = ollamaProvider;

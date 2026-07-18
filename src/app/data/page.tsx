@@ -15,6 +15,13 @@ function bytes(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
+/** Browser-safe base64url (Buffer is Node-only and crashes this client page). */
+function btoaUtf8Url(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
 
 export default function DataPage() {
   const [tables, setTables] = useState<Table[]>([]);
@@ -44,7 +51,7 @@ export default function DataPage() {
   async function openSheet(path: string) {
     setActiveSheet(null);
     setActiveTable(null);
-    const token = encodeURIComponent(Buffer.from(path, "utf8").toString("base64url"));
+    const token = encodeURIComponent(btoaUtf8Url(path));
     const r = await fetch(`/api/data/spreadsheets/${token}`);
     const j = await r.json();
     if (j.error) return;
@@ -113,7 +120,7 @@ export default function DataPage() {
         ) : (
           <div className="space-y-1">
             {sheets.map((s) => {
-              const token = Buffer.from(s.path, "utf8").toString("base64url");
+              const token = btoaUtf8Url(s.path);
               return (
                 <Card key={s.path} className="p-3 flex items-center gap-3">
                   <FileSpreadsheet className="h-4 w-4 text-muted-foreground" />

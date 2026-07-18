@@ -33,6 +33,11 @@ export async function POST(req: NextRequest) {
     const { linkBrowseSession, buildBrowseContextPrefix } = await import("@/lib/browse/session");
     linkBrowseSession(conversationId, browseSessionId.trim());
     browsePrefix = await buildBrowseContextPrefix(browseSessionId.trim());
+  } else {
+    // No grant on this turn — clear any sticky link so tools can't act on a
+    // tab the user switched away from.
+    const { unlinkBrowseSession } = await import("@/lib/browse/session");
+    unlinkBrowseSession(conversationId);
   }
   const devpmPrefix = persona === "devpm" ? devpmSystemPrefix() : undefined;
   const systemPrefix = [browsePrefix, devpmPrefix].filter(Boolean).join("\n\n") || undefined;

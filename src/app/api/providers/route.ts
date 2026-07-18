@@ -4,7 +4,7 @@ import { getProviderByName } from "@/lib/providers";
 
 export const runtime = "nodejs";
 
-const PROVIDERS = ["ollama", "openai", "anthropic", "groq", "openrouter"];
+const PROVIDERS = ["ollama", "openai", "anthropic", "groq", "openrouter", "lmstudio"];
 
 export async function GET() {
   try {

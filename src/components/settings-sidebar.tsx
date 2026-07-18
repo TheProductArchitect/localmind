@@ -253,10 +253,13 @@ function SettingsSidebarInner() {
           <p className="lm-micro mb-2" style={{ color: "hsl(0 0% 100% / 0.3)" }}>{g.title}</p>
           <nav className="space-y-0.5" aria-label={`${g.title} (external pages)`}>
             {g.links.map(({ href, label, Icon }) => {
-              // Highlight the active admin link so the user knows where they
-              // currently are inside the settings cluster.
-              const linkActive =
-                pathname === href || pathname.startsWith(href + "/");
+              // Compare pathname (+ search) so /knowledge?tab=memory highlights.
+              const url = (() => { try { return new URL(href, "http://local"); } catch { return null; } })();
+              const pathMatch = url ? pathname === url.pathname : pathname === href;
+              const searchMatch = !url?.search || [...url.searchParams.entries()].every(
+                ([k, v]) => params.get(k) === v
+              );
+              const linkActive = pathMatch && searchMatch;
               return (
                 <Link
                   key={href}

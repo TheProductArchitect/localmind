@@ -40,8 +40,22 @@ export function getBrowseSession(id: string): BrowseSession | undefined {
 export function linkBrowseSession(conversationId: string, sessionId: string): void {
   const s = sessions.get(sessionId);
   if (!s) return;
+  // Drop any previous link so switching to another granted tab (or none)
+  // can't leave the agent acting on a stale session.
+  const prev = conversationLinks.get(conversationId);
+  if (prev && prev !== sessionId) {
+    sessions.get(prev)?.linkedConversations.delete(conversationId);
+  }
   s.linkedConversations.add(conversationId);
   conversationLinks.set(conversationId, sessionId);
+}
+
+/** Clear the conversation→session link (e.g. when the Sora panel has no grant). */
+export function unlinkBrowseSession(conversationId: string): void {
+  const id = conversationLinks.get(conversationId);
+  if (!id) return;
+  conversationLinks.delete(conversationId);
+  sessions.get(id)?.linkedConversations.delete(conversationId);
 }
 
 export function getBrowseSessionForConversation(conversationId: string): BrowseSession | null {
@@ -73,9 +87,15 @@ export function registerExternalPage(id: string, page: Page): string {
   return id;
 }
 
-/** Return existing session or create a new one when id is missing/invalid. */
+/** Return existing session, or create only when sessionId is absent/null.
+ *  A non-empty unknown id means the session expired — do NOT spawn a blank page. */
 export async function ensureBrowseSession(sessionId?: string | null): Promise<string> {
   if (sessionId && sessions.has(sessionId)) return sessionId;
+  if (sessionId) {
+    throw Object.assign(new Error("Browse session expired. Reload /browse and try again."), {
+      code: "SESSION_EXPIRED",
+    });
+  }
   return createBrowseSession();
 }
 
@@ -123,6 +143,14 @@ export async function browseAction(sessionId: string, action: BrowseAction): Pro
   if (!s) return { ok: false, error: "Browse session not found. Reload /browse and try again." };
   const { page } = s;
 
+  // Re-check web access on the *current* URL — a granted tab can be navigated
+  // (by the user or via click) onto a sensitive domain after attach.
+  const beforeUrl = page.url();
+  if (beforeUrl && beforeUrl !== "about:blank") {
+    const access = checkWebAccess(beforeUrl);
+    if (!access.ok) return { ok: false, error: access.reason };
+  }
+
   try {
     switch (action.type) {
       case "click":
@@ -143,6 +171,11 @@ export async function browseAction(sessionId: string, action: BrowseAction): Pro
       case "press":
         await page.keyboard.press(action.key);
         break;
+    }
+    const afterUrl = page.url();
+    if (afterUrl && afterUrl !== "about:blank") {
+      const access = checkWebAccess(afterUrl);
+      if (!access.ok) return { ok: false, error: access.reason };
     }
     touch(s);
     return { ok: true };
@@ -167,6 +200,21 @@ export async function browseSnapshot(sessionId: string): Promise<BrowseSnapshot 
 
   const { page } = s;
   const url = page.url();
+  // Same gate as navigate: if the user (or a click) moved a granted tab onto
+  // a sensitive/blocked domain, refuse to return page content.
+  if (url && url !== "about:blank") {
+    const access = checkWebAccess(url);
+    if (!access.ok) {
+      return {
+        sessionId,
+        url,
+        title: "",
+        screenshotBase64: "",
+        text: `[Blocked] ${access.reason}`,
+        viewport: BROWSE_VIEWPORT,
+      };
+    }
+  }
   const title = await page.title().catch(() => "");
   // Best-effort: an app tab that is hidden or not yet laid out (zero-size
   // WebContentsView) can't be captured — the textual context below is what

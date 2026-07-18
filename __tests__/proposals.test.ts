@@ -50,6 +50,16 @@ describe("improvement_proposals lifecycle", () => {
     expect(updated!.audit_ref).toBe("42");
   });
 
+  it("ready_for_review merges (not approve)", () => {
+    const p = createProposal({ title: "x", rationale: "y" });
+    setProposalStatus(p.id, "approved");
+    setProposalStatus(p.id, "building");
+    setProposalStatus(p.id, "ready_for_review", { branch: "feat/x", pr_url: "https://example/pr/1" });
+    expect(() => setProposalStatus(p.id, "approved")).toThrow(/Illegal/);
+    const merged = setProposalStatus(p.id, "merged");
+    expect(merged!.status).toBe("merged");
+  });
+
   it("throws on an illegal transition (can't skip approval)", () => {
     const p = createProposal({ title: "x", rationale: "y" });
     expect(() => setProposalStatus(p.id, "building")).toThrow(/Illegal proposal transition/);

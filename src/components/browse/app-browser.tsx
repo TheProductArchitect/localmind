@@ -81,37 +81,65 @@ export function AppBrowser() {
     if (!active || granting) return;
     setGranting(true);
     try {
+      if (grants[active.id]) {
+        // Revoke even when getTargetId fails — session ids are apptab-<targetId>.
+        const sessionId = grants[active.id];
+        const targetId =
+          (await lm.getTargetId(active.id)) ||
+          (sessionId.startsWith("apptab-") ? sessionId.slice("apptab-".length) : null);
+        if (targetId) {
+          await fetch("/api/browse/app-tab", {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ targetId, action: "revoke" }),
+          }).catch(() => {});
+        } else {
+          await fetch(`/api/browse/session/${encodeURIComponent(sessionId)}`, { method: "DELETE" }).catch(() => {});
+        }
+        setGrants((g) => { const n = { ...g }; delete n[active.id]; return n; });
+        return;
+      }
       const targetId = await lm.getTargetId(active.id);
       if (!targetId) { toast("Could not identify this tab", "error"); return; }
-      if (grants[active.id]) {
-        await fetch("/api/browse/app-tab", {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ targetId, action: "revoke" }),
-        });
-        setGrants((g) => { const n = { ...g }; delete n[active.id]; return n; });
-      } else {
-        const r = await fetch("/api/browse/app-tab", {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ targetId, action: "grant" }),
-        });
-        const j = await r.json();
-        if (!r.ok) { toast(j.error || "Grant failed", "error"); return; }
-        setGrants((g) => ({ ...g, [active.id]: j.sessionId }));
-      }
+      const r = await fetch("/api/browse/app-tab", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ targetId, action: "grant" }),
+      });
+      const j = await r.json();
+      if (!r.ok) { toast(j.error || "Grant failed", "error"); return; }
+      setGrants((g) => ({ ...g, [active.id]: j.sessionId }));
     } finally {
       setGranting(false);
     }
   }
 
   // Closing a granted tab revokes it server-side (best-effort) and locally.
+  // Session ids are `apptab-<targetId>` so we can revoke without getTargetId
+  // after the native tab is already gone.
   useEffect(() => {
     const openIds = new Set(state.tabs.map((t) => t.id));
-    for (const idStr of Object.keys(grants)) {
+    const stale: { tabId: number; sessionId: string }[] = [];
+    for (const [idStr, sessionId] of Object.entries(grants)) {
       const id = Number(idStr);
-      if (!openIds.has(id)) {
-        setGrants((g) => { const n = { ...g }; delete n[id]; return n; });
+      if (!openIds.has(id)) stale.push({ tabId: id, sessionId });
+    }
+    if (stale.length === 0) return;
+    for (const { sessionId } of stale) {
+      const targetId = sessionId.startsWith("apptab-") ? sessionId.slice("apptab-".length) : null;
+      if (targetId) {
+        fetch("/api/browse/app-tab", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ targetId, action: "revoke" }),
+        }).catch(() => {});
+      } else {
+        fetch(`/api/browse/session/${encodeURIComponent(sessionId)}`, { method: "DELETE" }).catch(() => {});
       }
     }
+    setGrants((g) => {
+      const n = { ...g };
+      for (const { tabId } of stale) delete n[tabId];
+      return n;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.tabs]);
 

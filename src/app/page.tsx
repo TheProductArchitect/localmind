@@ -238,12 +238,16 @@ function ChatInner() {
   }, [orbErrorUntil]);
 
   // === Conversation CRUD ===
+  const openReqRef = useRef(0);
   async function openConversation(id: string) {
+    const req = ++openReqRef.current;
     setActiveId(id);
     setError(null);
     setSuspendedNotice(null);
     const r = await fetch(`/api/conversations/${id}`);
+    if (req !== openReqRef.current) return; // stale — a newer open won
     const j = await r.json();
+    if (req !== openReqRef.current) return;
     const items: ThreadItem[] = [];
     for (const m of j.messages || []) {
       if (m.role === "user") items.push({ kind: "user", content: m.content, images: attachmentsToImageUrls(m.attachments) });
@@ -261,6 +265,7 @@ function ChatInner() {
     fetch(`/api/chat/resume?conversation_id=${id}`)
       .then((r) => r.json()).catch(() => null)
       .then((j) => {
+        if (req !== openReqRef.current) return;
         if (j?.suspended) setSuspendedNotice({ reason: j.reason ?? "Suspended", tool: j.tool ?? "" });
       });
   }
@@ -275,11 +280,20 @@ function ChatInner() {
   }
 
   async function deleteConversation(id: string) {
-    await fetch(`/api/conversations/${id}`, {
+    const r = await fetch(`/api/conversations/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ deleted: true }),
     });
+    if (r.status === 409) {
+      const j = await r.json().catch(() => ({}));
+      toast(j.error || "This conversation can't be deleted (peer-relayed).", "error");
+      return;
+    }
+    if (!r.ok) {
+      toast("Could not delete conversation", "error");
+      return;
+    }
     if (activeId === id) { setActiveId(null); setThread([]); }
     toast("Conversation moved to trash — recoverable for 7 days.");
     loadConversations();
@@ -310,7 +324,9 @@ function ChatInner() {
   }
 
   async function decide(toolCallId: string, decision: "allow" | "deny", pin?: string) {
-    setThread((t) => t.filter((i) => !(i.kind === "confirmation" && i.c.toolCallId === toolCallId)));
+    // Keep the confirmation card until the server accepts — a wrong PIN must
+    // leave the card in place so the user can retry (otherwise the agent hangs
+    // until the confirmation timeout with no UI left).
     const r = await fetch("/api/chat/confirm", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -319,7 +335,9 @@ function ChatInner() {
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));
       toast(j.error || "Confirmation failed", "error");
+      return;
     }
+    setThread((t) => t.filter((i) => !(i.kind === "confirmation" && i.c.toolCallId === toolCallId)));
   }
 
   // === Streaming ===
@@ -364,7 +382,7 @@ function ChatInner() {
           const ev = JSON.parse(dataLine.slice(6));
           // Terminal events: stop reconnecting so we don't overwrite a real
           // agent error with "connection was interrupted".
-          if (ev.type === "done" || ev.type === "error") gotDone = true;
+          if (ev.type === "done" || ev.type === "error" || ev.type === "loop_suspended") gotDone = true;
           handleEvent(ev);
         }
       }
@@ -850,7 +868,7 @@ function ChatInner() {
               className="lm-composer__input"
               data-pulse="false"
             />
-            <MicButton onText={(t) => setInput(t)} />
+            <MicButton onText={(t, opts) => setInput((prev) => (opts?.append && prev ? `${prev} ${t}` : t))} />
             <button
               onClick={send}
               disabled={streaming || (!input.trim() && attachments.length === 0)}

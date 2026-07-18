@@ -1,5 +1,6 @@
 import { runAppleScript } from "./applescript";
 import type { Tool } from "./types";
+import { isDestructiveCommand } from "../agent/permission-guard";
 
 // Escape a value for safe interpolation inside an AppleScript double-quoted
 // string. Backslashes MUST be escaped first — escaping only quotes (the old
@@ -15,6 +16,14 @@ function asString(value: unknown): string {
 
 export const macAutomationTool: Tool = {
   actionType: "open_applications",
+  classify: (i) => {
+    if (i.operation === "notify") return "open_applications";
+    // open_app / open_url assemble AppleScript — escalate if the payload
+    // looks destructive (rm/format/etc.), otherwise keep the open_applications tier.
+    const hay = `${i.operation || ""} ${i.app || ""} ${i.url || ""} ${i.message || ""}`;
+    if (isDestructiveCommand(hay)) return "destructive_shell";
+    return "open_applications";
+  },
   preview: (i) => {
     if (i.operation === "open_app") return `Open application: ${i.app}`;
     if (i.operation === "open_url") return `Open URL in Safari: ${i.url}`;

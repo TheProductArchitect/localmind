@@ -32,9 +32,14 @@ export default function PermissionsPage() {
 
   async function load() {
     const r = await fetch("/api/permissions");
-    const j = await r.json();
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j || !Array.isArray(j.profiles)) {
+      setProfiles([]);
+      setActive("");
+      return;
+    }
     setProfiles(j.profiles);
-    setActive(j.active);
+    setActive(j.active || j.profiles[0]?.id || "");
   }
   useEffect(() => { load(); }, []);
 

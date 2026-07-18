@@ -46,6 +46,11 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/memory/*", methods: "ALL", role: "authenticated" },
 
   // --- Knowledge base ---
+  // Owner-only share-policy MUST sit above the /api/knowledge/* wildcard —
+  // first-match wins, so a later owner entry would never run.
+  { path: "/api/knowledge/share-policy", methods: ["GET"], role: "owner" },
+  { path: "/api/knowledge/share-policy/*", methods: ["GET", "PUT", "DELETE"], role: "owner" },
+  { path: "/api/knowledge/peer-search", methods: ["POST"], role: "authenticated" },
   { path: "/api/knowledge/*", methods: "ALL", role: "authenticated" },
 
   // --- Audit log ---
@@ -213,9 +218,6 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   // V6.8: Task graphs UI surface.
   { path: "/api/graphs", methods: ["GET"], role: "authenticated" },
   { path: "/api/graphs/*", methods: ["GET", "DELETE"], role: "authenticated" },
-  { path: "/api/knowledge/share-policy", methods: ["GET"], role: "owner" },
-  { path: "/api/knowledge/share-policy/*", methods: ["GET", "PUT", "DELETE"], role: "owner" },
-  { path: "/api/knowledge/peer-search", methods: ["POST"], role: "authenticated" },
   { path: "/api/audit/*", methods: ["GET"], role: "authenticated" },
 
   // V6.2: Pairing flow + peers CRUD. All gated owner — fleet management is
@@ -230,7 +232,14 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/fleet/peers/*/chat", methods: ["POST"], role: "authenticated" },
 ];
 
-const RANK: Record<RouteRole, number> = { public: 0, authenticated: 1, member: 2, owner: 3 };
+// User roles include `guest` (not a RouteRole); guest satisfies `authenticated`.
+const RANK: Record<string, number> = {
+  public: 0,
+  guest: 1,
+  authenticated: 1,
+  member: 2,
+  owner: 3,
+};
 
 // Matches a route path against a pattern with "*" wildcards on path segments.
 function matches(pattern: string, path: string): boolean {

@@ -313,6 +313,9 @@ export async function* runAgent(
         }
         // Tell the client to drop the leaked JSON bubble; don't persist it.
         yield { type: "tool_text_recovered" };
+        if (iterText && assistantText.endsWith(iterText)) {
+          assistantText = assistantText.slice(0, -iterText.length);
+        }
         toolCalls.push(...recovered);
         iterText = "";
       }

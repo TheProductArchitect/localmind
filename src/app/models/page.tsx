@@ -48,11 +48,21 @@ export default function ModelsPage() {
   useEffect(() => { load(provider); }, [provider]);
 
   async function setActiveModel(name: string) {
-    await fetch("/api/settings", {
+    const r = await fetch("/api/settings", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ active_model: name }),
+      body: JSON.stringify({
+        active_model: name,
+        // Selecting a model from the LM Studio tab must also switch the chat provider.
+        ...(provider === "lmstudio" ? { provider: "lmstudio" } : {}),
+        ...(provider === "ollama" ? { provider: "ollama" } : {}),
+      }),
     });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      setErr(j.error || `Could not set active model (HTTP ${r.status})`);
+      return;
+    }
     setActive(name);
   }
 
@@ -69,7 +79,12 @@ export default function ModelsPage() {
       return;
     }
     if (!confirm(`Delete ${name}? This frees ${fmtSize(models.find((m) => m.name === name)?.size)} of disk.`)) return;
-    await fetch(`/api/models/${encodeURIComponent(name)}`, { method: "DELETE" });
+    const r = await fetch(`/api/models/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      setErr(j.error || `Delete failed (HTTP ${r.status})`);
+      return;
+    }
     load();
   }
 
@@ -81,9 +96,16 @@ export default function ModelsPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-      const reader = res.body!.getReader();
+      if (!res.ok || !res.body) {
+        const j = await res.json().catch(() => ({}));
+        setErr(j.error || `Pull failed (HTTP ${res.status})`);
+        setPulling(null);
+        return;
+      }
+      const reader = res.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
+      let finished = false;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -95,10 +117,11 @@ export default function ModelsPage() {
           if (!line) continue;
           const o = JSON.parse(line.slice(6));
           if (o.type === "progress") setPulling({ label, pct: o.pct, status: o.status, bytes: o.bytes, total: o.total });
-          if (o.type === "done") { setPulling(null); load(); }
-          if (o.type === "error") { setErr(o.message); setPulling(null); }
+          if (o.type === "done") { finished = true; setPulling(null); load(); }
+          if (o.type === "error") { finished = true; setErr(o.message); setPulling(null); }
         }
       }
+      if (!finished) setPulling(null);
     } catch (e: any) {
       setErr(e?.message || "Pull failed");
       setPulling(null);

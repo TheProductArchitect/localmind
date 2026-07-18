@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 
 type MicState = "idle" | "recording" | "transcribing" | "streaming";
 
-export function MicButton({ onText }: { onText: (t: string) => void }) {
+export function MicButton({ onText }: { onText: (t: string, opts?: { append?: boolean }) => void }) {
   const [state, setState] = useState<MicState>("idle");
   const [available, setAvailable] = useState<boolean | null>(null);
   const [tooltip, setTooltip] = useState("Click: dictate · Shift-click: continuous");
@@ -117,7 +117,7 @@ export function MicButton({ onText }: { onText: (t: string) => void }) {
             return;
           }
           silentRunRef.current = 0;
-          onText(j.text.trim());
+          onText(j.text.trim(), { append: true });
         } catch { /* swallow; next chunk will try again */ }
       };
       rec.onstop = () => {
