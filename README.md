@@ -195,6 +195,16 @@ a sandbox `PLAYWRIGHT_BROWSERS_PATH` is incomplete.
 - Chat header (model / mode / auto-read) and composer stay fixed; only the thread scrolls
 - **Settings → General → App font size** sets `--lm-root-fs` (12–28px) for the whole app
 
+### Multimodal input
+
+Attach images in the chat composer (paperclip) to send them with your message.
+Images are downscaled client-side (max 1024px) to keep payloads lean, stored
+with the message, and passed to the model. Understanding them requires a
+**vision model** (e.g. `llava`, `llama3.2-vision`, or a cloud vision model) —
+pull/select one under **Models**. Video isn't supported yet: local vision models
+process still images, not video (frame extraction / a cloud video model is a
+future path).
+
 ### Models
 
 LocalMind works with small Ollama models (e.g. `llama3.2` ~3B), but tool judgment improves

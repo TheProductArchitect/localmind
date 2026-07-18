@@ -8,12 +8,27 @@ import { getMessages } from "../db/queries";
  * idle summary precompute so the rolling summary's `covered_count` watermark
  * stays consistent between them.
  */
+function imagesFromAttachments(attachments: string | null | undefined): string[] {
+  if (!attachments) return [];
+  try {
+    const arr = JSON.parse(attachments) as { data?: string }[];
+    return arr
+      .map((a) => (a?.data || "").replace(/^data:[^;]+;base64,/, ""))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 export function buildConversationMessages(conversationId: string): ChatMessage[] {
   const history = getMessages(conversationId);
   const out: ChatMessage[] = [];
   for (const m of history) {
-    if (m.role === "user" || m.role === "assistant") {
-      out.push({ role: m.role, content: m.content });
+    if (m.role === "user") {
+      const images = imagesFromAttachments(m.attachments);
+      out.push(images.length ? { role: "user", content: m.content, images } : { role: "user", content: m.content });
+    } else if (m.role === "assistant") {
+      out.push({ role: "assistant", content: m.content });
     } else if (m.role === "tool") {
       try {
         const parsed = JSON.parse(m.content);

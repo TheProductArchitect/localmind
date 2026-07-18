@@ -97,6 +97,8 @@ export async function* runAgent(
     allowedTools?: readonly string[];
     /** When set, use this model instead of the routed/default model. */
     modelPreference?: string | null;
+    /** Image attachments for a multimodal user turn ({ name, mime, data(base64) }). */
+    images?: { name?: string; mime: string; data: string }[];
   }
 ): AsyncGenerator<SSEEvent> {
   const settings = getSettings();
@@ -137,6 +139,7 @@ export async function* runAgent(
       content: userMessage,
       token_count: approxTokens(userMessage),
       parent_message_id: null,
+      attachments: opts?.images?.length ? JSON.stringify(opts.images) : null,
     });
   }
 

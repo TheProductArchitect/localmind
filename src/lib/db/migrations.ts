@@ -1315,6 +1315,14 @@ const convMigrations: Migration[] = [
       `);
     },
   },
+  {
+    // v4: multimodal input. `attachments` holds a JSON array of
+    // { name, mime, data(base64) } for images sent with a user message.
+    version: 4,
+    up: (db) => {
+      db.exec("ALTER TABLE messages ADD COLUMN attachments TEXT;");
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database, kind: "config" | "conversations" | "knowledge") {

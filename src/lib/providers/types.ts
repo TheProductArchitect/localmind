@@ -1,5 +1,7 @@
 export type ChatMessage =
-  | { role: "system" | "user"; content: string }
+  | { role: "system"; content: string }
+  // `images` are base64 strings (no data: prefix) for multimodal/vision models.
+  | { role: "user"; content: string; images?: string[] }
   | { role: "assistant"; content: string; tool_calls?: ToolCallReq[] }
   | { role: "tool"; content: string; tool_call_id: string; name: string };
 

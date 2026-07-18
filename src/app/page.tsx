@@ -33,14 +33,68 @@ import { ConfirmationCard, type ConfirmationState } from "@/components/chat/conf
 import { MicButton, SpeakerButton, ConversationButton, speak } from "@/components/chat/voice";
 import { toast } from "@/components/toast";
 import { Orb, type OrbState } from "@/components/orb";
-import { Plus, Send, Trash2, Star, Copy, RefreshCw, Volume2, Download } from "lucide-react";
+import { Plus, Send, Trash2, Star, Copy, RefreshCw, Volume2, Download, Paperclip, X } from "lucide-react";
 
 type Conversation = { id: string; title: string; updated_at: number; starred: number };
+type Attachment = { name: string; mime: string; data: string; url: string };
 type ThreadItem =
-  | { kind: "user"; content: string }
+  | { kind: "user"; content: string; images?: string[] }
   | { kind: "assistant"; content: string }
   | { kind: "tool"; tc: ToolCallState }
   | { kind: "confirmation"; c: ConfirmationState };
+
+const MAX_ATTACH = 6;
+const MAX_IMG_DIM = 1024;
+
+// Read an image file, downscale it (bounds base64 size + context tokens), and
+// return a base64 attachment for a multimodal turn.
+async function fileToAttachment(file: File): Promise<Attachment | null> {
+  if (!file.type.startsWith("image/")) return null;
+  const dataUrl: string = await new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(fr.result as string);
+    fr.onerror = rej;
+    fr.readAsDataURL(file);
+  });
+  try {
+    const img: HTMLImageElement = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = rej;
+      i.src = dataUrl;
+    });
+    let { width, height } = img;
+    if (width > MAX_IMG_DIM || height > MAX_IMG_DIM) {
+      const s = Math.min(MAX_IMG_DIM / width, MAX_IMG_DIM / height);
+      width = Math.round(width * s);
+      height = Math.round(height * s);
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return { name: file.name, mime: file.type, data: dataUrl.replace(/^data:[^;]+;base64,/, ""), url: dataUrl };
+    ctx.drawImage(img, 0, 0, width, height);
+    const mime = file.type === "image/png" ? "image/png" : "image/jpeg";
+    const out = canvas.toDataURL(mime, 0.85);
+    return { name: file.name, mime, data: out.replace(/^data:[^;]+;base64,/, ""), url: out };
+  } catch {
+    return { name: file.name, mime: file.type, data: dataUrl.replace(/^data:[^;]+;base64,/, ""), url: dataUrl };
+  }
+}
+
+function attachmentsToImageUrls(attachmentsJson: string | null | undefined): string[] | undefined {
+  if (!attachmentsJson) return undefined;
+  try {
+    const arr = JSON.parse(attachmentsJson) as { mime?: string; data?: string }[];
+    const urls = arr
+      .map((a) => (a?.data ? (a.data.startsWith("data:") ? a.data : `data:${a.mime || "image/jpeg"};base64,${a.data}`) : ""))
+      .filter(Boolean);
+    return urls.length ? urls : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function ChatInner() {
   const searchParams = useSearchParams();
@@ -87,6 +141,25 @@ function ChatInner() {
   const [activeTools, setActiveTools] = useState<Record<string, string>>({});
   const [orbErrorUntil, setOrbErrorUntil] = useState(0);
   const [suspendedNotice, setSuspendedNotice] = useState<{ reason: string; tool: string } | null>(null);
+
+  // Multimodal input — staged image attachments for the next turn.
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []);
+    if (files.some((f) => f.type.startsWith("video/"))) {
+      toast("Video isn't supported by local vision models yet — images only for now.", "info");
+    }
+    const imgs = files.filter((f) => f.type.startsWith("image/"));
+    const added: Attachment[] = [];
+    for (const f of imgs) {
+      const a = await fileToAttachment(f);
+      if (a) added.push(a);
+    }
+    if (added.length) setAttachments((cur) => [...cur, ...added].slice(0, MAX_ATTACH));
+    e.target.value = "";
+  }
 
   const threadRef = useRef<HTMLDivElement>(null);
 
@@ -160,7 +233,7 @@ function ChatInner() {
     const j = await r.json();
     const items: ThreadItem[] = [];
     for (const m of j.messages || []) {
-      if (m.role === "user") items.push({ kind: "user", content: m.content });
+      if (m.role === "user") items.push({ kind: "user", content: m.content, images: attachmentsToImageUrls(m.attachments) });
       else if (m.role === "assistant") items.push({ kind: "assistant", content: m.content });
       else if (m.role === "tool") {
         try {
@@ -341,15 +414,22 @@ function ChatInner() {
 
   async function send() {
     const text = input.trim();
-    if (!text || streaming) return;
+    if ((!text && attachments.length === 0) || streaming) return;
     let convId = activeId;
     if (!convId) {
       const r = await fetch("/api/conversations", { method: "POST" });
       convId = (await r.json()).conversation.id;
       setActiveId(convId);
     }
+    const outgoing = attachments;
+    const images = outgoing.map((a) => ({ name: a.name, mime: a.mime, data: a.data }));
     setInput("");
-    setThread((t) => [...t, { kind: "user", content: text }, { kind: "assistant", content: "" }]);
+    setAttachments([]);
+    setThread((t) => [
+      ...t,
+      { kind: "user", content: text, images: outgoing.length ? outgoing.map((a) => a.url) : undefined },
+      { kind: "assistant", content: "" },
+    ]);
 
     // Fleet chat relay: when the user selects a peer, route the turn through
     // /api/fleet/peers/[id]/chat instead of the local streaming endpoint. The
@@ -391,7 +471,7 @@ function ChatInner() {
       return;
     }
 
-    streamChat(convId!, { message: text, persona });
+    streamChat(convId!, { message: text, persona, ...(images.length ? { images } : {}) });
   }
 
   async function regenerate() {
@@ -612,7 +692,17 @@ function ChatInner() {
               if (item.kind === "user")
                 return (
                   <div key={i} className="lm-turn lm-turn--user">
-                    <div className="lm-bubble">{item.content}</div>
+                    <div className="lm-bubble">
+                      {item.images?.length ? (
+                        <div className="flex flex-wrap gap-2 mb-2 justify-end">
+                          {item.images.map((u, k) => (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img key={k} src={u} alt="attachment" className="h-28 w-28 object-cover rounded-lg border border-black/10" />
+                          ))}
+                        </div>
+                      ) : null}
+                      {item.content}
+                    </div>
                   </div>
                 );
               if (item.kind === "assistant")
@@ -700,7 +790,43 @@ function ChatInner() {
               })()}
             </div>
           )}
+          {attachments.length > 0 && (
+            <div className="mx-auto flex flex-wrap gap-2 mb-2" style={{ maxWidth: 720 }}>
+              {attachments.map((a, i) => (
+                <div key={i} className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={a.url} alt={a.name} className="h-16 w-16 object-cover rounded-lg border border-white/10" />
+                  <button
+                    onClick={() => setAttachments((cur) => cur.filter((_, j) => j !== i))}
+                    aria-label="Remove attachment"
+                    className="absolute -top-1.5 -right-1.5 h-5 w-5 inline-flex items-center justify-center rounded-full bg-background border border-white/20 text-white/70 hover:text-white"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="mx-auto flex items-end gap-2" style={{ maxWidth: 720 }}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={onPickFiles}
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={streaming || attachments.length >= MAX_ATTACH}
+              className="lm-composer__send"
+              style={{ background: "hsl(0 0% 100% / 0.06)", color: "hsl(0 0% 100% / 0.9)" }}
+              aria-label="Attach image"
+              title="Attach image (vision models)"
+              data-pulse="true"
+            >
+              <Paperclip className="h-4 w-4" />
+            </button>
             <Textarea
               rows={1}
               placeholder={runOnPeer ? "Message Sora on the selected peer…" : "Message Sora…"}
@@ -713,7 +839,7 @@ function ChatInner() {
             <MicButton onText={(t) => setInput(t)} />
             <button
               onClick={send}
-              disabled={streaming || !input.trim()}
+              disabled={streaming || (!input.trim() && attachments.length === 0)}
               className="lm-composer__send"
               aria-label="Send"
               data-pulse="true"

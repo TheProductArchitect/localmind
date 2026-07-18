@@ -14,10 +14,19 @@ const SSE_HEADERS = {
 };
 
 export async function POST(req: NextRequest) {
-  const { conversationId, message, regenerate, persona, browseSessionId } = await req.json();
+  const { conversationId, message, regenerate, persona, browseSessionId, images } = await req.json();
   if (!conversationId || (!regenerate && typeof message !== "string")) {
     return new Response("conversationId and message are required", { status: 400 });
   }
+
+  // Multimodal image attachments: { name?, mime, data(base64) }. Capped in
+  // count and size so a stray upload can't blow up the request or the DB.
+  const attachments = Array.isArray(images)
+    ? images
+        .filter((a: any) => a && typeof a.data === "string" && typeof a.mime === "string" && a.mime.startsWith("image/"))
+        .slice(0, 6)
+        .map((a: any) => ({ name: typeof a.name === "string" ? a.name.slice(0, 200) : undefined, mime: a.mime, data: a.data }))
+    : undefined;
 
   let browsePrefix: string | undefined;
   if (typeof browseSessionId === "string" && browseSessionId.trim()) {
@@ -82,6 +91,7 @@ export async function POST(req: NextRequest) {
         for await (const ev of runAgent(conversationId, message || "", controller.signal, {
           regenerate: !!regenerate,
           systemPrefix,
+          images: attachments,
         })) {
           pushEvent(conversationId, ev.type, ev);
         }

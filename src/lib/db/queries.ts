@@ -165,6 +165,8 @@ export type Message = {
   created_at: number;
   token_count: number;
   parent_message_id: string | null;
+  // JSON array of { name, mime, data(base64) } for multimodal (image) input.
+  attachments?: string | null;
 };
 
 export function createConversation(profileId?: string, ownerUserId?: string): Conversation {
@@ -223,8 +225,8 @@ export function addMessage(m: Omit<Message, "id" | "created_at"> & { id?: string
   // Two-table write — wrapped in a transaction so a crash can't half-apply it.
   const tx = db.transaction(() => {
     db.prepare(
-      "INSERT INTO messages (id, conversation_id, role, content, created_at, token_count, parent_message_id) VALUES (?,?,?,?,?,?,?)"
-    ).run(id, m.conversation_id, m.role, m.content, created_at, m.token_count, m.parent_message_id);
+      "INSERT INTO messages (id, conversation_id, role, content, created_at, token_count, parent_message_id, attachments) VALUES (?,?,?,?,?,?,?,?)"
+    ).run(id, m.conversation_id, m.role, m.content, created_at, m.token_count, m.parent_message_id, m.attachments ?? null);
     db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(created_at, m.conversation_id);
   });
   tx();
