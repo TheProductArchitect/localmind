@@ -92,8 +92,9 @@ Built-ins that matter for web work:
 | `web_search` | Snippets / discovery only |
 | `browser` | Raw Chromium — confirmation on every call |
 | `schedule_task` | Create/list/update/disable recurring tasks (NL → cron, confirmed) |
+| `spawn_agents` | Preferred unified spawn — one goal or a batch; mode inferred (defaults sequential) |
 | `spawn_subagent` | Single specialist child (chain when B needs A's output) |
-| `spawn_subagents_sequential` | Batch, one child at a time — default for multi-unit work (spares RAM) |
+| `spawn_subagents_sequential` | Batch, one child at a time (legacy / explicit) |
 | `spawn_subagents_parallel` | Batch with governor-capped concurrency |
 
 Chat shows spawn work as a high-level agent card; expand **Show what this agent did**
@@ -111,7 +112,9 @@ other destructive floors still confirm). Toggle Auto / Plan / Ask in chat or Set
 - **Automations** — scheduled tasks, condition monitors, multi-step workflows with human approval;
   Sora can self-serve recurring work via `schedule_task` (confirmed before it commits)
 - **Orchestration** — personas, routing rules (model per task shape), task graphs, fleet federation
-  (paired LAN devices sync chats with per-device attribution; **Run on → Auto** places turns on the least-loaded peer)
+  (paired LAN devices sync chats + small image attachments with per-device attribution;
+  **Run on → Auto** is the default when peers are paired and places turns on the least-loaded
+  peer that accepts chat relay; task graphs use the same placement runner)
 - **Pillars** — every unit of work is tagged `ideate · research · execute · coordinate · communicate · maintain`
   so the Ops board can filter and group it; the **Strategist** persona runs divergent→convergent ideation
 - **Channels** — Telegram, SMS/voice (Twilio); reply YES/NO to approve gated actions
@@ -162,8 +165,8 @@ tools (with permission tiers), the channels it messages on, its web access
 
 When enabled (**off by default**) and the machine is idle within a nightly
 window, a worker cycle runs the test suite (read-only w.r.t. app code, recorded
-to `self_checks`) and — only when `LM_SELF_IMPROVE=propose` — writes
-**improvement proposal cards** to the Ops board. Turning a proposal into code is
+to `self_checks`) and — only when `LM_SELF_IMPROVE=propose` — turns failing checks into
+**improvement proposal cards** on the Ops board (Gate 1). Turning a proposal into code is
 strictly two-gate: **Gate 1** Sora only proposes; **Gate 2** the owner approves
 the card, which authorizes a branch/PR build. Sora never merges, hot-patches, or
 restarts the running app — final merge is always human. There is no auto-build

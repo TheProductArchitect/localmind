@@ -21,12 +21,15 @@ See also the live surface / code graph: [`architecture.md`](./architecture.md).
 | H | User Context Graph `/context` | ✅ Phase 1 (REST + viz) | `src/lib/context-graph.ts`, `/api/context/graph`, Knowledge **About you** tab; `/context` redirects | `__tests__/context-graph.test.ts` |
 | E | Renovate + CI | ✅ | `renovate.json` (CI already present) | — |
 | — | Agent mode (auto / plan / ask) | ✅ | `permission-guard.ts`, settings + chat toggle; **default `auto`** (migration v28); settings PATCH allow-list | `__tests__/permission-guard.test.ts`, `__tests__/settings-allowlist.test.ts` |
-| — | Sequential batch spawn | ✅ | `spawn_subagents_sequential` in `subagent.ts`; Sora grant v29; system-prompt prefers sequential for multi-unit work | `__tests__/spawn-sequential.test.ts` |
+| — | Unified `spawn_agents` | ✅ | `spawn_agents` + `compileSpawnIntent` (`spawn-intent.ts`); triad kept; Sora grant v31; prompt prefers unified tool | `__tests__/spawn-intent.test.ts`, `__tests__/text-tool-calls.test.ts` |
+| — | Sequential batch spawn | ✅ | `spawn_subagents_sequential` in `subagent.ts`; Sora grant v29 | `__tests__/spawn-sequential.test.ts` |
 | — | Text tool-call recovery | ✅ | `text-tool-calls.ts` — quote-wrap repair, loose spawn recovery, sequential remap from prose | `__tests__/text-tool-calls.test.ts` |
+| — | Fleet LAN mesh | ✅ | conversation-sync (text + small images), origin labels, chat Auto placement, relay SSE status, `createPlacementRunner` on graph collect | `__tests__/conversation-sync.test.ts` |
+| — | App icon (orb SVG) | ✅ | `src/app/icon.svg` | — |
 | — | LM Studio provider | ✅ | `openai-compatible.ts` (`apiKeyOptional`), providers list | — |
 
-Config schema is at **v29**. Migrations are set-based (missing versions apply
-even if a higher version was recorded first). Full suite: **42 files / 285+
+Config schema is at **v31**. Migrations are set-based (missing versions apply
+even if a higher version was recorded first). Full suite: **44 files / 293+
 tests**. Typecheck clean.
 
 ## Integration caveats (follow-ups)
@@ -41,9 +44,10 @@ tests**. Typecheck clean.
   enforced by the proposal transition state machine.
 - **H** is Phase 1 (read-only viz + REST ingestion). The GraphQL layer and
   confirm/edit/delete of inferred nodes are the documented later phase.
-- **Small-model spawn robustness** — recovery + sequential default help 3B-class
-  models; unified `spawn_agents` + `compileSpawnIntent` is preferred (triad kept).
-  (see chat notes / architecture follow-up).
+- **Fleet** — remote chat is progressive-status SSE over a single relay reply
+  (not token-streaming across the mesh yet). Attachment sync caps at 256 KiB
+  of validated `image/*` JSON per conversation pack.
+- **Spawn** — prefer `spawn_agents`; legacy triad remains for back-compat.
 
 ## Deferred — paid cloud (await owner decision)
 
