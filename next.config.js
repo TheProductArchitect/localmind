@@ -23,7 +23,6 @@ const nextConfig = {
     // (e.g. /audit, /permissions, /mcp, /models) keep their URLs — they're
     // reached from the Settings/Fleet hubs or the ⌘K palette.
     return [
-      { source: "/today",  destination: "/",                     permanent: false },
       { source: "/memory", destination: "/knowledge?tab=memory", permanent: false },
     ];
   },

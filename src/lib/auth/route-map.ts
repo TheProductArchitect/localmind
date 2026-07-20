@@ -133,7 +133,7 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   // --- V5: Agent configuration (personas, system prompt blocks) ---
   { path: "/api/agent/personas", methods: ["GET"], role: "authenticated" },
   { path: "/api/agent/personas", methods: ["POST"], role: "owner" },
-  { path: "/api/agent/personas/*", methods: ["GET"], role: "authenticated" },
+  // No GET-by-id handler — list is GET /api/agent/personas; mutate via PATCH/DELETE.
   { path: "/api/agent/personas/*", methods: ["PATCH", "DELETE"], role: "owner" },
   { path: "/api/agent/system-prompt/*", methods: ["GET", "POST"], role: "authenticated" },
   { path: "/api/agent/system-prompt/*", methods: ["PATCH"], role: "owner" },

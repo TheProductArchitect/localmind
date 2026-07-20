@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Button, Input, Badge, EmptyState } from "@/components/ui";
 import { toast } from "@/components/toast";
 
@@ -22,13 +23,21 @@ type PeerVerification = {
 const TOOLS = ["", "filesystem", "web_search", "memory", "calendar", "email", "mac_automation", "browser"];
 const STATUSES = ["", "allowed", "denied", "pending", "failed"];
 
-export default function AuditPage() {
+function AuditPageInner() {
+  const searchParams = useSearchParams();
+  const deepId = (() => {
+    const raw = searchParams.get("id");
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  })();
+
   const [rows, setRows] = useState<Row[]>([]);
   const [q, setQ] = useState("");
   const [tool, setTool] = useState("");
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(0);
-  const [expanded, setExpanded] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState<number | null>(deepId);
   const [verify, setVerify] = useState<string | null>(null);
   const [peerVerifications, setPeerVerifications] = useState<Record<number, { loading: boolean; data?: PeerVerification[]; note?: string }>>({});
   const PAGE = 50;
@@ -37,11 +46,26 @@ export default function AuditPage() {
     const params = new URLSearchParams({
       q, tool, status, limit: String(PAGE), offset: String(page * PAGE),
     });
+    // Analytics failure links deep-link with ?id= — ask the API for that row
+    // when filtering would otherwise hide it from the first page.
+    if (deepId != null && page === 0 && !q && !tool && !status) {
+      params.set("id", String(deepId));
+    }
     const r = await fetch(`/api/audit?${params}`);
     const j = await r.json();
     setRows(j.rows || []);
   }
-  useEffect(() => { load(); }, [page, tool, status]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [page, tool, status, deepId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (deepId == null) return;
+    setExpanded(deepId);
+    // Scroll after paint once the row is in the DOM.
+    const t = window.setTimeout(() => {
+      document.getElementById(`audit-row-${deepId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 50);
+    return () => window.clearTimeout(t);
+  }, [deepId, rows]);
 
   async function runVerify() {
     const r = await fetch("/api/audit/verify", { method: "POST" });
@@ -106,12 +130,13 @@ export default function AuditPage() {
       ) : (
         <div className="border rounded-md divide-y">
           {rows.map((r) => (
-            <div key={r.id}>
+            <div key={r.id} id={`audit-row-${r.id}`}>
               <button
                 className="w-full flex items-center gap-3 px-3 py-2 text-sm text-left hover:bg-accent/40"
                 aria-expanded={expanded === r.id}
                 aria-controls={`audit-detail-${r.id}`}
                 onClick={() => setExpanded(expanded === r.id ? null : r.id)}
+                style={deepId === r.id ? { background: "hsl(0 0% 100% / 0.06)" } : undefined}
               >
                 <span className="text-muted-foreground w-36 shrink-0">
                   {new Date(r.timestamp).toLocaleString()}
@@ -202,5 +227,13 @@ export default function AuditPage() {
         </Button>
       </div>
     </div>
+  );
+}
+
+export default function AuditPage() {
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-6xl px-10 py-14 lm-body">Loading audit…</div>}>
+      <AuditPageInner />
+    </Suspense>
   );
 }

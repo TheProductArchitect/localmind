@@ -283,9 +283,10 @@ export type AuditRow = {
   row_hash: string;
 };
 
-export function listAudit(limit = 100, offset = 0, filters?: { tool?: string; status?: string; q?: string }): AuditRow[] {
+export function listAudit(limit = 100, offset = 0, filters?: { tool?: string; status?: string; q?: string; id?: number }): AuditRow[] {
   let sql = "SELECT * FROM audit_log WHERE 1=1";
   const params: any[] = [];
+  if (filters?.id != null) { sql += " AND id=?"; params.push(filters.id); }
   if (filters?.tool) { sql += " AND tool_name=?"; params.push(filters.tool); }
   if (filters?.status) { sql += " AND status=?"; params.push(filters.status); }
   if (filters?.q) { sql += " AND (input LIKE ? OR output_summary LIKE ?)"; params.push(`%${filters.q}%`, `%${filters.q}%`); }
