@@ -27,7 +27,14 @@ export type Settings = {
   api_token_hash: string | null;
   context_window: number;
   agent_mode: AgentMode;
+  web_access_killed: number;
+  web_search_provider: WebSearchProvider;
+  idle_work_enabled: number;
+  idle_start_hour: number;
+  idle_end_hour: number;
 };
+
+export type WebSearchProvider = "auto" | "brave" | "you" | "duckduckgo";
 
 export type AgentMode = "auto" | "plan" | "ask";
 
@@ -107,7 +114,12 @@ export type MemoryItem = {
 export function listMemory(userId?: string): MemoryItem[] {
   const db = getConfigDb();
   if (userId) {
-    return db.prepare("SELECT * FROM memory WHERE user_id=? ORDER BY created_at").all(userId) as MemoryItem[];
+    // Include unowned (user_id IS NULL) memory — the memory tool writes with the
+    // conversation's owner, which is null on single-operator/localhost setups.
+    // Without this, memory Sora saves never shows for the logged-in owner.
+    return db
+      .prepare("SELECT * FROM memory WHERE user_id IS NULL OR user_id=? ORDER BY created_at")
+      .all(userId) as MemoryItem[];
   }
   return db.prepare("SELECT * FROM memory ORDER BY created_at").all() as MemoryItem[];
 }
@@ -148,6 +160,10 @@ export type Conversation = {
   tags: string;
   profile_id: string | null;
   owner_user_id: string | null;
+  /** Stable id shared across fleet peers for the same logical thread. */
+  sync_id?: string | null;
+  /** Node that first created this conversation. */
+  origin_node_id?: string | null;
 };
 
 export type Message = {
@@ -158,20 +174,40 @@ export type Message = {
   created_at: number;
   token_count: number;
   parent_message_id: string | null;
+  // JSON array of { name, mime, data(base64) } for multimodal (image) input.
+  attachments?: string | null;
+  /** Which fleet node authored / first persisted this message. */
+  origin_node_id?: string | null;
+  /** Human label for that node (hostname / peer label) at write time. */
+  origin_label?: string | null;
 };
+
+function localNodeMeta(): { node_id: string | null; label: string } {
+  try {
+    // Lazy — identity may not exist until fleet migrations run.
+    const { getNodeIdentity } = require("../fleet/identity") as typeof import("../fleet/identity");
+    const id = getNodeIdentity();
+    const os = require("os") as typeof import("os");
+    const label = (os.hostname() || "this-device").split(".")[0];
+    return { node_id: id.node_id, label };
+  } catch {
+    return { node_id: null, label: "this-device" };
+  }
+}
 
 export function createConversation(profileId?: string, ownerUserId?: string): Conversation {
   const id = nanoid(12);
   const now = Date.now();
+  const meta = localNodeMeta();
   getConvDb()
     .prepare(
-      "INSERT INTO conversations (id, title, created_at, updated_at, profile_id, owner_user_id) VALUES (?,?,?,?,?,?)"
+      "INSERT INTO conversations (id, title, created_at, updated_at, profile_id, owner_user_id, sync_id, origin_node_id) VALUES (?,?,?,?,?,?,?,?)"
     )
-    .run(id, "New conversation", now, now, profileId ?? null, ownerUserId ?? null);
+    .run(id, "New conversation", now, now, profileId ?? null, ownerUserId ?? null, id, meta.node_id);
   return {
     id, title: "New conversation", created_at: now, updated_at: now,
     starred: 0, deleted_at: null, tags: "[]", profile_id: profileId ?? null,
-    owner_user_id: ownerUserId ?? null,
+    owner_user_id: ownerUserId ?? null, sync_id: id, origin_node_id: meta.node_id,
   };
 }
 
@@ -212,16 +248,28 @@ export function getMessages(conversationId: string): Message[] {
 export function addMessage(m: Omit<Message, "id" | "created_at"> & { id?: string; created_at?: number }): Message {
   const id = m.id || nanoid(12);
   const created_at = m.created_at || Date.now();
+  const meta = localNodeMeta();
+  const origin_node_id = m.origin_node_id ?? meta.node_id;
+  const origin_label = m.origin_label ?? meta.label;
   const db = getConvDb();
   // Two-table write — wrapped in a transaction so a crash can't half-apply it.
   const tx = db.transaction(() => {
     db.prepare(
-      "INSERT INTO messages (id, conversation_id, role, content, created_at, token_count, parent_message_id) VALUES (?,?,?,?,?,?,?)"
-    ).run(id, m.conversation_id, m.role, m.content, created_at, m.token_count, m.parent_message_id);
+      "INSERT INTO messages (id, conversation_id, role, content, created_at, token_count, parent_message_id, attachments, origin_node_id, origin_label) VALUES (?,?,?,?,?,?,?,?,?,?)"
+    ).run(
+      id, m.conversation_id, m.role, m.content, created_at, m.token_count,
+      m.parent_message_id, m.attachments ?? null, origin_node_id, origin_label
+    );
     db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(created_at, m.conversation_id);
   });
   tx();
-  return { id, created_at, ...m };
+  const row = { id, created_at, ...m, origin_node_id, origin_label };
+  // Best-effort mesh fan-out — never blocks the chat path.
+  try {
+    const { scheduleConversationSync } = require("../fleet/conversation-sync") as typeof import("../fleet/conversation-sync");
+    scheduleConversationSync(m.conversation_id);
+  } catch { /* fleet not ready */ }
+  return row;
 }
 
 export function deleteTrailingTurn(conversationId: string) {
@@ -269,9 +317,10 @@ export type AuditRow = {
   row_hash: string;
 };
 
-export function listAudit(limit = 100, offset = 0, filters?: { tool?: string; status?: string; q?: string }): AuditRow[] {
+export function listAudit(limit = 100, offset = 0, filters?: { tool?: string; status?: string; q?: string; id?: number }): AuditRow[] {
   let sql = "SELECT * FROM audit_log WHERE 1=1";
   const params: any[] = [];
+  if (filters?.id != null) { sql += " AND id=?"; params.push(filters.id); }
   if (filters?.tool) { sql += " AND tool_name=?"; params.push(filters.tool); }
   if (filters?.status) { sql += " AND status=?"; params.push(filters.status); }
   if (filters?.q) { sql += " AND (input LIKE ? OR output_summary LIKE ?)"; params.push(`%${filters.q}%`, `%${filters.q}%`); }

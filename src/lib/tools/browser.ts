@@ -1,18 +1,21 @@
 import type { Browser } from "playwright";
 import type { Tool } from "./types";
 import { logger } from "../logger";
+import { withPlaywrightBrowsersPath } from "../playwright-path";
 
 let browserInstance: Browser | null = null;
 
-async function getBrowser(): Promise<Browser> {
+export async function getBrowser(): Promise<Browser> {
   if (browserInstance && browserInstance.isConnected()) return browserInstance;
-  const { chromium } = await import("playwright");
-  const wsEndpoint = process.env.PLAYWRIGHT_BROWSER_WS_ENDPOINT;
-  browserInstance = wsEndpoint
-    ? await chromium.connect(wsEndpoint)
-    : await chromium.launch({ headless: true });
-  logger.info("playwright browser launched");
-  return browserInstance;
+  return withPlaywrightBrowsersPath(async () => {
+    const { chromium } = await import("playwright");
+    const wsEndpoint = process.env.PLAYWRIGHT_BROWSER_WS_ENDPOINT;
+    browserInstance = wsEndpoint
+      ? await chromium.connect(wsEndpoint)
+      : await chromium.launch({ headless: true });
+    logger.info("playwright browser launched");
+    return browserInstance;
+  });
 }
 
 export async function closeBrowser() {
@@ -30,7 +33,7 @@ export const browserTool: Tool = {
   definition: {
     name: "browser",
     description:
-      "Open a URL in a raw Chromium browser. Every call requires explicit user confirmation. Prefer the Secure Browser MCP (read_secure_webpage) for normal reading — it sanitizes content and scans for prompt injection. Use this tool only when the user has asked for unfiltered, JavaScript-rendered access.",
+      "Open a URL in a raw Chromium browser. Every call requires explicit user confirmation. Prefer read_secure_webpage for normal reading — it sanitizes content and scans for prompt injection. Use this tool only when the user has asked for unfiltered, JavaScript-rendered access.",
     parameters: {
       type: "object",
       properties: { url: { type: "string" } },
@@ -42,6 +45,12 @@ export const browserTool: Tool = {
     if (!/^https?:\/\//.test(url)) {
       return { ok: false, output: "A valid http(s) URL is required." };
     }
+    const { checkWebAccess, auditPageRead } = await import("../agent/web-guard");
+    const access = checkWebAccess(url);
+    if (!access.ok) {
+      return { ok: false, output: access.reason, summary: "blocked by web guard" };
+    }
+    auditPageRead("browser", url);
     let page;
     try {
       const browser = await getBrowser();

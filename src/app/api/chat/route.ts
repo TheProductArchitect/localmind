@@ -14,10 +14,33 @@ const SSE_HEADERS = {
 };
 
 export async function POST(req: NextRequest) {
-  const { conversationId, message, regenerate, persona } = await req.json();
+  const { conversationId, message, regenerate, persona, browseSessionId, images } = await req.json();
   if (!conversationId || (!regenerate && typeof message !== "string")) {
     return new Response("conversationId and message are required", { status: 400 });
   }
+
+  // Multimodal image attachments: { name?, mime, data(base64) }. Capped in
+  // count and size so a stray upload can't blow up the request or the DB.
+  const attachments = Array.isArray(images)
+    ? images
+        .filter((a: any) => a && typeof a.data === "string" && typeof a.mime === "string" && a.mime.startsWith("image/"))
+        .slice(0, 6)
+        .map((a: any) => ({ name: typeof a.name === "string" ? a.name.slice(0, 200) : undefined, mime: a.mime, data: a.data }))
+    : undefined;
+
+  let browsePrefix: string | undefined;
+  if (typeof browseSessionId === "string" && browseSessionId.trim()) {
+    const { linkBrowseSession, buildBrowseContextPrefix } = await import("@/lib/browse/session");
+    linkBrowseSession(conversationId, browseSessionId.trim());
+    browsePrefix = await buildBrowseContextPrefix(browseSessionId.trim());
+  } else {
+    // No grant on this turn — clear any sticky link so tools can't act on a
+    // tab the user switched away from.
+    const { unlinkBrowseSession } = await import("@/lib/browse/session");
+    unlinkBrowseSession(conversationId);
+  }
+  const devpmPrefix = persona === "devpm" ? devpmSystemPrefix() : undefined;
+  const systemPrefix = [browsePrefix, devpmPrefix].filter(Boolean).join("\n\n") || undefined;
 
   const lastEventId = Number(req.headers.get("last-event-id") || "0");
   const existing = getSession(conversationId);
@@ -72,7 +95,8 @@ export async function POST(req: NextRequest) {
       try {
         for await (const ev of runAgent(conversationId, message || "", controller.signal, {
           regenerate: !!regenerate,
-          systemPrefix: persona === "devpm" ? devpmSystemPrefix() : undefined,
+          systemPrefix,
+          images: attachments,
         })) {
           pushEvent(conversationId, ev.type, ev);
         }

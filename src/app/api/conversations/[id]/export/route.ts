@@ -1,12 +1,17 @@
 import { NextRequest } from "next/server";
 import { getConversation, getMessages } from "@/lib/db/queries";
+import { currentUser, isOwner } from "@/lib/auth/identity";
 
 export const runtime = "nodejs";
 
-export async function GET(_req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
+export async function GET(req: NextRequest, { params: paramsPromise }: { params: Promise<{ id: string }> }) {
   const params = await paramsPromise;
+  const user = currentUser(req);
   const conv = getConversation(params.id);
-  if (!conv) return new Response("Not found", { status: 404 });
+  if (!user || !conv) return new Response("Not found", { status: 404 });
+  if (conv.owner_user_id && conv.owner_user_id !== user.id && !isOwner(req)) {
+    return new Response("Not found", { status: 404 });
+  }
   const messages = getMessages(params.id);
 
   let md = `# ${conv.title}\n\n_Exported ${new Date().toLocaleString()}_\n\n`;

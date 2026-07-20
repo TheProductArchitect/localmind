@@ -24,7 +24,7 @@ export const timeTool: Tool = {
   definition: {
     name: "time",
     description:
-      "Get current date, time, timezone, and platform. Call when the answer depends on what day or time it is.",
+      "Get current date, time, timezone, and platform. Use ONLY when the user asks what time/day it is, or when scheduling depends on it. Do NOT call this for greetings, small talk, or ordinary conversation.",
     parameters: {
       type: "object",
       properties: {},

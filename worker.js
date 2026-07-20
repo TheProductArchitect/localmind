@@ -2,6 +2,8 @@
 // Handles scheduled task timing and condition monitor timing. Heavy work
 // (agent runs, embeddings) is delegated to the main app over localhost HTTP.
 const Database = require("better-sqlite3");
+const crypto = require("crypto");
+const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
@@ -9,7 +11,35 @@ const DATA_DIR = process.env.LOCALMIND_DATA_DIR || path.join(os.homedir(), ".loc
 const CONFIG_DB = path.join(DATA_DIR, "config.db");
 const PORT = process.env.PORT || 3000;
 const BASE = `http://127.0.0.1:${PORT}`;
-const INTERNAL_TOKEN = process.env.LOCALMIND_INTERNAL_TOKEN || "localmind-internal";
+
+// Shared secret for /api/internal/* calls. Must match src/lib/internal-auth.ts:
+// env var first, otherwise the per-install random secret persisted by whichever
+// process touches it first. No guessable constant fallback.
+function internalToken() {
+  if (process.env.LOCALMIND_INTERNAL_TOKEN) return process.env.LOCALMIND_INTERNAL_TOKEN;
+  const file = path.join(DATA_DIR, "internal-token");
+  try {
+    if (fs.existsSync(file)) {
+      const t = fs.readFileSync(file, "utf8").trim();
+      if (t) return t;
+    }
+  } catch {}
+  const t = crypto.randomBytes(32).toString("hex");
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    // Exclusive create; if the app process won the race, re-read its token.
+    fs.writeFileSync(file, t, { mode: 0o600, flag: "wx" });
+    return t;
+  } catch {
+    try {
+      const existing = fs.readFileSync(file, "utf8").trim();
+      if (existing) return existing;
+    } catch {}
+  }
+  return t;
+}
+
+const INTERNAL_TOKEN = internalToken();
 
 function db() {
   const d = new Database(CONFIG_DB);
@@ -75,9 +105,20 @@ async function tick() {
   }
 
   try {
-    // Scheduled tasks — fire once per matching minute.
+    // One-shot reminders — fire as soon as due (every tick for ~5s precision),
+    // then disable so they run exactly once.
+    const dueOneShots = d
+      .prepare("SELECT * FROM scheduled_tasks WHERE enabled=1 AND run_at IS NOT NULL AND run_at <= ?")
+      .all(Date.now());
+    for (const t of dueOneShots) {
+      console.log(`[worker] running one-shot reminder: ${t.name}`);
+      await post("/api/internal/run-task", { taskId: t.id });
+      d.prepare("UPDATE scheduled_tasks SET enabled=0 WHERE id=?").run(t.id);
+    }
+
+    // Recurring scheduled tasks (run_at IS NULL) — fire once per matching minute.
     if (newMinute) {
-      const tasks = d.prepare("SELECT * FROM scheduled_tasks WHERE enabled=1").all();
+      const tasks = d.prepare("SELECT * FROM scheduled_tasks WHERE enabled=1 AND run_at IS NULL").all();
       for (const t of tasks) {
         const ranThisMinute = t.last_run_at && new Date(t.last_run_at).getMinutes() === now.getMinutes()
           && Math.abs(Date.now() - t.last_run_at) < 90000;
@@ -100,6 +141,18 @@ async function tick() {
 
     // Job queue — process pending embedding/ingestion jobs every tick.
     await post("/api/internal/process-jobs", {});
+
+    // Critic queue — once per minute, review one pending subagent run.
+    if (newMinute) {
+      await post("/api/internal/process-critic", {});
+    }
+
+    // Idle self-improvement cycle — once per minute. The route returns fast
+    // when the system isn't idle-eligible (opt-in + window + no active work),
+    // so this is cheap to poll.
+    if (newMinute) {
+      await post("/api/internal/idle-tick", {});
+    }
   } catch (e) {
     console.error("[worker] tick error:", e.message);
   } finally {

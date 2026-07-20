@@ -19,7 +19,7 @@ import {
   Shield, ScrollText, BarChart3, Activity, Users, Sparkles, Code2,
   Boxes, Search, ArrowUpRight, PanelLeftClose, PanelLeftOpen,
   Workflow, BookOpen, Plug, Box, Package, Network, Calendar,
-  Database, Brain,
+  Database, Brain, Antenna,
 } from "lucide-react";
 
 // In-page section tabs. Tools intentionally moved OUT of this list — it now
@@ -28,6 +28,7 @@ import {
 // Tools section when reached via ?section=Tools (see settings/page.tsx).
 export const SETTINGS_SECTIONS = [
   { id: "General",          Icon: SettingsIcon },
+  { id: "Reach",            Icon: Antenna },
   { id: "Network",          Icon: Wifi },
   { id: "Providers",        Icon: Plug2 },
   { id: "Communications",   Icon: MessagesSquare },
@@ -53,8 +54,11 @@ export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]["id"];
 const HIDDEN_ROUTES = [
   "/",          // chat
   "/work",
+  "/ops",       // Agent Ops board — full-bleed workspace surface
   "/agents",
+  "/browse",    // Browse has its own chrome + Sora panel; no config sidebar
   "/knowledge",
+  "/context",   // User Context Graph — full-bleed workspace surface
   "/fleet",
   "/today",
   "/login",
@@ -74,6 +78,7 @@ const ADMIN_GROUPS: { title: string; links: { href: string; label: string; Icon:
       { href: "/graphs",        label: "Task graphs",  Icon: Workflow },
       { href: "/orchestration", label: "Orchestration", Icon: Network },
       { href: "/automations",   label: "Automations",  Icon: Calendar },
+      { href: "/today",         label: "Today · goals & briefing", Icon: Calendar },
       { href: "/data",          label: "Data tables",  Icon: Database },
     ],
   },
@@ -249,10 +254,13 @@ function SettingsSidebarInner() {
           <p className="lm-micro mb-2" style={{ color: "hsl(0 0% 100% / 0.3)" }}>{g.title}</p>
           <nav className="space-y-0.5" aria-label={`${g.title} (external pages)`}>
             {g.links.map(({ href, label, Icon }) => {
-              // Highlight the active admin link so the user knows where they
-              // currently are inside the settings cluster.
-              const linkActive =
-                pathname === href || pathname.startsWith(href + "/");
+              // Compare pathname (+ search) so /knowledge?tab=memory highlights.
+              const url = (() => { try { return new URL(href, "http://local"); } catch { return null; } })();
+              const pathMatch = url ? pathname === url.pathname : pathname === href;
+              const searchMatch = !url?.search || [...url.searchParams.entries()].every(
+                ([k, v]) => params.get(k) === v
+              );
+              const linkActive = pathMatch && searchMatch;
               return (
                 <Link
                   key={href}

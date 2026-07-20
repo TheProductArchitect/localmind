@@ -21,7 +21,7 @@
 
 import { logger } from "./logger";
 import { cronMatches } from "./cron";
-import { listTasks, recordTaskRun } from "./db/automations";
+import { listTasks, recordTaskRun, listDueOneShots, setTaskEnabled } from "./db/automations";
 import { runAgentCollect } from "./agent/engine";
 import { createConversation } from "./db/queries";
 
@@ -72,7 +72,14 @@ async function tickOnce(): Promise<void> {
   tickRunning = true;
   try {
     const now = new Date();
-    const tasks = listTasks().filter((t) => t.enabled);
+    // One-shot reminders due now — fire once, then disable.
+    const oneShots = listDueOneShots(now.getTime());
+    for (const t of oneShots) {
+      await runTaskOnce(t);
+      setTaskEnabled(t.id, false);
+    }
+    // Recurring cron tasks (run_at NULL).
+    const tasks = listTasks().filter((t) => t.enabled && t.run_at == null);
     const due = tasks.filter((t) => {
       try { return cronMatches(t.cron, now); } catch { return false; }
     });

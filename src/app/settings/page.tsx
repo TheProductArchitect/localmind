@@ -1,10 +1,11 @@
 "use client";
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { Button, Card, Input, Badge } from "@/components/ui";
 import { toast } from "@/components/toast";
 import {
-  RefreshCw, ExternalLink, CheckCircle2, AlertCircle,
+  RefreshCw, ExternalLink, CheckCircle2, AlertCircle, Wrench, MessagesSquare, Globe, Boxes,
 } from "lucide-react";
 import { SETTINGS_SECTIONS, type SettingsSectionId, type HiddenSectionId } from "@/components/settings-sidebar";
 
@@ -28,6 +29,7 @@ function SettingsBody() {
         <p className="lm-micro mb-2">{section}</p>
         <h1 className="lm-display mb-10">{sectionTitle(section)}</h1>
         {section === "General"        && <GeneralSection />}
+        {section === "Reach"          && <ReachSection />}
         {section === "Tools"          && <ToolsSection />}
           {section === "Network"        && <NetworkSection />}
           {section === "Providers"      && <ProvidersSection />}
@@ -52,6 +54,7 @@ export default function SettingsPage() {
 function sectionTitle(id: SectionId): string {
   return {
     "General":        "How Sora behaves",
+    "Reach":          "What Sora can reach",
     "Tools":          "What Sora is allowed to do",
     "Network":        "Where Sora can be reached",
     "Providers":      "External model providers",
@@ -60,6 +63,50 @@ function sectionTitle(id: SectionId): string {
     "Data & Privacy": "Your data, your rules",
     "Backup":         "Save and restore",
   }[id];
+}
+
+async function readApi<T extends Record<string, unknown>>(
+  url: string
+): Promise<{ ok: true; data: T } | { ok: false; error: string; status: number }> {
+  try {
+    const r = await fetch(url);
+    const data = (await r.json().catch(() => ({}))) as T & { message?: string; error?: string };
+    if (!r.ok) {
+      return {
+        ok: false,
+        error: data.message || data.error || "Request failed",
+        status: r.status,
+      };
+    }
+    return { ok: true, data };
+  } catch {
+    return { ok: false, error: "Network error", status: 0 };
+  }
+}
+
+function SettingsLoading() {
+  return <p className="text-sm text-muted-foreground">Loading…</p>;
+}
+
+/** Shown when API returns 401 — usually a stale lm_token cookie blocking loopback access. */
+function SettingsAuthPrompt({ message, onRetry }: { message: string; onRetry: () => void }) {
+  async function continueOnLocalhost() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    onRetry();
+  }
+  return (
+    <Card className="p-4 space-y-3">
+      <p className="text-sm">{message}</p>
+      <p className="text-xs text-muted-foreground">
+        On localhost, an expired session cookie can block access. Clear it to continue without signing in,
+        or sign in with your PIN.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" onClick={() => { window.location.href = "/login"; }}>Sign in</Button>
+        <Button size="sm" variant="outline" onClick={continueOnLocalhost}>Continue on localhost</Button>
+      </div>
+    </Card>
+  );
 }
 
 /* ============================================================ */
@@ -195,26 +242,49 @@ function IntegrationGroup({
 
 function useSettings() {
   const [s, setS] = useState<any>(null);
-  const load = () => fetch("/api/settings").then((r) => r.json()).then((j) => setS(j.settings));
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const load = () => {
+    setLoading(true);
+    return readApi<{ settings: any }>("/api/settings").then((r) => {
+      if (!r.ok) {
+        setAuthError(r.status === 401 || r.status === 403 ? r.error : r.error);
+        setS(null);
+        return;
+      }
+      setAuthError(null);
+      setS(r.data.settings ?? null);
+    }).finally(() => setLoading(false));
+  };
   useEffect(() => { load(); }, []);
   const save = async (patch: any) => {
-    await fetch("/api/settings", {
+    const r = await fetch("/api/settings", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(patch),
     });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      toast(j.message || j.error || "Save failed", "error");
+      return;
+    }
     toast("Saved", "success");
     load();
   };
-  return { s, save };
+  return { s, save, loading, authError, reload: load };
 }
 
 function GeneralSection() {
-  const { s, save } = useSettings();
+  const { s, save, loading, authError, reload } = useSettings();
   const [memory, setMemory] = useState<any[]>([]);
   const [pin, setPin] = useState("");
-  useEffect(() => { fetch("/api/memory").then((r) => r.json()).then((j) => setMemory(j.memory || [])); }, []);
-  if (!s) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  useEffect(() => {
+    readApi<{ memory: any[] }>("/api/memory").then((r) => {
+      if (r.ok) setMemory(r.data.memory || []);
+    });
+  }, []);
+  if (authError) return <SettingsAuthPrompt message={authError} onRetry={reload} />;
+  if (loading || !s) return <SettingsLoading />;
 
   return (
     <div className="space-y-4">
@@ -225,11 +295,11 @@ function GeneralSection() {
         </p>
         <div className="grid grid-cols-3 gap-2">
           {([
-            { id: "auto",  label: "Auto",   hint: "Trust Sora fully. Every action runs through." },
+            { id: "auto",  label: "Auto",   hint: "Default. Trust Sora fully; destructive actions still confirm." },
             { id: "plan",  label: "Plan",   hint: "Read-only. Mutations require leaving plan mode." },
-            { id: "ask",   label: "Ask",    hint: "Default. Reads free, mutations confirmed." },
+            { id: "ask",   label: "Ask",    hint: "Reads free, mutations confirmed." },
           ] as const).map((m) => {
-            const active = (s.agent_mode || "ask") === m.id;
+            const active = (s.agent_mode || "auto") === m.id;
             return (
               <button
                 key={m.id}
@@ -284,9 +354,24 @@ function GeneralSection() {
             <option value="light">Light</option><option value="dark">Dark</option><option value="system">System</option>
           </select>
         </label>
-        <label className="block text-sm">Chat font size
-          <Input type="number" defaultValue={s.chat_font_size}
-            onBlur={(e) => save({ chat_font_size: Number(e.target.value) })} className="mt-1 w-24" />
+        <label className="block text-sm">App font size (px)
+          <Input
+            type="number"
+            min={12}
+            max={28}
+            defaultValue={s.chat_font_size ?? 17}
+            onBlur={(e) => {
+              const n = Number(e.target.value);
+              if (Number.isFinite(n) && n >= 12 && n <= 28) {
+                save({ chat_font_size: n });
+                document.documentElement.style.setProperty("--lm-root-fs", `${n}px`);
+              }
+            }}
+            className="mt-1 w-24"
+          />
+          <span className="block text-xs text-muted-foreground mt-1">
+            Scales the whole interface (12–28). Default 17.
+          </span>
         </label>
       </Card>
 
@@ -441,13 +526,14 @@ function AlwaysOnCard() {
 }
 
 function NetworkSection() {
-  const { s, save } = useSettings();
+  const { s, save, loading, authError, reload } = useSettings();
   const [ip, setIp] = useState("");
   useEffect(() => {
     fetch("/api/system/health").then(() => {});
     setIp(window.location.hostname);
   }, []);
-  if (!s) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (authError) return <SettingsAuthPrompt message={authError} onRetry={reload} />;
+  if (loading || !s) return <SettingsLoading />;
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Network</h1>
@@ -481,7 +567,22 @@ function NetworkSection() {
 function ProvidersSection() {
   const [providers, setProviders] = useState<{ name: string; connected: boolean }[]>([]);
   const [keys, setKeys] = useState<Record<string, string>>({});
-  const load = () => fetch("/api/providers").then((r) => r.json()).then((j) => setProviders(j.providers));
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const load = () => {
+    setLoading(true);
+    return readApi<{ providers: { name: string; connected: boolean }[] }>("/api/providers")
+      .then((r) => {
+        if (!r.ok) {
+          setAuthError(r.status === 401 || r.status === 403 ? r.error : r.error);
+          setProviders([]);
+          return;
+        }
+        setAuthError(null);
+        setProviders(Array.isArray(r.data.providers) ? r.data.providers : []);
+      })
+      .finally(() => setLoading(false));
+  };
   useEffect(() => { load(); }, []);
 
   async function action(provider: string, act: string) {
@@ -500,7 +601,12 @@ function ProvidersSection() {
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Providers & API Keys</h1>
       <p className="text-xs text-muted-foreground">Keys are encrypted with AES-256-GCM at rest.</p>
-      {providers.map((p) => (
+      {authError ? (
+        <SettingsAuthPrompt message={authError} onRetry={load} />
+      ) : loading ? (
+        <SettingsLoading />
+      ) : (
+      providers.map((p) => (
         <Card key={p.name} className="p-4 space-y-2">
           <div className="flex items-center gap-2">
             <span className="font-medium text-sm capitalize">{p.name}</span>
@@ -524,73 +630,13 @@ function ProvidersSection() {
             toast(`${p.name} set as active provider`, "success");
           }}>Set as active</Button>
         </Card>
-      ))}
+      ))
+      )}
     </div>
   );
 }
 
-function McpSection() {
-  const [servers, setServers] = useState<any[]>([]);
-  const [form, setForm] = useState({ name: "", url: "", description: "", tier: "ask" });
-  const load = () => fetch("/api/mcp").then((r) => r.json()).then((j) => setServers(j.servers || []));
-  useEffect(() => { load(); }, []);
 
-  async function test() {
-    const r = await fetch("/api/mcp/test", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ url: form.url }),
-    });
-    const j = await r.json();
-    toast(j.ok ? `Reachable — tools: ${j.tools?.join(", ") || "none"}` : j.error, j.ok ? "success" : "error");
-  }
-  async function add() {
-    if (!form.name || !form.url) return;
-    await fetch("/api/mcp", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify(form),
-    });
-    setForm({ name: "", url: "", description: "", tier: "ask" });
-    load();
-  }
-  async function remove(id: string) {
-    await fetch(`/api/mcp?id=${id}`, { method: "DELETE" });
-    load();
-  }
-
-  return (
-    <div className="space-y-4">
-      <h1 className="text-xl font-semibold">MCP Servers</h1>
-      <p className="text-xs text-muted-foreground">
-        Add custom Model Context Protocol servers. Their tools go through the same audit log and
-        permission guard as built-in tools.
-      </p>
-      <Card className="p-4 space-y-2">
-        <Input placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-        <Input placeholder="URL (SSE endpoint)" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
-        <Input placeholder="Description (optional)" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-        <select value={form.tier} onChange={(e) => setForm({ ...form, tier: e.target.value })}
-          className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm">
-          <option value="allow">Always Allow</option>
-          <option value="ask">Ask First</option>
-          <option value="pin">Never Without PIN</option>
-        </select>
-        <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={test}>Test connection</Button>
-          <Button size="sm" onClick={add}>Add server</Button>
-        </div>
-      </Card>
-      {servers.map((s) => (
-        <Card key={s.id} className="p-3 flex items-center gap-2">
-          <div className="flex-1">
-            <p className="font-medium text-sm">{s.name}</p>
-            <p className="text-xs text-muted-foreground">{s.url} · tier: {s.tier}</p>
-          </div>
-          <Button size="sm" variant="ghost" onClick={() => remove(s.id)}>Remove</Button>
-        </Card>
-      ))}
-    </div>
-  );
-}
 
 type ToolRow = { name: string; description: string; action_type: string };
 type McpServerRow = {
@@ -613,6 +659,54 @@ const FLOOR_ACTIONS = new Set([
   "send_email", "make_call", "post_message", "git_force_push", "git_reset_hard",
   "install_mcp",
 ]);
+
+// "What Sora can reach" — one view over everything Sora can act on or reach
+// out through: its tools, the channels it messages on, its web access, and the
+// MCP/plugin integrations. Composes the existing surfaces so there's a single
+// place to see and govern Sora's reach.
+function ReachSubhead({ Icon, title, hint }: { Icon: React.ComponentType<{ className?: string }>; title: string; hint: string }) {
+  return (
+    <div className="flex items-start gap-2 mb-4">
+      <Icon className="h-4 w-4 mt-0.5 text-muted-foreground" />
+      <div>
+        <p className="text-sm font-medium">{title}</p>
+        <p className="text-xs text-muted-foreground">{hint}</p>
+      </div>
+    </div>
+  );
+}
+
+function ReachSection() {
+  return (
+    <div className="space-y-14">
+      <section>
+        <ReachSubhead Icon={Wrench} title="What Sora can do" hint="Built-in tools and their permission tiers (allow / ask / pin)." />
+        <ToolsSection />
+      </section>
+      <section>
+        <ReachSubhead Icon={MessagesSquare} title="How Sora reaches out" hint="Channels Sora can send and receive on." />
+        <CommsSection />
+      </section>
+      <section>
+        <ReachSubhead Icon={Globe} title="Web access" hint="Kill switch and per-site grants for every web-reaching tool." />
+        <WebAccessCard />
+      </section>
+      <section>
+        <ReachSubhead Icon={Boxes} title="Integrations & MCP" hint="External servers and plugins Sora can call out to." />
+        <Card className="p-4">
+          <div className="flex flex-wrap gap-2">
+            <Link href="/mcp" className="inline-flex items-center gap-1.5 text-sm rounded-md border border-border px-3 py-1.5 hover:bg-muted/60">
+              MCP servers <ExternalLink className="h-3.5 w-3.5" />
+            </Link>
+            <Link href="/plugins" className="inline-flex items-center gap-1.5 text-sm rounded-md border border-border px-3 py-1.5 hover:bg-muted/60">
+              Plugins <ExternalLink className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </Card>
+      </section>
+    </div>
+  );
+}
 
 function ToolsSection() {
   const [tools, setTools] = useState<ToolRow[]>([]);
@@ -875,22 +969,51 @@ function TwilioWizard() {
 function CommsSection() {
   const [telegram, setTelegram] = useState({ enabled: false, botToken: "", defaultChatId: "" });
   const [twilio, setTwilio] = useState({ enabled: false, accountSid: "", authToken: "", authorisedNumber: "", publicUrl: "" });
-  // WhatsApp piggybacks on Twilio's WhatsApp API — same SID/auth, but a
-  // separate enable flag + WhatsApp-from number and per-channel webhook URL.
-  // Storing the config in its own channel row lets us wire Twilio's two
-  // independent webhooks (SMS vs WhatsApp) without conflating them.
   const [whatsapp, setWhatsapp] = useState({ enabled: false, fromNumber: "", authorisedNumber: "" });
   const [apiToken, setApiToken] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetch("/api/channels?type=telegram").then((r) => r.json()).then((j) =>
-      setTelegram({ enabled: j.enabled, botToken: j.config?.botToken || "", defaultChatId: j.config?.defaultChatId || "" }));
-    fetch("/api/channels?type=twilio").then((r) => r.json()).then((j) =>
-      setTwilio({ enabled: j.enabled, accountSid: j.config?.accountSid || "", authToken: j.config?.authToken || "",
-        authorisedNumber: j.config?.authorisedNumber || "", publicUrl: j.config?.publicUrl || "" }));
-    fetch("/api/channels?type=whatsapp").then((r) => r.json()).then((j) =>
-      setWhatsapp({ enabled: j.enabled, fromNumber: j.config?.fromNumber || "", authorisedNumber: j.config?.authorisedNumber || "" }));
-  }, []);
+  const loadChannels = () => {
+    setLoading(true);
+    Promise.all([
+      readApi<{ enabled?: boolean; config?: Record<string, string> }>("/api/channels?type=telegram"),
+      readApi<{ enabled?: boolean; config?: Record<string, string> }>("/api/channels?type=twilio"),
+      readApi<{ enabled?: boolean; config?: Record<string, string> }>("/api/channels?type=whatsapp"),
+    ]).then(([tg, tw, wa]) => {
+      const denied = [tg, tw, wa].find((r) => !r.ok && (r.status === 401 || r.status === 403));
+      if (denied && !denied.ok) {
+        setAuthError(denied.error);
+        return;
+      }
+      setAuthError(null);
+      if (tg.ok) {
+        setTelegram({
+          enabled: !!tg.data.enabled,
+          botToken: tg.data.config?.botToken || "",
+          defaultChatId: tg.data.config?.defaultChatId || "",
+        });
+      }
+      if (tw.ok) {
+        setTwilio({
+          enabled: !!tw.data.enabled,
+          accountSid: tw.data.config?.accountSid || "",
+          authToken: tw.data.config?.authToken || "",
+          authorisedNumber: tw.data.config?.authorisedNumber || "",
+          publicUrl: tw.data.config?.publicUrl || "",
+        });
+      }
+      if (wa.ok) {
+        setWhatsapp({
+          enabled: !!wa.data.enabled,
+          fromNumber: wa.data.config?.fromNumber || "",
+          authorisedNumber: wa.data.config?.authorisedNumber || "",
+        });
+      }
+    }).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { loadChannels(); }, []);
 
   async function saveChannel(type: string, enabled: boolean, config: any) {
     await fetch("/api/channels", {
@@ -911,7 +1034,12 @@ function CommsSection() {
         Channels carry messages to your Mac for local processing. Only message-in-transit passes
         through a relay (Telegram, Twilio); nothing is stored in the cloud.
       </p>
-
+      {authError ? (
+        <SettingsAuthPrompt message={authError} onRetry={loadChannels} />
+      ) : loading ? (
+        <SettingsLoading />
+      ) : (
+      <>
       <Card className="p-4 space-y-2">
         <div className="flex items-center gap-2">
           <p className="font-medium text-sm flex-1">Telegram</p>
@@ -993,6 +1121,8 @@ function CommsSection() {
           </p>
         )}
       </Card>
+      </>
+      )}
     </div>
   );
 }
@@ -1019,6 +1149,7 @@ function DataSection() {
           in <code>~/.localmind</code>. Nothing leaves the device unless you connect a cloud
           provider, in which case only your chat messages are sent to that provider.</p>
       </Card>
+      <WebAccessCard />
       <Card className="p-4 space-y-2">
         <p className="font-medium text-sm">Export all data</p>
         <a href="/api/settings/export"><Button size="sm" variant="outline">Download ZIP archive</Button></a>
@@ -1046,6 +1177,108 @@ function DataSection() {
 
 function confirm2(msg: string) {
   return typeof window !== "undefined" && window.confirm(msg);
+}
+
+// Web access controls — ported from Nova's three-layer browser access model.
+// Kill switch severs every web-reaching tool; site grants opt domains in
+// (even sensitive-classed ones) or blind agents to them entirely.
+function WebAccessCard() {
+  const [killed, setKilled] = useState<boolean | null>(null);
+  const [grants, setGrants] = useState<{ domain: string; policy: string; note: string | null }[]>([]);
+  const [domain, setDomain] = useState("");
+  const [policy, setPolicy] = useState<"allow" | "never">("never");
+
+  useEffect(() => {
+    fetch("/api/settings").then((r) => r.json()).then((j) => setKilled(!!j.settings?.web_access_killed));
+    fetch("/api/web-guard/grants").then((r) => r.json()).then((j) => setGrants(j.grants || [])).catch(() => {});
+  }, []);
+
+  async function toggleKill() {
+    const next = !killed;
+    setKilled(next);
+    await fetch("/api/settings", {
+      method: "PATCH", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ web_access_killed: next ? 1 : 0 }),
+    });
+    toast(next ? "Web access severed for all agents" : "Web access restored", next ? "success" : "success");
+  }
+
+  async function addGrant() {
+    if (!domain.trim()) return;
+    const r = await fetch("/api/web-guard/grants", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ domain: domain.trim(), policy }),
+    });
+    const j = await r.json();
+    if (!r.ok) { toast(j.error || "Failed", "error"); return; }
+    setGrants(j.grants || []);
+    setDomain("");
+  }
+
+  async function removeGrant(d: string) {
+    const r = await fetch("/api/web-guard/grants", {
+      method: "DELETE", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ domain: d }),
+    });
+    const j = await r.json();
+    setGrants(j.grants || []);
+  }
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="font-medium text-sm">Web access</p>
+          <p className="text-xs text-muted-foreground">
+            Controls every tool that can reach the web — search, Secure Browser, and the raw browser.
+          </p>
+        </div>
+        <Button
+          size="sm"
+          variant={killed ? "destructive" : "outline"}
+          onClick={toggleKill}
+          disabled={killed === null}
+        >
+          {killed ? "Severed — restore" : "Kill switch"}
+        </Button>
+      </div>
+      {killed && (
+        <p className="text-xs rounded border border-destructive/40 bg-destructive/10 text-destructive px-2 py-1">
+          All agent web access is severed. Agents will refuse web tools until you restore access.
+        </p>
+      )}
+      <div className="pt-1">
+        <p className="text-xs font-medium mb-1">Site grants</p>
+        <p className="text-xs text-muted-foreground mb-2">
+          Banking, government, health, and webmail sites are blind to agents by default.
+          Grant <em>allow</em> to opt a domain in (covers subdomains), or <em>never</em> to blind agents to it entirely.
+        </p>
+        <div className="flex gap-2 mb-2">
+          <Input placeholder="example.com" value={domain} onChange={(e) => setDomain(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") addGrant(); }} className="flex-1" />
+          <select value={policy} onChange={(e) => setPolicy(e.target.value as "allow" | "never")}
+            className="h-9 rounded-md border bg-background px-2 text-sm">
+            <option value="never">never</option>
+            <option value="allow">allow</option>
+          </select>
+          <Button size="sm" onClick={addGrant}>Add</Button>
+        </div>
+        {grants.length > 0 && (
+          <div className="space-y-1">
+            {grants.map((g) => (
+              <div key={g.domain} className="flex items-center gap-2 text-xs border rounded px-2 py-1">
+                <span className="font-medium">{g.domain}</span>
+                <Badge variant={g.policy === "allow" ? "success" : "destructive"}>{g.policy}</Badge>
+                <button className="ml-auto underline text-muted-foreground" onClick={() => removeGrant(g.domain)}>
+                  remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
 }
 
 function BackupSection() {

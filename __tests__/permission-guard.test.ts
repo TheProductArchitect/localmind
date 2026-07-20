@@ -47,6 +47,7 @@ describe("permission-guard", () => {
         "git_force_push",
         "git_reset_hard",
         "install_mcp",
+        "schedule_write",
       ]) {
         const tier = classify(action);
         expect(tier, `${action} in auto mode`).not.toBe("allow");
@@ -130,6 +131,13 @@ describe("permission-guard", () => {
       mockedSettings.mockReturnValue({ agent_mode: "ask" } as any);
       mockedProfile.mockReturnValue({ tiers: {} } as any);
       expect(classify("write_files")).toBe("ask");
+    });
+
+    it("falls back to auto when agent_mode is unset (auto is the default)", () => {
+      mockedSettings.mockReturnValue({} as any);
+      expect(classify("write_files")).toBe("allow");
+      // Destructive floor still holds even on the auto fallback.
+      expect(classify("delete_files")).toBe("ask");
     });
   });
 

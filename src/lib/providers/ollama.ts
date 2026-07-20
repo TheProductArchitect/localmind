@@ -44,6 +44,10 @@ export const ollamaProvider: Provider = {
             })),
           };
         }
+        // Multimodal: Ollama vision models take an `images: [base64]` field.
+        if (m.role === "user" && (m as any).images?.length) {
+          return { role: "user", content: m.content, images: (m as any).images };
+        }
         return { role: m.role, content: (m as any).content };
       }),
       stream: true,

@@ -21,6 +21,8 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/auth/passkey/authenticate/*", methods: "ALL", role: "public" },
 
   // --- Inbound channel webhooks (carry their own HMAC/token) ---
+  { path: "/api/channels", methods: ["GET"], role: "authenticated" },
+  { path: "/api/channels", methods: ["POST"], role: "owner" },
   { path: "/api/channels/*", methods: "ALL", role: "public" },
   { path: "/api/webhooks/*", methods: "ALL", role: "public" },
   { path: "/api/internal/*", methods: "ALL", role: "public" },
@@ -44,6 +46,11 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/memory/*", methods: "ALL", role: "authenticated" },
 
   // --- Knowledge base ---
+  // Owner-only share-policy MUST sit above the /api/knowledge/* wildcard —
+  // first-match wins, so a later owner entry would never run.
+  { path: "/api/knowledge/share-policy", methods: ["GET"], role: "owner" },
+  { path: "/api/knowledge/share-policy/*", methods: ["GET", "PUT", "DELETE"], role: "owner" },
+  { path: "/api/knowledge/peer-search", methods: ["POST"], role: "authenticated" },
   { path: "/api/knowledge/*", methods: "ALL", role: "authenticated" },
 
   // --- Audit log ---
@@ -64,6 +71,16 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/settings/export", methods: "ALL", role: "owner" },
   { path: "/api/settings/api-token", methods: "ALL", role: "owner" },
 
+  // --- Web guard + Browse ---
+  // Site grants and the kill switch shape what every agent can reach — owner only.
+  { path: "/api/web-guard/*", methods: "ALL", role: "owner" },
+  // Browsing through the secure pipeline is fine for any signed-in user; the
+  // guard itself still applies per-request.
+  { path: "/api/browse", methods: ["POST"], role: "authenticated" },
+  { path: "/api/browse/*", methods: "ALL", role: "authenticated" },
+  { path: "/api/browse/session", methods: ["POST"], role: "authenticated" },
+  { path: "/api/browse/session/*", methods: "ALL", role: "authenticated" },
+
   // --- Backup ---
   { path: "/api/backup", methods: "ALL", role: "owner" },
   { path: "/api/backup/*", methods: "ALL", role: "owner" },
@@ -77,7 +94,8 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/mcp/*", methods: "ALL", role: "owner" },
 
   // --- Providers ---
-  { path: "/api/providers", methods: "ALL", role: "owner" },
+  { path: "/api/providers", methods: ["GET"], role: "authenticated" },
+  { path: "/api/providers", methods: ["POST"], role: "owner" },
 
   // --- Users & roles ---
   { path: "/api/users", methods: "ALL", role: "owner" },
@@ -115,7 +133,7 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   // --- V5: Agent configuration (personas, system prompt blocks) ---
   { path: "/api/agent/personas", methods: ["GET"], role: "authenticated" },
   { path: "/api/agent/personas", methods: ["POST"], role: "owner" },
-  { path: "/api/agent/personas/*", methods: ["GET"], role: "authenticated" },
+  // No GET-by-id handler — list is GET /api/agent/personas; mutate via PATCH/DELETE.
   { path: "/api/agent/personas/*", methods: ["PATCH", "DELETE"], role: "owner" },
   { path: "/api/agent/system-prompt/*", methods: ["GET", "POST"], role: "authenticated" },
   { path: "/api/agent/system-prompt/*", methods: ["PATCH"], role: "owner" },
@@ -132,6 +150,20 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   // --- V5: Orchestration (processes, trace, pause/resume/cancel) ---
   { path: "/api/orchestration/processes", methods: ["GET"], role: "authenticated" },
   { path: "/api/orchestration/processes/*", methods: ["GET", "DELETE", "POST"], role: "authenticated" },
+
+  // --- Ops board: self-improvement proposals (approval is owner-only, §7.2) ---
+  { path: "/api/ops/proposals", methods: ["GET"], role: "authenticated" },
+  { path: "/api/ops/proposals", methods: ["POST"], role: "owner" },
+  { path: "/api/ops/proposals/*", methods: ["POST"], role: "owner" },
+  { path: "/api/ops/self-checks", methods: ["GET"], role: "authenticated" },
+  { path: "/api/ops/meta", methods: ["GET"], role: "authenticated" },
+
+  // --- User Context Graph (per-user; read-only in phase 1, §12) ---
+  { path: "/api/context/graph", methods: ["GET"], role: "authenticated" },
+  { path: "/api/context/meta", methods: ["GET"], role: "authenticated" },
+
+  // --- Brain entity graph (queryable) ---
+  { path: "/api/brain/edges", methods: ["GET"], role: "authenticated" },
 
   // --- V5: Long-running jobs ---
   { path: "/api/jobs", methods: ["GET", "POST"], role: "authenticated" },
@@ -186,9 +218,6 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   // V6.8: Task graphs UI surface.
   { path: "/api/graphs", methods: ["GET"], role: "authenticated" },
   { path: "/api/graphs/*", methods: ["GET", "DELETE"], role: "authenticated" },
-  { path: "/api/knowledge/share-policy", methods: ["GET"], role: "owner" },
-  { path: "/api/knowledge/share-policy/*", methods: ["GET", "PUT", "DELETE"], role: "owner" },
-  { path: "/api/knowledge/peer-search", methods: ["POST"], role: "authenticated" },
   { path: "/api/audit/*", methods: ["GET"], role: "authenticated" },
 
   // V6.2: Pairing flow + peers CRUD. All gated owner — fleet management is
@@ -197,13 +226,22 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/fleet/pair/accept", methods: ["POST"], role: "owner" },
   { path: "/api/fleet/peers", methods: ["GET"], role: "owner" },
   { path: "/api/fleet/peers/*", methods: ["GET", "PATCH", "DELETE"], role: "owner" },
+  { path: "/api/fleet/sync", methods: ["POST"], role: "authenticated" },
+  { path: "/api/fleet/chat-placement", methods: ["GET"], role: "authenticated" },
   // Chat relay is per-authenticated-user (not owner-only) since each user on
   // this node should be able to drive their own peer chats; the peer's
   // accept_chat_relay flag is the trust gate, not user role on this side.
   { path: "/api/fleet/peers/*/chat", methods: ["POST"], role: "authenticated" },
 ];
 
-const RANK: Record<RouteRole, number> = { public: 0, authenticated: 1, member: 2, owner: 3 };
+// User roles include `guest` (not a RouteRole); guest satisfies `authenticated`.
+const RANK: Record<string, number> = {
+  public: 0,
+  guest: 1,
+  authenticated: 1,
+  member: 2,
+  owner: 3,
+};
 
 // Matches a route path against a pattern with "*" wildcards on path segments.
 function matches(pattern: string, path: string): boolean {

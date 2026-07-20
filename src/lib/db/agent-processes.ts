@@ -17,6 +17,12 @@ export type ProcessStatus =
   | "cancelled"
   | "pending";
 
+// Pillar taxonomy lives in a pure, client-safe module (../pillars) so it can be
+// imported by client components without dragging in the DB layer. Re-exported
+// here for callers that already import from agent-processes.
+export { PILLARS, PILLAR_INFO, type Pillar } from "../pillars";
+import type { Pillar } from "../pillars";
+
 export type AgentProcess = {
   process_id: string;
   process_type: ProcessType;
@@ -30,6 +36,9 @@ export type AgentProcess = {
   current_step: string | null;
   priority: number;
   metadata_json: string;
+  pillar: Pillar | null;
+  parent_process_id: string | null;
+  progress: number | null;
 };
 
 function readNow(): number {
@@ -46,14 +55,18 @@ export function startProcess(args: {
   agent_name?: string | null;
   persona_id?: string | null;
   metadata?: Record<string, unknown>;
+  pillar?: Pillar | null;
+  parent_process_id?: string | null;
+  progress?: number | null;
 }): string {
   const id = `proc-${nanoid(12)}`;
   getConfigDb()
     .prepare(
       `INSERT INTO agent_processes
         (process_id, process_type, display_name, owner_user_id, agent_name, persona_id,
-         started_at, completed_at, status, current_step, priority, metadata_json)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+         started_at, completed_at, status, current_step, priority, metadata_json,
+         pillar, parent_process_id, progress)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
       id,
@@ -67,19 +80,30 @@ export function startProcess(args: {
       "running",
       "starting…",
       0,
-      JSON.stringify(args.metadata ?? {})
+      JSON.stringify(args.metadata ?? {}),
+      args.pillar ?? null,
+      args.parent_process_id ?? null,
+      args.progress ?? null
     );
   return id;
 }
 
 export function updateProcess(
   processId: string,
-  patch: { status?: ProcessStatus; current_step?: string | null; metadata?: Record<string, unknown> }
+  patch: {
+    status?: ProcessStatus;
+    current_step?: string | null;
+    metadata?: Record<string, unknown>;
+    pillar?: Pillar | null;
+    progress?: number | null;
+  }
 ): void {
   const sets: string[] = [];
   const params: Record<string, unknown> = { id: processId };
   if (patch.status !== undefined) { sets.push("status=@status"); params.status = patch.status; }
   if (patch.current_step !== undefined) { sets.push("current_step=@current_step"); params.current_step = patch.current_step; }
+  if (patch.pillar !== undefined) { sets.push("pillar=@pillar"); params.pillar = patch.pillar; }
+  if (patch.progress !== undefined) { sets.push("progress=@progress"); params.progress = patch.progress; }
   if (patch.metadata !== undefined) {
     // Merge with existing metadata so callers can patch one key without losing others.
     const cur = getConfigDb()
@@ -143,6 +167,85 @@ function safeParse(s: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+export const BOARD_LANES = ["proposals", "queued", "running", "needs_you", "done", "failed"] as const;
+export type BoardLane = (typeof BOARD_LANES)[number];
+export type Board = {
+  lanes: Record<BoardLane, AgentProcess[]>;
+  counts: Record<BoardLane, number>;
+};
+
+/** Processes completed within the given window (default 24h), for the board's
+ *  Done/Failed lanes. */
+function listRecentlyCompleted(ownerUserId: string | null | undefined, windowMs = 24 * 60 * 60 * 1000): AgentProcess[] {
+  const cutoff = readNow() - windowMs;
+  if (ownerUserId) {
+    return getConfigDb()
+      .prepare(
+        "SELECT * FROM agent_processes WHERE completed_at IS NOT NULL AND completed_at >= ? AND (owner_user_id IS NULL OR owner_user_id=?) ORDER BY completed_at DESC"
+      )
+      .all(cutoff, ownerUserId) as AgentProcess[];
+  }
+  return getConfigDb()
+    .prepare(
+      "SELECT * FROM agent_processes WHERE completed_at IS NOT NULL AND completed_at >= ? ORDER BY completed_at DESC"
+    )
+    .all(cutoff) as AgentProcess[];
+}
+
+// The Ops board is a *task* board, not a chat log. Ordinary chat turns complete
+// within the chat window and are tracked in /orchestration — they do not belong
+// on the board. Only work that runs outside the chat window or can't finish
+// within it does: scheduled tasks, monitors, long-running jobs, workflows,
+// subagents (registered as long_running_job), and self-improvement proposals.
+export function isBoardTask(p: AgentProcess): boolean {
+  return p.process_type !== "chat";
+}
+
+/** Sort a flat list of processes into Kanban lanes by status. Pure — takes the
+ *  rows so it stays trivially testable. Chat turns are filtered out (see
+ *  isBoardTask). `needsYouExtra` folds in non-process approvals (e.g. pending
+ *  workflow approvals) that also block the user. */
+export function bucketLanes(
+  active: AgentProcess[],
+  recent: AgentProcess[],
+  needsYouExtra: AgentProcess[] = [],
+  proposalsExtra: AgentProcess[] = []
+): Board {
+  const lanes: Record<BoardLane, AgentProcess[]> = {
+    proposals: [...proposalsExtra],
+    queued: [],
+    running: [],
+    needs_you: [...needsYouExtra],
+    done: [],
+    failed: [],
+  };
+  for (const p of active) {
+    if (!isBoardTask(p)) continue;
+    if (p.status === "pending") lanes.queued.push(p);
+    else if (p.status === "running") lanes.running.push(p);
+    else if (p.status === "waiting_confirmation" || p.status === "paused") lanes.needs_you.push(p);
+  }
+  for (const p of recent) {
+    if (!isBoardTask(p)) continue;
+    if (p.status === "completed") lanes.done.push(p);
+    else if (p.status === "failed" || p.status === "cancelled") lanes.failed.push(p);
+  }
+  const counts = Object.fromEntries(
+    (Object.keys(lanes) as BoardLane[]).map((k) => [k, lanes[k].length])
+  ) as Record<BoardLane, number>;
+  return { lanes, counts };
+}
+
+/** One-fetch board aggregation: active + recently-completed processes bucketed
+ *  into lanes. Callers pass extra "needs you" and "proposals" cards to fold in. */
+export function getBoard(
+  ownerUserId?: string | null,
+  needsYouExtra: AgentProcess[] = [],
+  proposalsExtra: AgentProcess[] = []
+): Board {
+  return bucketLanes(listActive(ownerUserId), listRecentlyCompleted(ownerUserId), needsYouExtra, proposalsExtra);
 }
 
 /** Mark any process whose started_at is older than ms as failed — used when the

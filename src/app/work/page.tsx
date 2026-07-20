@@ -13,7 +13,8 @@
  */
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Workflow, Network, Calendar, Briefcase, ChevronRight, RefreshCw, Users } from "lucide-react";
 
 type Kind = "graph" | "process" | "job" | "automation";
@@ -52,9 +53,43 @@ function relTime(ms: number): string {
 }
 
 export default function WorkPage() {
+  return (
+    <Suspense fallback={<div className="p-10 lm-body" style={{ color: "hsl(0 0% 100% / 0.5)" }}>Loading…</div>}>
+      <WorkPageInner />
+    </Suspense>
+  );
+}
+
+function WorkPageInner() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [rows, setRows] = useState<Row[]>([]);
   const [filter, setFilter] = useState<Kind | "all">("all");
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    const id = searchParams.get("id");
+    if (tab === "jobs" || tab === "job") setFilter("job");
+    else if (tab === "processes" || tab === "process") setFilter("process");
+    else if (tab === "graphs" || tab === "graph") setFilter("graph");
+    else if (tab === "automations" || tab === "automation") setFilter("automation");
+    else if (!tab) setFilter("all");
+    if (id) setHighlightId(id);
+  }, [searchParams]);
+
+  function selectFilter(id: Kind | "all") {
+    setFilter(id);
+    const qs = id === "all" ? "/work" : `/work?tab=${id === "automation" ? "automations" : id === "process" ? "processes" : id === "graph" ? "graphs" : "jobs"}`;
+    router.replace(qs, { scroll: false });
+  }
+
+  useEffect(() => {
+    if (!highlightId || loading) return;
+    const el = document.getElementById("work-highlight");
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [highlightId, loading, rows, filter]);
 
   async function load() {
     setLoading(true);
@@ -99,14 +134,15 @@ export default function WorkPage() {
       const r = await fetch("/api/jobs").then((r) => r.json()).catch(() => null);
       const list = Array.isArray(r?.jobs) ? r.jobs : Array.isArray(r) ? r : [];
       for (const j of list) {
+        const id = j.job_id ?? j.id;
         out.push({
-          id: `j-${j.id}`,
+          id: `j-${id}`,
           kind: "job",
-          title: j.name || j.kind || "Job",
+          title: j.job_name || j.name || j.kind || "Job",
           status: j.status || "unknown",
-          at: j.updated_at ?? j.created_at ?? Date.now(),
-          detail: j.summary || j.kind || "",
-          href: `/work?tab=jobs&id=${j.id}`,
+          at: j.last_checkpoint_at ?? j.updated_at ?? j.created_at ?? Date.now(),
+          detail: j.goal || j.summary || j.kind || "",
+          href: `/orchestration?job=${id}`,
         });
       }
     } catch { /* ignore */ }
@@ -120,7 +156,13 @@ export default function WorkPage() {
           id: `a-${a.id}`,
           kind: "automation",
           title: a.name || "Automation",
-          status: a.last_status || a.status || "scheduled",
+          status: a.enabled === 0
+            ? "paused"
+            : a.last_run_at
+              ? "ran"
+              : a.run_at
+                ? "one-shot"
+                : "scheduled",
           at: a.last_run_at ?? a.next_run_at ?? a.created_at ?? Date.now(),
           detail: a.schedule || "",
           href: "/automations",
@@ -168,7 +210,7 @@ export default function WorkPage() {
           return (
             <button
               key={f.id}
-              onClick={() => setFilter(f.id)}
+              onClick={() => selectFilter(f.id)}
               className="px-3 py-1.5 text-[12px] transition-colors"
               style={{
                 border: "1px solid hsl(0 0% 100% / 0.10)",
@@ -191,12 +233,16 @@ export default function WorkPage() {
         )}
         {visible.map((r) => {
           const I = ICON[r.kind];
+          const rawId = r.id.replace(/^[gpja]-/, "");
+          const highlighted = highlightId && (r.id === highlightId || r.id.endsWith(highlightId) || rawId === highlightId);
           return (
             <Link
               key={r.id}
               href={r.href}
+              id={highlighted ? "work-highlight" : undefined}
               className="lm-work-row group"
               data-pulse="true"
+              style={highlighted ? { background: "hsl(0 0% 100% / 0.06)" } : undefined}
             >
               <span className="lm-work-row__icon"><I className="h-4 w-4" /></span>
               <span className="lm-work-row__title">{r.title}</span>

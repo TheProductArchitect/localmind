@@ -102,6 +102,7 @@ export default function GraphDetailPage() {
         if (cancelled) return;
         if (j.error) {
           toast(j.error, "error");
+          setLoaded(true);
           return;
         }
         setGraph(j.graph);

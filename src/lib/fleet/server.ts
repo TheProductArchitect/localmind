@@ -418,4 +418,18 @@ function registerBuiltinHandlers(): void {
       });
     }
   );
+
+  // conversation-sync — bidirectional chat history mesh. Peers with
+  // sync_conversations exchange deltas so every device sees the same threads;
+  // origin_node_id / origin_label tell you which machine authored each turn.
+  registerHandler<
+    import("./conversation-sync").ConversationSyncRequest,
+    import("./conversation-sync").ConversationSyncResponse
+  >("conversation-sync", async ({ envelope, senderNodeId }) => {
+    const { handleConversationSync } = await import("./conversation-sync");
+    return handleConversationSync({
+      envelope_sender: senderNodeId,
+      payload: envelope.payload,
+    });
+  });
 }

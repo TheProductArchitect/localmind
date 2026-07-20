@@ -4,7 +4,7 @@ import type { ChatMessage, Provider, ProviderDelta, ToolDefinition } from "./typ
 
 const BASE = "https://api.anthropic.com/v1";
 
-function toAnthropic(messages: ChatMessage[]) {
+export function toAnthropic(messages: ChatMessage[]) {
   let system = "";
   const out: any[] = [];
   for (const m of messages) {
@@ -26,6 +26,19 @@ function toAnthropic(messages: ChatMessage[]) {
         content.push({ type: "tool_use", id: tc.id, name: tc.name, input: tc.arguments });
       }
       out.push({ role: "assistant", content });
+      continue;
+    }
+    if (m.role === "user" && m.images?.length) {
+      const content: any[] = [];
+      if (m.content) content.push({ type: "text", text: m.content });
+      for (const img of m.images) {
+        const data = img.startsWith("data:") ? img.replace(/^data:[^;]+;base64,/, "") : img;
+        content.push({
+          type: "image",
+          source: { type: "base64", media_type: "image/jpeg", data },
+        });
+      }
+      out.push({ role: "user", content });
       continue;
     }
     out.push({ role: m.role, content: (m as any).content });

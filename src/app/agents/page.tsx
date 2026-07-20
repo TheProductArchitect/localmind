@@ -23,7 +23,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Orb } from "@/components/orb";
-import { Workflow, ChevronRight, Sparkles, History, BookOpen, CheckCircle2, XCircle } from "lucide-react";
+import { Workflow, Sparkles, History, BookOpen, CheckCircle2, XCircle } from "lucide-react";
 import { HowItWorks } from "@/components/how-it-works";
 
 type Proc = {
@@ -207,7 +207,7 @@ export default function AgentsPage() {
           { title: "Sora summons.", body: "When a task needs specialised work, Sora picks a persona (Writer, Coder, Researcher, …) and calls spawn_subagent with a focused goal." },
           { title: "Narrow tool surface.", body: "Each persona has its own enabled_tools list — Writer can't touch the filesystem, Researcher can't send mail. Sora's request narrows further. The engine enforces the whitelist; tools outside it are hidden and refused at dispatch." },
           { title: "Subagents can ask for more.", body: "If a subagent gets stuck because its surface is too narrow, it calls request_tool_access with a reason. The run ends cleanly with a structured request; Sora decides whether to re-spawn with broader access, do the work herself, or tell you we can't proceed." },
-          { title: "Sora orchestrates the follow-up.", body: "After a subagent returns, Sora reads the output, synthesizes across multiple subagents if she ran them in parallel, and takes follow-up action when results demand it — never just pastes raw output." },
+          { title: "Sora orchestrates the follow-up.", body: "After a subagent returns, Sora reads the output, synthesizes across multiple subagents if she ran them (sequentially or in parallel), and takes follow-up action when results demand it — never just pastes raw output." },
           { title: "Safety stays intact.", body: "Subagents inherit the destructive-action floor: even in auto mode they cannot delete files, drop tables, send email, or run rm-style commands without your inline sign-off. Tool outputs from web/email/peers are wrapped in untrusted-content envelopes so injection text can't issue instructions to them either." },
         ]}
       />
@@ -404,7 +404,6 @@ export default function AgentsPage() {
                 <span className="lm-micro" style={{ textTransform: "none", letterSpacing: 0, color: "hsl(0 0% 100% / 0.4)" }}>
                   {elapsed(prof.lastAt)} ago
                 </span>
-                <ChevronRight className="h-3.5 w-3.5" style={{ color: "hsl(0 0% 100% / 0.2)" }} />
               </div>
             );
           })

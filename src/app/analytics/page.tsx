@@ -80,8 +80,14 @@ export default function AnalyticsPage() {
     setLoaded(false);
     try {
       const r = await fetch(`/api/analytics?window=${w}`);
-      const j = await r.json();
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j || j.error || !Array.isArray(j.tool_usage) || !Array.isArray(j.activity_buckets)) {
+        setData(null);
+        return;
+      }
       setData(j);
+    } catch {
+      setData(null);
     } finally {
       setLoaded(true);
     }

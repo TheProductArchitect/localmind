@@ -1,5 +1,7 @@
 import {
-  getWorkflow, createWorkflowRun, finishWorkflowRun, markWorkflowRun, type Workflow,
+  getWorkflow, createWorkflowRun, finishWorkflowRun, markWorkflowRun,
+  pauseWorkflowRun, createWorkflowApproval, getWorkflowRun, getPendingApprovalForRun,
+  resolveWorkflowApproval, type Workflow,
 } from "../db/automations";
 import { runAgentCollect } from "../agent/engine";
 import { listAllTools } from "../tools";
@@ -22,6 +24,7 @@ export type WorkflowStep =
 
 const STEP_TIMEOUT_MS = 60_000;
 const RUN_TIMEOUT_MS = 10 * 60_000;
+const APPROVAL_TIMEOUT_MS = 24 * 60 * 60_000;
 
 function interpolate(text: string, vars: Record<string, string>): string {
   return text.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? "");
@@ -34,6 +37,95 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
   ]);
 }
 
+type RunContext = {
+  wf: Workflow;
+  steps: WorkflowStep[];
+  runId: string;
+  results: any[];
+  vars: Record<string, string>;
+  convId: string;
+  runStarted: number;
+  processId: string;
+  startStep: number;
+};
+
+async function executeSteps(ctx: RunContext): Promise<string> {
+  const { wf, steps, runId, results, vars, convId, runStarted, processId } = ctx;
+  let status = "completed";
+
+  for (let i = ctx.startStep; i < steps.length; i++) {
+    safeProcessHook(() => updateProcess(processId, {
+      current_step: `Step ${i + 1} of ${steps.length}: ${steps[i].type}`,
+      metadata: { step_index: i, total_steps: steps.length },
+    }));
+    if (Date.now() - runStarted > RUN_TIMEOUT_MS) {
+      results.push({ step: i, type: "abort", error: "workflow run time limit exceeded" });
+      status = "failed";
+      break;
+    }
+    const step = steps[i];
+    try {
+      if (step.type === "agent") {
+        const out = await withTimeout(
+          runAgentCollect(convId, interpolate(step.prompt, vars)),
+          STEP_TIMEOUT_MS, "agent step"
+        );
+        vars.last = out;
+        results.push({ step: i, type: "agent", output: out.slice(0, 500) });
+      } else if (step.type === "tool") {
+        const tools = await listAllTools();
+        const tool = tools.find((t) => t.definition.name === step.tool);
+        if (!tool) throw new Error(`tool ${step.tool} not found`);
+        const res = await withTimeout(
+          tool.execute(step.input, { conversationId: convId, approvedDirs: [] }),
+          STEP_TIMEOUT_MS, "tool step"
+        );
+        vars.last = res.output;
+        results.push({ step: i, type: "tool", ok: res.ok, output: res.output.slice(0, 500) });
+      } else if (step.type === "condition") {
+        const isTrue = (vars.last || "").includes(step.contains);
+        results.push({ step: i, type: "condition", result: isTrue });
+        if (!isTrue) i += step.skipIfFalse;
+      } else if (step.type === "delay") {
+        await new Promise((r) => setTimeout(r, Math.min(step.seconds, 300) * 1000));
+        results.push({ step: i, type: "delay", seconds: step.seconds });
+      } else if (step.type === "notify") {
+        const { deliver } = await import("./deliver");
+        await deliver(step.channel, interpolate(step.message, vars));
+        results.push({ step: i, type: "notify", channel: step.channel });
+      } else if (step.type === "human_approval") {
+        const msg = interpolate(step.message, vars);
+        const approvalId = createWorkflowApproval(runId, wf.id, msg);
+        pauseWorkflowRun(runId, i, vars, convId, msg);
+        const { deliver } = await import("./deliver");
+        await deliver("browser", `Workflow "${wf.name}" needs approval:\n\n${msg}\n\nApprove: POST /api/workflows/runs/${runId}/approve\nReject: POST /api/workflows/runs/${runId}/reject`);
+        results.push({ step: i, type: "human_approval", approvalId, message: msg, status: "pending" });
+        safeProcessHook(() => updateProcess(processId, { status: "paused", current_step: "Awaiting human approval" }));
+        finishWorkflowRun(runId, "awaiting_approval", results);
+        return "awaiting_approval";
+      } else if (step.type === "loop") {
+        let items: string[] = [];
+        try { items = JSON.parse(vars[step.items] || "[]"); } catch { items = (vars[step.items] || "").split("\n"); }
+        for (const item of items.slice(0, 20)) {
+          const out = await withTimeout(
+            runAgentCollect(convId, interpolate(step.subPrompt, { ...vars, item: String(item) })),
+            STEP_TIMEOUT_MS, "loop step"
+          );
+          results.push({ step: i, type: "loop-item", item, output: out.slice(0, 200) });
+        }
+      }
+    } catch (e: any) {
+      results.push({ step: i, type: step.type, error: e?.message || "step failed" });
+      status = "failed";
+      break;
+    }
+  }
+
+  safeProcessHook(() => completeProcess(processId, status === "completed" ? "completed" : "failed"));
+  finishWorkflowRun(runId, status, results);
+  return status;
+}
+
 export async function runWorkflow(workflowId: string): Promise<{ runId: string; status: string; results: any[] }> {
   const wf = getWorkflow(workflowId);
   if (!wf) throw new Error("Workflow not found");
@@ -44,7 +136,6 @@ export async function runWorkflow(workflowId: string): Promise<{ runId: string; 
   const vars: Record<string, string> = {};
   const convId = createConversation().id;
   const runStarted = Date.now();
-  let status = "completed";
 
   let processId = "";
   safeProcessHook(() => {
@@ -55,73 +146,64 @@ export async function runWorkflow(workflowId: string): Promise<{ runId: string; 
     });
   });
 
-  try {
-    for (let i = 0; i < steps.length; i++) {
-      safeProcessHook(() => updateProcess(processId, {
-        current_step: `Step ${i + 1} of ${steps.length}: ${steps[i].type}`,
-        metadata: { step_index: i, total_steps: steps.length },
-      }));
-      if (Date.now() - runStarted > RUN_TIMEOUT_MS) {
-        results.push({ step: i, type: "abort", error: "workflow run time limit exceeded" });
-        status = "failed";
-        break;
-      }
-      const step = steps[i];
-      try {
-        if (step.type === "agent") {
-          const out = await withTimeout(
-            runAgentCollect(convId, interpolate(step.prompt, vars)),
-            STEP_TIMEOUT_MS, "agent step"
-          );
-          vars.last = out;
-          results.push({ step: i, type: "agent", output: out.slice(0, 500) });
-        } else if (step.type === "tool") {
-          const tools = await listAllTools();
-          const tool = tools.find((t) => t.definition.name === step.tool);
-          if (!tool) throw new Error(`tool ${step.tool} not found`);
-          const res = await withTimeout(
-            tool.execute(step.input, { conversationId: convId, approvedDirs: [] }),
-            STEP_TIMEOUT_MS, "tool step"
-          );
-          vars.last = res.output;
-          results.push({ step: i, type: "tool", ok: res.ok, output: res.output.slice(0, 500) });
-        } else if (step.type === "condition") {
-          const isTrue = (vars.last || "").includes(step.contains);
-          results.push({ step: i, type: "condition", result: isTrue });
-          if (!isTrue) i += step.skipIfFalse;
-        } else if (step.type === "delay") {
-          await new Promise((r) => setTimeout(r, Math.min(step.seconds, 300) * 1000));
-          results.push({ step: i, type: "delay", seconds: step.seconds });
-        } else if (step.type === "notify") {
-          const { deliver } = await import("./deliver");
-          await deliver(step.channel, interpolate(step.message, vars));
-          results.push({ step: i, type: "notify", channel: step.channel });
-        } else if (step.type === "human_approval") {
-          // No interactive transport here — log and continue per the skip-on-timeout rule.
-          results.push({ step: i, type: "human_approval", note: "auto-continued (no interactive channel)" });
-        } else if (step.type === "loop") {
-          let items: string[] = [];
-          try { items = JSON.parse(vars[step.items] || "[]"); } catch { items = (vars[step.items] || "").split("\n"); }
-          for (const item of items.slice(0, 20)) {
-            const out = await withTimeout(
-              runAgentCollect(convId, interpolate(step.subPrompt, { ...vars, item: String(item) })),
-              STEP_TIMEOUT_MS, "loop step"
-            );
-            results.push({ step: i, type: "loop-item", item, output: out.slice(0, 200) });
-          }
-        }
-      } catch (e: any) {
-        results.push({ step: i, type: step.type, error: e?.message || "step failed" });
-        status = "failed";
-        break;
-      }
-    }
-  } catch (e: any) {
-    status = "failed";
-    logger.error("workflow run failed", { workflowId, error: e?.message });
+  const status = await executeSteps({
+    wf, steps, runId, results, vars, convId, runStarted, processId, startStep: 0,
+  });
+
+  if (status === "awaiting_approval") {
+    return { runId, status, results };
   }
 
-  safeProcessHook(() => completeProcess(processId, status === "completed" ? "completed" : "failed"));
-  finishWorkflowRun(runId, status, results);
   return { runId, status, results };
+}
+
+/** Resume a workflow paused on human_approval. */
+export async function resumeWorkflow(runId: string, approved: boolean): Promise<{ status: string; results: any[] }> {
+  const run = getWorkflowRun(runId);
+  if (!run || run.status !== "awaiting_approval") {
+    throw new Error("Workflow run is not awaiting approval");
+  }
+  const pending = getPendingApprovalForRun(runId);
+  if (!pending) throw new Error("No pending approval found");
+
+  resolveWorkflowApproval(pending.id, approved);
+  const results = JSON.parse(run.step_results || "[]") as any[];
+
+  if (!approved) {
+    results.push({ type: "human_approval", status: "rejected" });
+    finishWorkflowRun(runId, "rejected", results);
+    return { status: "rejected", results };
+  }
+
+  const wf = getWorkflow(run.workflow_id);
+  if (!wf) throw new Error("Workflow not found");
+  const steps = JSON.parse(wf.steps) as WorkflowStep[];
+  const vars = JSON.parse(run.paused_vars || "{}") as Record<string, string>;
+  const convId = run.paused_conv_id || createConversation().id;
+  const startStep = (run.paused_step_index ?? 0) + 1;
+
+  results.push({ type: "human_approval", status: "approved" });
+
+  let processId = "";
+  safeProcessHook(() => {
+    processId = startProcess({
+      process_type: "workflow",
+      display_name: `${wf.name} (resumed)`,
+      metadata: { workflow_id: wf.id, run_id: runId, resumed: true },
+    });
+  });
+
+  const status = await executeSteps({
+    wf,
+    steps,
+    runId,
+    results,
+    vars,
+    convId,
+    runStarted: Date.now(),
+    processId,
+    startStep,
+  });
+
+  return { status, results };
 }

@@ -1,7 +1,7 @@
 import fs from "fs";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { getMonitor, recordMonitorCheck, type Monitor } from "../db/automations";
+import { getMonitor, recordMonitorCheck, updateMonitorCheckConfig, type Monitor } from "../db/automations";
 import { deliver } from "../workflow/deliver";
 import { runWorkflow } from "../workflow/executor";
 import { logger } from "../logger";
@@ -9,7 +9,7 @@ import { logger } from "../logger";
 const exec = promisify(execFile);
 
 // Returns true when the watched condition is currently met.
-async function evaluate(monitor: Monitor): Promise<{ triggered: boolean; detail: string }> {
+async function evaluate(monitor: Monitor): Promise<{ triggered: boolean; detail: string; mtimeMs?: number }> {
   const cfg = JSON.parse(monitor.check_config || "{}");
   switch (monitor.check_type) {
     case "url_reachable": {
@@ -31,8 +31,9 @@ async function evaluate(monitor: Monitor): Promise<{ triggered: boolean; detail:
     case "file_change": {
       try {
         const stat = fs.statSync(cfg.path);
-        const changed = cfg.lastMtime && stat.mtimeMs > cfg.lastMtime;
-        return { triggered: !!changed, detail: `mtime ${stat.mtimeMs}` };
+        const baseline = typeof cfg.lastMtime === "number" ? cfg.lastMtime : null;
+        const changed = baseline !== null && stat.mtimeMs > baseline;
+        return { triggered: changed, detail: `mtime ${stat.mtimeMs}`, mtimeMs: stat.mtimeMs };
       } catch {
         return { triggered: false, detail: "missing" };
       }
@@ -53,8 +54,14 @@ async function evaluate(monitor: Monitor): Promise<{ triggered: boolean; detail:
 export async function runMonitor(monitorId: string): Promise<{ status: string }> {
   const monitor = getMonitor(monitorId);
   if (!monitor || !monitor.enabled) return { status: "skipped" };
-  const { triggered, detail } = await evaluate(monitor);
+  const cfg = JSON.parse(monitor.check_config || "{}");
+  const { triggered, detail, mtimeMs } = await evaluate(monitor);
   const status = triggered ? "triggered" : "ok";
+
+  // Persist file mtime baseline after every check so file_change monitors work.
+  if (monitor.check_type === "file_change" && typeof mtimeMs === "number") {
+    updateMonitorCheckConfig(monitorId, { ...cfg, path: cfg.path, lastMtime: mtimeMs });
+  }
 
   // Fire only on a transition into the triggered state.
   if (triggered && monitor.last_status !== "triggered") {

@@ -1,14 +1,15 @@
 /**
  * POST /api/fleet/peers/[id]/chat
  *
- * Drive a chat session on a paired peer. The peer must have explicitly opted
- * in (their accept_chat_relay flag) — otherwise the executor will refuse.
+ * Drive a chat session on a paired peer. Streams progressive status over SSE
+ * so the UI can show "Waiting on …" while the signed relay runs; the peer
+ * still returns one final reply (token streaming across fleet is Phase-2).
  *
  * Body: { conversation_id: string, message: string, persona_id?: string }
- * Returns: { reply, executor_conversation_id, peer_audit_id, local_audit_id }
+ * SSE events: { type: "status", phase }, { type: "done", reply, … }, { type: "error", message }
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { z } from "zod";
 import { currentUser } from "@/lib/auth/identity";
 import { getPeer } from "@/lib/db/fleet";
@@ -28,36 +29,74 @@ export async function POST(
 ) {
   const params = await paramsPromise;
   const user = currentUser(req);
-  if (!user) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  if (!user) {
+    return new Response(JSON.stringify({ error: "Unauthorized." }), {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    });
+  }
 
   const peer = getPeer(params.id);
   if (!peer || peer.trusted !== 1) {
-    return NextResponse.json({ error: "Unknown or untrusted peer." }, { status: 404 });
+    return new Response(JSON.stringify({ error: "Unknown or untrusted peer." }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
   }
 
   const parsed = Body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid payload.", issues: parsed.error.issues }, { status: 400 });
-  }
-
-  const result = await relayChatToPeer({
-    peer_node_id: params.id,
-    conversation_id: parsed.data.conversation_id,
-    message: parsed.data.message,
-    persona_id: parsed.data.persona_id,
-  });
-
-  if (!result.ok) {
-    return NextResponse.json(
-      { error: result.reason, local_audit_id: result.local_audit_id },
-      { status: 502 }
+    return new Response(
+      JSON.stringify({ error: "Invalid payload.", issues: parsed.error.issues }),
+      { status: 400, headers: { "content-type": "application/json" } }
     );
   }
 
-  return NextResponse.json({
-    reply: result.reply,
-    executor_conversation_id: result.executor_conversation_id,
-    peer_audit_id: result.peer_audit_id,
-    local_audit_id: result.local_audit_id,
+  const peerLabel = peer.label || peer.peer_node_id.slice(0, 12);
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const write = (obj: unknown) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+      };
+      write({ type: "status", phase: "relay_started", peer_label: peerLabel });
+      try {
+        const result = await relayChatToPeer({
+          peer_node_id: params.id,
+          conversation_id: parsed.data.conversation_id,
+          message: parsed.data.message,
+          persona_id: parsed.data.persona_id,
+        });
+        if (!result.ok) {
+          write({
+            type: "error",
+            message: result.reason,
+            local_audit_id: result.local_audit_id,
+          });
+        } else {
+          write({ type: "status", phase: "receiving", peer_label: peerLabel });
+          write({
+            type: "done",
+            reply: result.reply,
+            executor_conversation_id: result.executor_conversation_id,
+            peer_audit_id: result.peer_audit_id,
+            local_audit_id: result.local_audit_id,
+            peer_label: peerLabel,
+          });
+        }
+      } catch (e) {
+        write({ type: "error", message: (e as Error).message || "Relay failed." });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    },
   });
 }

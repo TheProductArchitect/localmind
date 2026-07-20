@@ -4,6 +4,7 @@ import {
   getUser, getSession, touchSession, getOwner, type User, createSession,
 } from "../db/users";
 import { getSettings } from "../db/queries";
+import { isLoopbackRequest } from "./loopback";
 
 export const ACCESS_TTL = 15 * 60; // seconds
 export const REFRESH_TTL_MS: Record<string, number> = {
@@ -34,9 +35,7 @@ export function getAuth(req: NextRequest): Auth | null {
   // single-user experience keeps working. This only kicks in when there is
   // genuinely no auth attempt on the request.
   const s = getSettings();
-  const host = req.headers.get("host") || "";
-  const isLocalhost = host.startsWith("localhost") || host.startsWith("127.0.0.1");
-  if (!s.require_login && isLocalhost) {
+  if (!s.require_login && isLoopbackRequest((h) => req.headers.get(h))) {
     const owner = getOwner();
     if (owner) return { user: owner, sessionId: null };
   }

@@ -17,11 +17,11 @@ export const memoryTool: Tool = {
   definition: {
     name: "memory",
     description:
-      "Read, write, or delete persistent facts the assistant remembers across conversations. Operations: read, write, delete.",
+      "Read, write, or delete persistent facts the assistant remembers across conversations. Operations: read, write, delete (list is an alias for read). Use only for durable user facts the user asked you to remember — not for jokes, chat replies, or recalling the current conversation.",
     parameters: {
       type: "object",
       properties: {
-        operation: { type: "string", enum: ["read", "write", "delete"] },
+        operation: { type: "string", enum: ["read", "write", "delete", "list"] },
         key: { type: "string" },
         value: { type: "string" },
       },
@@ -29,7 +29,16 @@ export const memoryTool: Tool = {
     },
   },
   async execute(input, ctx) {
-    const op = input.operation;
+    // Small models often invent ops like "list" / "record" / "save".
+    const raw = String(input.operation || "");
+    const op =
+      raw === "list" || raw === "get" || raw === "fetch"
+        ? "read"
+        : raw === "record" || raw === "save" || raw === "set" || raw === "add"
+        ? "write"
+        : raw === "remove" || raw === "forget"
+        ? "delete"
+        : raw;
     if (op === "read") {
       const items = listMemory();
       return {

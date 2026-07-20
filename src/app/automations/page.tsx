@@ -152,8 +152,14 @@ function MonitorsTab() {
 function WorkflowsTab() {
   const [workflows, setWorkflows] = useState<any[]>([]);
   const [templates, setTemplates] = useState<any[]>([]);
-  const load = () => fetch("/api/workflows").then((r) => r.json()).then((j) => {
-    setWorkflows(j.workflows || []); setTemplates(j.templates || []);
+  const [pending, setPending] = useState<any[]>([]);
+  const load = () => Promise.all([
+    fetch("/api/workflows").then((r) => r.json()),
+    fetch("/api/workflows/approvals/pending").then((r) => r.json()),
+  ]).then(([w, p]) => {
+    setWorkflows(w.workflows || []);
+    setTemplates(w.templates || []);
+    setPending(p.approvals || []);
   });
   useEffect(() => { load(); }, []);
   async function install(templateId: string) {
@@ -166,12 +172,37 @@ function WorkflowsTab() {
   async function run(id: string) {
     toast("Running workflow…");
     const j = await (await fetch(`/api/workflows/${id}/run`, { method: "POST" })).json();
-    toast(`Workflow ${j.status || "done"} — ${j.results?.length || 0} steps`, j.status === "completed" ? "success" : "error");
+    if (j.status === "awaiting_approval") {
+      toast("Workflow paused — approval required (see Pending approvals below)", "error");
+    } else {
+      toast(`Workflow ${j.status || "done"} — ${j.results?.length || 0} steps`, j.status === "completed" ? "success" : "error");
+    }
+    load();
+  }
+  async function approveRun(runId: string, approved: boolean) {
+    const path = approved ? "approve" : "reject";
+    const j = await (await fetch(`/api/workflows/runs/${runId}/${path}`, { method: "POST" })).json();
+    toast(approved ? `Approved — ${j.status}` : `Rejected`, approved ? "success" : "error");
     load();
   }
   async function del(id: string) { await fetch(`/api/workflows/${id}`, { method: "DELETE" }); load(); }
   return (
     <div className="space-y-3">
+      {pending.length > 0 && (
+        <Card className="p-4 border-amber-500/40 bg-amber-500/5 space-y-2">
+          <p className="font-medium text-sm">Pending approvals</p>
+          {pending.map((a) => (
+            <div key={a.run_id} className="flex items-start gap-2 text-sm border-t border-border/50 pt-2 first:border-0 first:pt-0">
+              <div className="flex-1">
+                <p className="font-medium">{a.workflow_name}</p>
+                <p className="text-xs text-muted-foreground mt-1">{a.approval_message || "Approval required"}</p>
+              </div>
+              <Button size="sm" onClick={() => approveRun(a.run_id, true)}>Approve</Button>
+              <Button size="sm" variant="outline" onClick={() => approveRun(a.run_id, false)}>Reject</Button>
+            </div>
+          ))}
+        </Card>
+      )}
       <Card className="p-4">
         <p className="font-medium text-sm mb-2">Install a template</p>
         <div className="grid sm:grid-cols-2 gap-2">

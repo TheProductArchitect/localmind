@@ -12,34 +12,47 @@
  */
 
 import { Suspense, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "@/components/toast";
 import { NoteGraph } from "@/components/note-graph";
-import { Search, Plus, RefreshCw, Trash2, Upload, FileText, StickyNote, Share2, Wifi, Brain } from "lucide-react";
+import { ContextGraphView } from "@/components/context-graph-view";
+import { Search, Plus, RefreshCw, Trash2, Upload, FileText, StickyNote, Share2, Wifi, Brain, Waypoints } from "lucide-react";
 
-type TabId = "search" | "documents" | "notes" | "memory" | "sharing" | "peer";
+type TabId = "search" | "documents" | "notes" | "memory" | "context" | "sharing" | "peer";
 
 const TABS: { id: TabId; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "search",    label: "Search",     Icon: Search },
   { id: "documents", label: "Documents",  Icon: FileText },
   { id: "notes",     label: "Notes",      Icon: StickyNote },
   { id: "memory",    label: "Memory",     Icon: Brain },
+  { id: "context",   label: "About you",  Icon: Waypoints },
   { id: "sharing",   label: "Sharing",    Icon: Share2 },
   { id: "peer",      label: "Peer search", Icon: Wifi },
 ];
 
 function KnowledgeInner() {
   const params = useSearchParams();
+  const router = useRouter();
   const initial = (params.get("tab") as TabId | null) ?? "search";
-  const [tab, setTab] = useState<TabId>(initial);
+  const [tab, setTab] = useState<TabId>(
+    initial && TABS.some((x) => x.id === initial) ? initial : "search"
+  );
 
   useEffect(() => {
     const t = params.get("tab") as TabId | null;
     if (t && TABS.some((x) => x.id === t)) setTab(t);
   }, [params]);
 
+  function selectTab(id: TabId) {
+    setTab(id);
+    // Keep the URL in sync so sidebar links, ⌘K, and shareable deep-links
+    // stay mapped to the visible surface.
+    const qs = id === "search" ? "/knowledge" : `/knowledge?tab=${id}`;
+    router.replace(qs, { scroll: false });
+  }
+
   return (
-    <div className="mx-auto max-w-4xl px-10 py-16">
+    <div className="mx-auto max-w-4xl px-5 sm:px-10 py-10 sm:py-16">
       <header className="mb-12">
         <p className="lm-micro mb-2">Knowledge</p>
         <h1 className="lm-display">What Sora knows</h1>
@@ -55,7 +68,7 @@ function KnowledgeInner() {
           return (
             <button
               key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => selectTab(t.id)}
               className={`lm-tab ${active ? "is-active" : ""}`}
               data-pulse="true"
             >
@@ -71,6 +84,7 @@ function KnowledgeInner() {
         {tab === "documents" && <DocsTab />}
         {tab === "notes"     && <NotesTab />}
         {tab === "memory"    && <MemoryTab />}
+        {tab === "context"   && <ContextGraphView />}
         {tab === "sharing"   && <SharingTab />}
         {tab === "peer"      && <PeerSearchTab />}
       </div>
@@ -317,7 +331,7 @@ function NotesTab() {
   }
 
   return (
-    <div className="grid gap-8" style={{ gridTemplateColumns: "220px 1fr" }}>
+    <div className="grid gap-8 grid-cols-1 md:grid-cols-[200px_1fr]">
       <aside className="space-y-1">
         <button onClick={create} className="lm-action w-full justify-center" data-pulse="true">
           <Plus className="h-3.5 w-3.5" /> New note
@@ -394,7 +408,7 @@ function NotesTab() {
 /* Memory                                                       */
 /* ============================================================ */
 
-type MemoryEntry = { id: string; content: string; kind?: string; created_at?: number };
+type MemoryEntry = { id: string; key: string; value: string; content?: string; updated_at?: number };
 
 function MemoryTab() {
   const [entries, setEntries] = useState<MemoryEntry[]>([]);
@@ -414,7 +428,8 @@ function MemoryTab() {
     setEntries((cur) => cur.filter((e) => e.id !== id));
   }
 
-  const visible = entries.filter((e) => !filter || (e.content || "").toLowerCase().includes(filter.toLowerCase()));
+  const text = (e: MemoryEntry) => `${e.key ?? ""} ${e.value ?? e.content ?? ""}`.toLowerCase();
+  const visible = entries.filter((e) => !filter || text(e).includes(filter.toLowerCase()));
 
   return (
     <div>
@@ -442,8 +457,8 @@ function MemoryTab() {
           <div key={m.id} className="lm-row">
             <span className="lm-row__icon"><Brain className="h-4 w-4" /></span>
             <div className="lm-row__main">
-              <p className="lm-row__title" style={{ whiteSpace: "pre-wrap" }}>{m.content}</p>
-              {m.kind && <p className="lm-micro" style={{ textTransform: "none", letterSpacing: 0 }}>{m.kind}</p>}
+              <p className="lm-row__title">{m.key}</p>
+              <p className="lm-micro" style={{ textTransform: "none", letterSpacing: 0, whiteSpace: "pre-wrap" }}>{m.value ?? m.content}</p>
             </div>
             <button onClick={() => del(m.id)} className="lm-row__del" aria-label="Delete entry" data-pulse="true">
               <Trash2 className="h-3.5 w-3.5" />

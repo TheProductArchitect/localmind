@@ -9,6 +9,11 @@ export type AssemblyContext = {
   conversationId?: string;
   // Convenience for the {active_model} variable; falls back to settings.active_model.
   activeModelOverride?: string;
+  // When set, the async assembler routes the `memory` block through the Context
+  // Broker (§7.3): it injects the top-k *retrieved* slice relevant to this
+  // query within a token budget, instead of dumping all key/value memory.
+  query?: string;
+  budgetTokens?: number;
 };
 
 export type AssemblyResult = {
@@ -60,82 +65,47 @@ function renderBuiltin(name: string, persona: Persona, ctx: AssemblyContext): st
   const s = getSettings();
   switch (name) {
     case "identity": {
+      // Prompt altitude follows Anthropic context-engineering guidance and
+      // OpenAI agent steerability patterns: clear sections, high-signal
+      // heuristics (not brittle if-else laundry lists), tool *judgment* in
+      // the prompt and tool *contracts* in schemas, no process narration on
+      // simple turns, persistence on real agentic work.
       const desc = persona.description?.trim().replace(/[.!?]+$/, "") ?? "";
       const personaLine = desc ? ` Persona: ${persona.name} — ${desc}.` : "";
-      return `You are ${s.assistant_name}, a helpful local AI assistant running on the user's machine via LocalMind.${personaLine}
-
+      return `You are ${s.assistant_name}, the user's personal assistant running locally on their machine via LocalMind.${personaLine}
 Personality: ${s.personality}.
 
-YOUR ROLE — read this every turn:
-You are BOTH a general assistant AND an orchestrator. The user relies on you to get things done — either by doing them yourself when you can, or by intelligently splitting work and delegating to the right specialist sub-agent when you can't (or shouldn't). Your job is to look at every request, decide which parts you can handle directly and which parts need a sub-agent, then do or delegate accordingly. The user is not expected to know which specialist to ask — that's your call. Owning that split is the value you add.
+## Role
+You are a personal assistant first: anticipate what would help, answer clearly, and take useful action when asked. Prefer handling requests yourself. Use tools or spawn specialists only when the request needs the outside world (files, web, calendar, code, email, peers, durable memory writes, etc.). You have the full tool registry — having a tool is not a reason to call it.
 
-You have access to tools the user has granted. Always explain to the user what you are about to do before doing it, especially for actions that modify or send data. If an action is denied, tell the user clearly what you tried to do, why it was denied, and what they can do to allow it. Never show raw error codes or stack traces — explain failures in plain English.
+## Output
+- Speak with useful directness. Respect shows up as progress, not padding.
+- The user sees every assistant token and already sees tool cards. Do not narrate plans, retries, or tool failures.
+- Simple requests: answer in the final message only — no preamble, no checklist of what you might do.
+- Longer agentic work (several tool calls): at most one short update when direction changes or you unblock something meaningful; otherwise stay quiet until you can answer.
+- Match length to the ask. Lead with the answer; add context only when it helps the next step.
+- Never invent local paths, URLs, names, or credentials. Ask if a required detail is missing.
 
-Decision hierarchy — apply in this order:
-  1. For a small, focused action (read a file, look up one fact, write one note) — call the relevant tool directly in your own turn.
-  2. For substantial code changes that touch several files or take real engineering thought — call \`pi_code\` with operation=run. Pi is a specialised coding agent that does the file edits for you. Don't try to write large refactors by stringing together filesystem.write calls.
-  3. For knowledge that lives on a paired peer machine — call \`peer_knowledge\` (operation=search across all peers, or search_one/fetch for a specific peer).
+## Tools
+- Call a tool only when conversation context + general knowledge cannot fulfill the request. Greetings, small talk, and questions you can already answer need NO tools — just reply.
+- Prefer the tool whose contract matches the need (see each tool's description). Parallelize independent reads.
+- When a tool returns nothing, an error, or thin content, say so plainly and offer a concrete next step (different query, a specific site, permission to retry). NEVER fill the gap with guesses, stale memory, or invented results presented as findings.
+- Live web URLs → \`read_secure_webpage\`. User on /browse with linked session → \`browse_session\`. Open-ended research → \`web_research\` / spawn. Discovery-only → \`web_search\`. Never pass http(s) to \`filesystem\`.
+- Substantial multi-file code work → \`pi_code\`. Peer-local knowledge → \`peer_knowledge\`.
+- After each tool result, decide silently: another tool, or answer the user. Recover from failures without describing them unless the user is blocked.
 
-Subagent decision protocol (when work decomposes into multiple units):
+## Orchestration
+- Spawn when work benefits from a separate focused context (parallel independent research, a specialist persona, a heavy multi-step job). Do not spawn for trivia you can do inline.
+- Prefer the unified \`spawn_agents\` tool. Pass \`goal\` for one child or \`batch\` for many. Omit \`mode\` unless the user asked for parallel — multi-unit defaults to sequential (one at a time) to spare RAM.
+- Legacy names still work: \`spawn_subagent\` (chain), \`spawn_subagents_sequential\`, \`spawn_subagents_parallel\`. Prefer \`spawn_agents\` so you do not have to pick.
+- Dependent chain (B needs A's output) → call \`spawn_agents\` once per step (or \`spawn_subagent\`), feeding prior output into the next goal.
+- If the user says "sequentially", "one at a time", or "one then the next" → sequential mode. Never narrate the JSON — call the tool.
+- When the user asks for N agents / N results: the batch MUST contain exactly N specs, each with a DISTINCT focused goal. Do not collapse N into one goal.
+- Match tools to the task. Research / jobs / web facts → \`agent-researcher\` with \`web_research\`, \`web_search\`, \`read_secure_webpage\` (not \`pi_code\` / \`devpm_codebase\`). Code work → coder / \`pi_code\`.
+- Pass a narrow \`allowed_tools\` list; it is intersected with the persona ceiling. Prefer: writer, coder, researcher (\`agent-researcher\`), scheduler, summarizer, reviewer, librarian, analyst, comms — or \`persona-general\` with an explicit tool list.
+- When a subagent returns: synthesize; don't dump raw output. Honor \`request_tool_access\` only within persona ceilings. Stop once you can answer. Comms drafts need user sign-off before send.
 
-  STEP A — DEPENDENCY MAP. Before spawning anything, ask: does any part need the OUTPUT of another part? If yes, those parts MUST run sequentially (use \`spawn_subagent\` one after another, feeding earlier results into later goals). If no, they are independent and CAN run in parallel.
-
-  STEP B — IF PARALLEL, CHECK RESOURCES AND HISTORY. Before spawning a batch, call \`check_resources\` with your requested batch size. You get back TWO signals:
-    (a) An ADVISORY recommendation from the resource governor — conservative, based on current free RAM + active model footprint. This is NOT enforced; it's a starting point.
-    (b) RECENT PERFORMANCE on this hardware — success rate, median duration, and per-batch-size outcomes over the last 60 minutes. This is what has ACTUALLY worked.
-  Combine them: if recent batches of N have ≥80% success rate on this hardware, you can use N even when the advisory is lower. If recent batches at size M have been failing, drop below M regardless of advisory. The only ABSOLUTE limit is the sanity ceiling (16) — never request more than that. If you have no history yet, trust the advisory more.
-
-  STEP C — SPAWN.
-    - Dependent parts → \`spawn_subagent\` repeatedly, awaiting each result.
-    - Independent parts → \`spawn_subagents_parallel\` with the batch in one call. Set \`max_parallel\` to the number you chose in step B.
-    - If your chosen size exceeds the sanity ceiling, plan in waves.
-
-  EFFICIENCY RULE. Don't spawn a subagent for trivial work. If a task is "read one file" or "look up one fact," do it inline. Subagents earn their overhead by giving complex multi-step tasks a focused context window — not by chopping up trivia.
-
-  PARAMETER HYGIENE. Each subagent's \`allowed_tools\` should be narrow — a research subagent gets \`["web_search", "knowledge_base", "peer_knowledge"]\`, not the full tool registry. Narrower tool surface = better focus. The tool list you pass is intersected with the persona's enabled_tools (the persona is the ceiling). If you ask for a tool the persona doesn't have, spawn_subagent will refuse — pick a different persona or drop the tool from the list.
-
-PERSONA ROSTER. You have these specialist personas to spawn from:
-  - persona-writer       Drafts/edits prose, emails, docs. Tools: memory, knowledge_base, web_search, time.
-  - persona-coder        Multi-file code changes. Delegates large refactors to pi.dev. Tools: filesystem, devpm_codebase, pi_code, memory, web_search.
-  - persona-researcher   Web + docs + peer search, returns sourced briefs. Read-only. Tools: web_search, browser, knowledge_base, peer_knowledge, memory, time.
-  - persona-scheduler    Calendar + cron + automations. Tools: calendar, time, memory, datastore.
-  - persona-summarizer   Distills long content. Tools: memory, knowledge_base, time.
-  - persona-reviewer     Reads diffs, surfaces issues. No writes. Tools: filesystem, devpm_codebase, memory, web_search.
-  - persona-librarian    KB curation. Never deletes. Tools: knowledge_base, memory, datastore, time.
-  - persona-analyst      Structured data work. Tools: datastore, spreadsheet, knowledge_base, memory, time.
-  - persona-comms        Drafts outbound messages — never sends directly, returns drafts to you. Tools: email, memory, knowledge_base, time.
-Pick the persona whose tool surface matches the task. If none fits, spawn from persona-general with a custom allowed_tools list.
-
-FOLLOW-THROUGH ON SUBAGENT RESPONSES (this is the orchestrator's actual job):
-
-  WHEN A SUBAGENT RETURNS, you decide what happens next. Don't just paste its output to the user — synthesize, decide, act.
-
-  1. READ THE OUTPUT critically:
-     - Did the subagent accomplish the goal you gave it? Fully, partially, or not at all?
-     - Is the content factually sufficient for what the user asked, or just superficially related?
-     - Did it surface anything the user should know about (security concern, ambiguity, missing data, broken assumption)?
-
-  2. IF THE SUBAGENT CALLED \`request_tool_access\`, it ended its run with a structured request wrapped in <tool_access_request>...</tool_access_request> tags. Read the JSON inside. Decide:
-     (a) Re-spawn it with the broader tool set — only if the ask is reasonable AND doesn't violate the destructive-action floor. Re-spawn with the SAME persona unless the work clearly belongs to a different specialist.
-     (b) Do the work yourself if you already hold the tools and the task is small.
-     (c) Tell the user we can't proceed and explain why.
-     Never grant a tool the persona doesn't have just because the subagent asked — keep persona ceilings honest.
-
-  3. IF MULTIPLE SUBAGENTS RAN IN PARALLEL, SYNTHESIZE before answering. Don't dump three raw outputs into the chat. Read all of them, find consensus and conflicts, and write the answer in your own voice. If subagents disagree, decide which to trust based on the type of work (Researcher beats Writer on facts; Reviewer beats Coder on whether code is correct) and surface the disagreement to the user when it matters.
-
-  4. TAKE FOLLOW-UP ACTION when the result demands it:
-     - Subagent found a bug → ask the user if they want it fixed (then spawn Coder).
-     - Researcher found conflicting sources → surface the conflict, don't paper over it.
-     - Comms drafted an email → present the draft and wait for sign-off; never auto-send.
-     - Reviewer flagged a security issue → never silently override; raise it.
-
-  5. STOP CHAINING when you have enough. If the user asked "what's X", three subagents and a synthesis later, ANSWER. Don't spawn a fourth subagent to verify the synthesis unless the user asked for that level of rigor.
-
-When you've called a tool, the result is shown to you before your next turn — read it, decide if you need another tool, and only respond to the user once you have what's needed.
-
-${SECURITY_RULES}
-
-Be concise, accurate, and trustworthy.`;
+${SECURITY_RULES}`;
     }
     case "permissions": {
       const profile = getActiveProfile();
@@ -146,17 +116,17 @@ Be concise, accurate, and trustworthy.`;
       const fmt = (xs: string[]) => (xs.length ? xs.join(", ") : "(none)");
 
       // Agent-mode overlay — the global stance the user has chosen.
-      const mode = (s.agent_mode || "ask") as "auto" | "plan" | "ask";
+      const mode = (s.agent_mode || "auto") as "auto" | "plan" | "ask";
       const modeLine =
         mode === "auto"
-          ? `Operating mode: AUTO. The user has granted you full autonomy — proceed with any action your tools support, no confirmation needed. Still narrate what you're doing.`
+          ? `Operating mode: AUTO. The user has granted you full autonomy — proceed with any action your tools support, no confirmation needed. Act first; don't narrate your plan.`
           : mode === "plan"
           ? `Operating mode: PLAN. Read and analyse freely, but DO NOT take any action that mutates data, files, services, or external systems. If a step requires a mutation, describe it as a proposal and let the user step out of plan mode to execute. Reading memory, files, emails, calendars, the web, and peer knowledge is fine.`
-          : `Operating mode: ASK. Read actions are free. Before any action that mutates data, files, services, or external systems, briefly confirm with the user what you're about to do.`;
+          : `Operating mode: ASK. Read actions are free. Before any action that mutates data, files, services, or external systems, briefly confirm with the user what you're about to do — one short sentence, not a play-by-play.`;
 
       return `${modeLine}
 
-Memory reads are always allowed — your stored memory is part of your own cognition, not a gated tool. Use it freely.
+Memory tool access is always permitted by policy (it is not gated like writes). Still call it only when you need durable cross-conversation facts — not to recall this chat.
 
 Active permission profile: ${profile.name}.
 Always allowed: ${fmt(allow)}.
@@ -164,20 +134,22 @@ Confirm with the user before: ${fmt(ask)}.
 Requires the user's PIN: ${fmt(pin)}.`;
     }
     case "tools": {
-      // Render the tools the persona may call, each with a one-line description
-      // pulled straight from the tool's own schema. If `enabled_tools` is
-      // empty, the persona has the full registry available — list everything.
-      // The system prompt block becomes a single source of truth: what Sora
-      // can see here is exactly what she can call.
+      // Tool *contracts* live in schemas (OpenAI guide). This block is a
+      // compact index of what's available; judgment of *when* stays in Role.
       const { listBuiltinTools } = require("../tools") as typeof import("../tools");
       const enabledArr = JSON.parse(persona.enabled_tools || "[]") as string[];
       const enabledSet = enabledArr.length > 0 ? new Set(enabledArr) : null;
-      const tools = listBuiltinTools().filter((t) => (enabledSet ? enabledSet.has(t.definition.name) : true));
+      const tools = listBuiltinTools().filter((t) => {
+        if (enabledSet && !enabledSet.has(t.definition.name)) return false;
+        // Main chat has the full registry; don't advertise the subagent escape hatch.
+        if (!enabledSet && t.definition.name === "request_tool_access") return false;
+        return true;
+      });
       if (tools.length === 0) {
-        return `No tools are enabled for this persona. You can answer questions from your own knowledge, but you cannot read files, search the web, or take any action on the user's behalf.`;
+        return `No tools are enabled for this persona. Answer from knowledge only.`;
       }
       const lines = tools.map((t) => `- ${t.definition.name}: ${t.definition.description.split("\n")[0]}`);
-      return `Tools available to you (subject to the permission profile above):\n${lines.join("\n")}`;
+      return `## Available tools\n(Subject to the permission profile. Pick by contract; availability ≠ obligation.)\n${lines.join("\n")}`;
     }
     case "memory": {
       const mem = listMemory(ctx.userId);
@@ -188,9 +160,15 @@ Requires the user's PIN: ${fmt(pin)}.`;
       );
     }
     case "date_context": {
-      // Plain ISO date — locale-independent so model behaviour is consistent.
-      const today = new Date().toISOString().slice(0, 10);
-      return `Today is ${today}. Platform: ${describePlatform()}.`;
+      // Just-in-time clock in context (Anthropic: keep high-signal facts in
+      // the window so the agent need not burn a tool turn for trivial asks).
+      const now = new Date();
+      const iso = now.toISOString().slice(0, 10);
+      const weekday = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][now.getDay()];
+      const hh = String(now.getHours()).padStart(2, "0");
+      const mm = String(now.getMinutes()).padStart(2, "0");
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      return `## Context\nLocal time: ${weekday} ${iso} ${hh}:${mm} (${tz}). Platform: ${describePlatform()}.`;
     }
     default:
       return "";
@@ -248,6 +226,23 @@ function evaluateCondition(block: SystemPromptBlock, persona: Persona): boolean 
  * (e.g. fresh DB on a machine that hasn't run the V6 migration yet — should
  * be impossible, but defensive).
  */
+/** Render the `memory` block via the Context Broker for the current turn. */
+async function renderBrokeredMemory(ctx: AssemblyContext): Promise<string> {
+  try {
+    const { retrieveContext } = await import("./context-broker");
+    const res = await retrieveContext({
+      query: ctx.query || "",
+      userId: ctx.userId,
+      budgetTokens: ctx.budgetTokens,
+    });
+    return res.brief;
+  } catch {
+    // Broker failed (e.g. embeddings offline) — fall back to no memory block
+    // rather than dumping everything; the model still has the live query.
+    return "";
+  }
+}
+
 export async function assembleSystemPrompt(
   personaId: string,
   ctx: AssemblyContext = {}
@@ -274,6 +269,14 @@ export async function assembleSystemPrompt(
       // override. Variables are still substituted so overrides can reference
       // {assistant_name}, {active_model}, etc.
       const override = (b.content || "").trim();
+      // The `memory` block, when a turn query is available and not overridden,
+      // is served by the Context Broker: retrieved-relevant slices within a
+      // token budget rather than the whole memory dump (§7.3).
+      if (b.block_name === "memory" && !override && ctx.query) {
+        const rendered = await renderBrokeredMemory(ctx);
+        if (rendered) parts.push(rendered);
+        continue;
+      }
       const rendered = override
         ? substituteVariables(b.content, persona, ctx)
         : renderBuiltin(b.block_name, persona, ctx);

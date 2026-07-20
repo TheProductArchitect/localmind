@@ -33,14 +33,68 @@ import { ConfirmationCard, type ConfirmationState } from "@/components/chat/conf
 import { MicButton, SpeakerButton, ConversationButton, speak } from "@/components/chat/voice";
 import { toast } from "@/components/toast";
 import { Orb, type OrbState } from "@/components/orb";
-import { Plus, Send, Trash2, Star, Copy, RefreshCw, Volume2, Download } from "lucide-react";
+import { Plus, Send, Trash2, Star, Copy, RefreshCw, Volume2, Download, Paperclip, X } from "lucide-react";
 
 type Conversation = { id: string; title: string; updated_at: number; starred: number };
+type Attachment = { name: string; mime: string; data: string; url: string };
 type ThreadItem =
-  | { kind: "user"; content: string }
-  | { kind: "assistant"; content: string }
+  | { kind: "user"; content: string; images?: string[]; originLabel?: string | null }
+  | { kind: "assistant"; content: string; originLabel?: string | null }
   | { kind: "tool"; tc: ToolCallState }
   | { kind: "confirmation"; c: ConfirmationState };
+
+const MAX_ATTACH = 6;
+const MAX_IMG_DIM = 1024;
+
+// Read an image file, downscale it (bounds base64 size + context tokens), and
+// return a base64 attachment for a multimodal turn.
+async function fileToAttachment(file: File): Promise<Attachment | null> {
+  if (!file.type.startsWith("image/")) return null;
+  const dataUrl: string = await new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(fr.result as string);
+    fr.onerror = rej;
+    fr.readAsDataURL(file);
+  });
+  try {
+    const img: HTMLImageElement = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = rej;
+      i.src = dataUrl;
+    });
+    let { width, height } = img;
+    if (width > MAX_IMG_DIM || height > MAX_IMG_DIM) {
+      const s = Math.min(MAX_IMG_DIM / width, MAX_IMG_DIM / height);
+      width = Math.round(width * s);
+      height = Math.round(height * s);
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return { name: file.name, mime: file.type, data: dataUrl.replace(/^data:[^;]+;base64,/, ""), url: dataUrl };
+    ctx.drawImage(img, 0, 0, width, height);
+    const mime = file.type === "image/png" ? "image/png" : "image/jpeg";
+    const out = canvas.toDataURL(mime, 0.85);
+    return { name: file.name, mime, data: out.replace(/^data:[^;]+;base64,/, ""), url: out };
+  } catch {
+    return { name: file.name, mime: file.type, data: dataUrl.replace(/^data:[^;]+;base64,/, ""), url: dataUrl };
+  }
+}
+
+function attachmentsToImageUrls(attachmentsJson: string | null | undefined): string[] | undefined {
+  if (!attachmentsJson) return undefined;
+  try {
+    const arr = JSON.parse(attachmentsJson) as { mime?: string; data?: string }[];
+    const urls = arr
+      .map((a) => (a?.data ? (a.data.startsWith("data:") ? a.data : `data:${a.mime || "image/jpeg"};base64,${a.data}`) : ""))
+      .filter(Boolean);
+    return urls.length ? urls : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function ChatInner() {
   const searchParams = useSearchParams();
@@ -58,11 +112,11 @@ function ChatInner() {
   // `persona` value is preserved so the backend keeps routing to the right
   // assembled prompt, but the UI no longer exposes a selector.
   const [persona] = useState("general");
-  const [agentMode, setAgentMode] = useState<"auto" | "plan" | "ask">("ask");
+  const [agentMode, setAgentMode] = useState<"auto" | "plan" | "ask">("auto");
 
   // Fleet chat relay — when a peer is selected, send() routes through
   // /api/fleet/peers/[id]/chat instead of the local streaming /api/chat.
-  // The selector defaults to null = "this machine".
+  // Defaults to Auto when any trusted peer is paired.
   type FleetPeer = {
     peer_node_id: string;
     label: string | null;
@@ -72,7 +126,9 @@ function ChatInner() {
     trusted: number;
   };
   const [peers, setPeers] = useState<FleetPeer[]>([]);
+  // null = this machine; "__auto__" = least-loaded across mesh; else peer id
   const [runOnPeer, setRunOnPeer] = useState<string | null>(null);
+  const [executorHint, setExecutorHint] = useState<string | null>(null);
 
   // Conversation-mode handshake with <ConversationButton/>. When streaming
   // ends and `conversationActive` is on, we hand the latest assistant reply
@@ -88,7 +144,39 @@ function ChatInner() {
   const [orbErrorUntil, setOrbErrorUntil] = useState(0);
   const [suspendedNotice, setSuspendedNotice] = useState<{ reason: string; tool: string } | null>(null);
 
+  // Multimodal input — staged image attachments for the next turn.
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []);
+    if (files.some((f) => f.type.startsWith("video/"))) {
+      toast("Video isn't supported by local vision models yet — images only for now.", "info");
+    }
+    const imgs = files.filter((f) => f.type.startsWith("image/"));
+    const added: Attachment[] = [];
+    for (const f of imgs) {
+      const a = await fileToAttachment(f);
+      if (a) added.push(a);
+    }
+    if (added.length) setAttachments((cur) => [...cur, ...added].slice(0, MAX_ATTACH));
+    e.target.value = "";
+  }
+
   const threadRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-grow the composer to fit its content (up to a cap) so large pastes are
+  // visible instead of stuck on one line. Runs on every input change and on
+  // programmatic changes (prefill, clear-after-send).
+  const autoGrowComposer = useCallback(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const max = Math.max(160, Math.round(window.innerHeight * 0.5));
+    el.style.height = `${Math.min(el.scrollHeight, max)}px`;
+  }, []);
+  useEffect(() => { autoGrowComposer(); }, [input, autoGrowComposer]);
 
   const loadConversations = useCallback(async () => {
     const r = await fetch("/api/conversations");
@@ -103,7 +191,11 @@ function ChatInner() {
         if (j.settings && !j.settings.onboarded) window.location.href = "/onboarding";
         else {
           setModel(j.settings?.active_model || null);
-          setAgentMode((j.settings?.agent_mode as "auto" | "plan" | "ask") || "ask");
+          setAgentMode((j.settings?.agent_mode as "auto" | "plan" | "ask") || "auto");
+          const fs = Number(j.settings?.chat_font_size);
+          if (fs >= 12 && fs <= 28) {
+            document.documentElement.style.setProperty("--lm-root-fs", `${fs}px`);
+          }
         }
       });
     loadConversations();
@@ -112,8 +204,20 @@ function ChatInner() {
     // the dropdown.
     fetch("/api/fleet/peers")
       .then((r) => (r.ok ? r.json() : { peers: [] }))
-      .then((j) => setPeers((j.peers as FleetPeer[]) || []))
+      .then((j) => {
+        const list = (j.peers as FleetPeer[]) || [];
+        setPeers(list);
+        if (list.some((p) => p.trusted === 1)) setRunOnPeer("__auto__");
+      })
       .catch(() => setPeers([]));
+    // Pull conversation deltas from sync-enabled peers so this device
+    // sees the shared mesh history.
+    fetch("/api/fleet/sync", { method: "POST" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (j?.messages > 0) loadConversations();
+      })
+      .catch(() => { /* no peers / fleet off */ });
   }, [loadConversations]);
 
   async function changeMode(next: "auto" | "plan" | "ask") {
@@ -128,6 +232,9 @@ function ChatInner() {
 
   useEffect(() => {
     if (searchParams.get("new") === "1") newConversation();
+    // Prefill from other surfaces (e.g. Browse → "Ask Sora about this page").
+    const ask = searchParams.get("ask");
+    if (ask) setInput(ask);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -145,16 +252,21 @@ function ChatInner() {
   }, [orbErrorUntil]);
 
   // === Conversation CRUD ===
+  const openReqRef = useRef(0);
   async function openConversation(id: string) {
+    const req = ++openReqRef.current;
     setActiveId(id);
     setError(null);
     setSuspendedNotice(null);
     const r = await fetch(`/api/conversations/${id}`);
+    if (req !== openReqRef.current) return; // stale — a newer open won
     const j = await r.json();
+    if (req !== openReqRef.current) return;
     const items: ThreadItem[] = [];
     for (const m of j.messages || []) {
-      if (m.role === "user") items.push({ kind: "user", content: m.content });
-      else if (m.role === "assistant") items.push({ kind: "assistant", content: m.content });
+      const origin = m.origin_label || null;
+      if (m.role === "user") items.push({ kind: "user", content: m.content, images: attachmentsToImageUrls(m.attachments), originLabel: origin });
+      else if (m.role === "assistant") items.push({ kind: "assistant", content: m.content, originLabel: origin });
       else if (m.role === "tool") {
         try {
           const p = JSON.parse(m.content);
@@ -168,6 +280,7 @@ function ChatInner() {
     fetch(`/api/chat/resume?conversation_id=${id}`)
       .then((r) => r.json()).catch(() => null)
       .then((j) => {
+        if (req !== openReqRef.current) return;
         if (j?.suspended) setSuspendedNotice({ reason: j.reason ?? "Suspended", tool: j.tool ?? "" });
       });
   }
@@ -182,11 +295,20 @@ function ChatInner() {
   }
 
   async function deleteConversation(id: string) {
-    await fetch(`/api/conversations/${id}`, {
+    const r = await fetch(`/api/conversations/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ deleted: true }),
     });
+    if (r.status === 409) {
+      const j = await r.json().catch(() => ({}));
+      toast(j.error || "This conversation can't be deleted (peer-relayed).", "error");
+      return;
+    }
+    if (!r.ok) {
+      toast("Could not delete conversation", "error");
+      return;
+    }
     if (activeId === id) { setActiveId(null); setThread([]); }
     toast("Conversation moved to trash — recoverable for 7 days.");
     loadConversations();
@@ -217,7 +339,9 @@ function ChatInner() {
   }
 
   async function decide(toolCallId: string, decision: "allow" | "deny", pin?: string) {
-    setThread((t) => t.filter((i) => !(i.kind === "confirmation" && i.c.toolCallId === toolCallId)));
+    // Keep the confirmation card until the server accepts — a wrong PIN must
+    // leave the card in place so the user can retry (otherwise the agent hangs
+    // until the confirmation timeout with no UI left).
     const r = await fetch("/api/chat/confirm", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -226,7 +350,9 @@ function ChatInner() {
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));
       toast(j.error || "Confirmation failed", "error");
+      return;
     }
+    setThread((t) => t.filter((i) => !(i.kind === "confirmation" && i.c.toolCallId === toolCallId)));
   }
 
   // === Streaming ===
@@ -269,7 +395,9 @@ function ChatInner() {
           }
           if (!dataLine) continue;
           const ev = JSON.parse(dataLine.slice(6));
-          if (ev.type === "done") gotDone = true;
+          // Terminal events: stop reconnecting so we don't overwrite a real
+          // agent error with "connection was interrupted".
+          if (ev.type === "done" || ev.type === "error" || ev.type === "loop_suspended") gotDone = true;
           handleEvent(ev);
         }
       }
@@ -332,31 +460,55 @@ function ChatInner() {
 
   async function send() {
     const text = input.trim();
-    if (!text || streaming) return;
+    if ((!text && attachments.length === 0) || streaming) return;
     let convId = activeId;
     if (!convId) {
       const r = await fetch("/api/conversations", { method: "POST" });
       convId = (await r.json()).conversation.id;
       setActiveId(convId);
     }
+    const outgoing = attachments;
+    const images = outgoing.map((a) => ({ name: a.name, mime: a.mime, data: a.data }));
     setInput("");
-    setThread((t) => [...t, { kind: "user", content: text }, { kind: "assistant", content: "" }]);
+    setAttachments([]);
+    setThread((t) => [
+      ...t,
+      { kind: "user", content: text, images: outgoing.length ? outgoing.map((a) => a.url) : undefined },
+      { kind: "assistant", content: "" },
+    ]);
 
-    // Fleet chat relay: when the user selects a peer, route the turn through
-    // /api/fleet/peers/[id]/chat instead of the local streaming endpoint. The
-    // relay is non-streaming for v1 (single response back); the executor's
-    // local permission profile + destructive-action floor still apply.
-    if (runOnPeer) {
+    // Fleet chat relay: explicit peer, or Auto (least-loaded across the mesh).
+    let peerTarget = runOnPeer;
+    setExecutorHint(null);
+    if (peerTarget === "__auto__") {
+      try {
+        const place = await fetch("/api/fleet/chat-placement").then((r) => r.json());
+        if (place?.kind === "peer" && place.peer_node_id) {
+          peerTarget = place.peer_node_id;
+          setExecutorHint(`Auto → ${place.label || place.peer_node_id.slice(0, 12)}`);
+        } else {
+          peerTarget = null;
+          setExecutorHint("Auto → this machine");
+        }
+      } catch {
+        peerTarget = null;
+      }
+    }
+    if (peerTarget) {
       try {
         setStreaming(true);
-        const res = await fetch(`/api/fleet/peers/${runOnPeer}/chat`, {
+        const peerLabel =
+          peers.find((p) => p.peer_node_id === peerTarget)?.label || peerTarget.slice(0, 12);
+        setExecutorHint(`Waiting on ${peerLabel}…`);
+        const res = await fetch(`/api/fleet/peers/${peerTarget}/chat`, {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", Accept: "text/event-stream" },
           body: JSON.stringify({ conversation_id: convId, message: text, persona_id: persona }),
         });
-        const j = await res.json();
-        if (!res.ok) {
-          setError(j.error ?? `Peer returned ${res.status}`);
+        const ct = res.headers.get("content-type") || "";
+        if (!res.ok && !ct.includes("text/event-stream")) {
+          const j = await res.json().catch(() => ({}));
+          setError((j as { error?: string }).error ?? `Peer returned ${res.status}`);
           setThread((t) => {
             const out = [...t];
             for (let i = out.length - 1; i >= 0; i--) {
@@ -364,14 +516,81 @@ function ChatInner() {
             }
             return out;
           });
-        } else {
-          setThread((t) => {
-            const out = [...t];
-            for (let i = out.length - 1; i >= 0; i--) {
-              if (out[i].kind === "assistant") { out[i] = { kind: "assistant", content: j.reply }; break; }
+        } else if (ct.includes("text/event-stream") && res.body) {
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = "";
+          let reply: string | null = null;
+          let errMsg: string | null = null;
+          let label = peerLabel;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const parts = buf.split("\n\n");
+            buf = parts.pop() || "";
+            for (const part of parts) {
+              const line = part.split("\n").find((l) => l.startsWith("data: "));
+              if (!line) continue;
+              try {
+                const ev = JSON.parse(line.slice(6));
+                if (ev.type === "status") {
+                  if (ev.peer_label) label = ev.peer_label;
+                  if (ev.phase === "relay_started") setExecutorHint(`Waiting on ${label}…`);
+                  if (ev.phase === "receiving") setExecutorHint(`Receiving from ${label}…`);
+                } else if (ev.type === "done") {
+                  reply = ev.reply ?? "";
+                  if (ev.peer_label) label = ev.peer_label;
+                } else if (ev.type === "error") {
+                  errMsg = ev.message || "Relay failed.";
+                }
+              } catch { /* ignore malformed SSE chunk */ }
             }
-            return out;
-          });
+          }
+          if (errMsg) {
+            setError(errMsg);
+            setThread((t) => {
+              const out = [...t];
+              for (let i = out.length - 1; i >= 0; i--) {
+                if (out[i].kind === "assistant") { out.splice(i, 1); break; }
+              }
+              return out;
+            });
+          } else if (reply != null) {
+            setThread((t) => {
+              const out = [...t];
+              for (let i = out.length - 1; i >= 0; i--) {
+                if (out[i].kind === "assistant") {
+                  out[i] = { kind: "assistant", content: reply!, originLabel: label };
+                  break;
+                }
+              }
+              return out;
+            });
+          }
+        } else {
+          const j = await res.json();
+          if (!res.ok) {
+            setError(j.error ?? `Peer returned ${res.status}`);
+            setThread((t) => {
+              const out = [...t];
+              for (let i = out.length - 1; i >= 0; i--) {
+                if (out[i].kind === "assistant") { out.splice(i, 1); break; }
+              }
+              return out;
+            });
+          } else {
+            setThread((t) => {
+              const out = [...t];
+              for (let i = out.length - 1; i >= 0; i--) {
+                if (out[i].kind === "assistant") {
+                  out[i] = { kind: "assistant", content: j.reply, originLabel: peerLabel };
+                  break;
+                }
+              }
+              return out;
+            });
+          }
         }
       } catch (e) {
         setError((e as Error).message);
@@ -382,7 +601,7 @@ function ChatInner() {
       return;
     }
 
-    streamChat(convId!, { message: text, persona });
+    streamChat(convId!, { message: text, persona, ...(images.length ? { images } : {}) });
   }
 
   async function regenerate() {
@@ -424,7 +643,13 @@ function ChatInner() {
         for (let i = next.length - 1; i >= 0; i--) {
           const it = next[i];
           if (it.kind === "tool" && it.tc.id === ev.toolCallId) {
-            next[i] = { kind: "tool", tc: { ...it.tc, result: { status: ev.status, output: ev.output } } };
+            next[i] = {
+              kind: "tool",
+              tc: {
+                ...it.tc,
+                result: { status: ev.status, output: ev.output, summary: ev.summary },
+              },
+            };
             break;
           }
         }
@@ -435,6 +660,11 @@ function ChatInner() {
         });
       } else if (ev.type === "confirmation_timeout") {
         return next.filter((i) => !(i.kind === "confirmation" && i.c.toolCallId === ev.toolCallId));
+      } else if (ev.type === "tool_text_recovered") {
+        // The model emitted a tool call as raw JSON text; the engine recovered
+        // it into a real call. Clear the leaked JSON from the current bubble.
+        const idx = lastAssistant();
+        if (idx >= 0) next[idx] = { kind: "assistant", content: "" };
       } else if (ev.type === "done") {
         if (autoRead) {
           const idx = lastAssistant();
@@ -592,12 +822,32 @@ function ChatInner() {
               if (item.kind === "user")
                 return (
                   <div key={i} className="lm-turn lm-turn--user">
-                    <div className="lm-bubble">{item.content}</div>
+                    {item.originLabel && (
+                      <p className="lm-micro mb-1 text-right" style={{ color: "hsl(0 0% 100% / 0.35)", textTransform: "none", letterSpacing: 0 }}>
+                        from {item.originLabel}
+                      </p>
+                    )}
+                    <div className="lm-bubble">
+                      {item.images?.length ? (
+                        <div className="flex flex-wrap gap-2 mb-2 justify-end">
+                          {item.images.map((u, k) => (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img key={k} src={u} alt="attachment" className="h-28 w-28 object-cover rounded-lg border border-black/10" />
+                          ))}
+                        </div>
+                      ) : null}
+                      {item.content}
+                    </div>
                   </div>
                 );
               if (item.kind === "assistant")
                 return item.content ? (
                   <div key={i} className="lm-turn lm-turn--assistant group">
+                    {item.originLabel && (
+                      <p className="lm-micro mb-1" style={{ color: "hsl(0 0% 100% / 0.35)", textTransform: "none", letterSpacing: 0 }}>
+                        via {item.originLabel}
+                      </p>
+                    )}
                     <div className="markdown">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.content}</ReactMarkdown>
                     </div>
@@ -638,13 +888,19 @@ function ChatInner() {
                 aria-label="Choose which machine runs this turn"
               >
                 <option value="">This machine</option>
+                <option value="__auto__">Auto — least loaded</option>
                 {peers.map((p) => (
                   <option key={p.peer_node_id} value={p.peer_node_id}>
                     {p.label || p.peer_node_id.slice(0, 12)}
                   </option>
                 ))}
               </select>
-              {runOnPeer && (() => {
+              {executorHint && (
+                <span className="lm-micro" style={{ color: "hsl(160 40% 70%)", textTransform: "none", letterSpacing: 0 }}>
+                  {executorHint}
+                </span>
+              )}
+              {runOnPeer && runOnPeer !== "__auto__" && (() => {
                 const p = peers.find((x) => x.peer_node_id === runOnPeer);
                 if (!p) return null;
                 const fmt = (ms: number | null) =>
@@ -678,10 +934,56 @@ function ChatInner() {
                   </>
                 );
               })()}
+              {runOnPeer === "__auto__" && (
+                <span
+                  className="lm-micro"
+                  style={{ color: "hsl(40 80% 70%)", textTransform: "none", letterSpacing: 0 }}
+                  title="Picks the freshest peer with the lowest active load; ties stay local."
+                >
+                  ↗ mesh placement
+                </span>
+              )}
+            </div>
+          )}
+          {attachments.length > 0 && (
+            <div className="mx-auto flex flex-wrap gap-2 mb-2" style={{ maxWidth: 720 }}>
+              {attachments.map((a, i) => (
+                <div key={i} className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={a.url} alt={a.name} className="h-16 w-16 object-cover rounded-lg border border-white/10" />
+                  <button
+                    onClick={() => setAttachments((cur) => cur.filter((_, j) => j !== i))}
+                    aria-label="Remove attachment"
+                    className="absolute -top-1.5 -right-1.5 h-5 w-5 inline-flex items-center justify-center rounded-full bg-background border border-white/20 text-white/70 hover:text-white"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
             </div>
           )}
           <div className="mx-auto flex items-end gap-2" style={{ maxWidth: 720 }}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={onPickFiles}
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={streaming || attachments.length >= MAX_ATTACH}
+              className="lm-composer__send"
+              style={{ background: "hsl(0 0% 100% / 0.06)", color: "hsl(0 0% 100% / 0.9)" }}
+              aria-label="Attach image"
+              title="Attach image (vision models)"
+              data-pulse="true"
+            >
+              <Paperclip className="h-4 w-4" />
+            </button>
             <Textarea
+              ref={composerRef}
               rows={1}
               placeholder={runOnPeer ? "Message Sora on the selected peer…" : "Message Sora…"}
               value={input}
@@ -690,10 +992,10 @@ function ChatInner() {
               className="lm-composer__input"
               data-pulse="false"
             />
-            <MicButton onText={(t) => setInput(t)} />
+            <MicButton onText={(t, opts) => setInput((prev) => (opts?.append && prev ? `${prev} ${t}` : t))} />
             <button
               onClick={send}
-              disabled={streaming || !input.trim()}
+              disabled={streaming || (!input.trim() && attachments.length === 0)}
               className="lm-composer__send"
               aria-label="Send"
               data-pulse="true"
@@ -729,7 +1031,7 @@ function ChatInner() {
                   <Orb state="thinking" size={20} />
                   <div className="flex-1 min-w-0">
                     <p style={{ fontSize: 12, color: "hsl(0 0% 100% / 0.92)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>
-                      {name.replace(/^spawn_subagent(s_parallel)?$/, isSpawn && name.endsWith("parallel") ? "spawning batch…" : "spawning…")}
+                      {name.replace(/^spawn_subagent(s_(parallel|sequential))?$/, name.includes("sequential") ? "spawning sequentially…" : name.includes("parallel") ? "spawning batch…" : "spawning…")}
                     </p>
                     <p className="lm-micro" style={{ textTransform: "none", letterSpacing: 0, fontSize: 10, color: "hsl(0 0% 100% / 0.4)" }}>
                       {isSpawn ? "subagent" : "tool"}
@@ -743,8 +1045,22 @@ function ChatInner() {
       </aside>
 
       <style jsx>{`
-        .lm-chat { display: grid; grid-template-columns: 240px 1fr 220px; height: 100%; }
+        .lm-chat {
+          display: grid;
+          grid-template-columns: 240px 1fr 220px;
+          height: 100%;
+          min-height: 0;
+          overflow: hidden;
+        }
         @media (max-width: 1100px) { .lm-chat { grid-template-columns: 200px 1fr 0; } .lm-sora { display: none; } }
+        /* Tablet/phone: narrow the conversations strip so the thread keeps room.
+           The left Rail becomes a bottom bar under md, freeing its width. */
+        @media (max-width: 680px) { .lm-chat { grid-template-columns: 148px 1fr 0; } }
+        @media (max-width: 680px) {
+          .lm-thread__head { padding: 12px 14px; flex-wrap: wrap; gap: 8px; row-gap: 8px; }
+          .lm-thread__scroll { padding: 24px 14px 48px; }
+          .lm-composer { padding: 12px 14px 16px; }
+        }
 
         /* === Conversations strip === */
         .lm-conv {
@@ -754,6 +1070,7 @@ function ChatInner() {
           backdrop-filter: blur(14px);
           padding: 16px 10px;
           gap: 8px;
+          min-height: 0;
           overflow: hidden;
         }
         .lm-conv__new {
@@ -797,11 +1114,22 @@ function ChatInner() {
         .lm-conv__row:hover .lm-conv__del { opacity: 1; }
 
         /* === Thread === */
-        .lm-thread { display: flex; flex-direction: column; min-width: 0; height: 100%; }
+        .lm-thread {
+          display: flex;
+          flex-direction: column;
+          min-width: 0;
+          min-height: 0;
+          height: 100%;
+          overflow: hidden;
+        }
         .lm-thread__head {
           display: flex; align-items: center; justify-content: space-between;
+          flex-shrink: 0;
           padding: 14px 28px;
           border-bottom: 1px solid hsl(0 0% 100% / 0.06);
+          background: hsl(234 22% 4% / 0.72);
+          backdrop-filter: blur(12px);
+          z-index: 2;
         }
         .lm-thread__sep { width: 1px; height: 14px; background: hsl(0 0% 100% / 0.10); margin: 0 4px; }
         .lm-thread__select, .lm-thread__toggle, .lm-thread__export {
@@ -852,7 +1180,13 @@ function ChatInner() {
           box-shadow: 0 0 14px hsl(0 0% 100% / 0.35);
         }
 
-        .lm-thread__scroll { flex: 1; overflow-y: auto; padding: 40px 28px 60px; }
+        .lm-thread__scroll {
+          flex: 1;
+          min-height: 0;
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          padding: 40px 28px 60px;
+        }
 
         .lm-empty {
           display: flex; flex-direction: column; align-items: center;
@@ -867,10 +1201,20 @@ function ChatInner() {
           border-radius: 14px 14px 4px 14px;
           background: hsl(0 0% 100% / 0.94);
           color: hsl(234 22% 4%);
-          font-size: 14px; letter-spacing: -0.005em;
+          font-size: 1rem;
+          line-height: 1.55;
+          letter-spacing: -0.005em;
           white-space: pre-wrap;
         }
-        .lm-turn--assistant { padding-right: 24px; }
+        .lm-turn--assistant {
+          padding-right: 24px;
+          font-size: 1rem;
+          line-height: 1.55;
+        }
+        .lm-turn--assistant :global(.markdown) {
+          font-size: inherit;
+          line-height: inherit;
+        }
         .lm-turn__actions {
           display: flex; align-items: center; gap: 10px;
           margin-top: 8px;
@@ -953,8 +1297,11 @@ function ChatInner() {
 
         /* === Composer === */
         .lm-composer {
+          flex-shrink: 0;
           padding: 18px 28px 22px;
           border-top: 1px solid hsl(0 0% 100% / 0.06);
+          background: hsl(234 22% 4% / 0.72);
+          backdrop-filter: blur(12px);
         }
         .lm-composer :global(.lm-composer__input) {
           flex: 1;
@@ -963,11 +1310,13 @@ function ChatInner() {
           border-radius: 14px;
           padding: 12px 14px;
           color: hsl(0 0% 100% / 0.96);
-          font-size: 14px; line-height: 22px;
+          font-size: 1rem;
+          line-height: 1.45;
           resize: none;
           outline: none;
           min-height: 46px;
-          max-height: 200px;
+          max-height: 50vh;
+          overflow-y: auto;
         }
         .lm-composer :global(.lm-composer__input:focus) {
           border-color: hsl(0 0% 100% / 0.24);
@@ -994,6 +1343,7 @@ function ChatInner() {
           padding: 28px 16px;
           display: flex; flex-direction: column;
           gap: 24px;
+          min-height: 0;
           overflow-y: auto;
         }
         .lm-sora__top { display: flex; flex-direction: column; align-items: center; padding-top: 12px; }
@@ -1040,8 +1390,10 @@ function orbStateLabel(s: OrbState): string {
 
 export default function ChatPage() {
   return (
-    <Suspense fallback={<div className="p-6 lm-body" style={{ color: "hsl(0 0% 100% / 0.5)" }}>Loading…</div>}>
-      <ChatInner />
+    <Suspense fallback={<div className="p-6 lm-body h-full" style={{ color: "hsl(0 0% 100% / 0.5)" }}>Loading…</div>}>
+      <div className="h-full min-h-0">
+        <ChatInner />
+      </div>
     </Suspense>
   );
 }

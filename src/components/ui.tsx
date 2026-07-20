@@ -66,17 +66,20 @@ export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInp
   );
 }
 
-export function Textarea({ className, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return (
-    <textarea
-      className={cn(
-        "flex w-full rounded-[12px] border border-white/10 bg-white/[0.04] px-3 py-2 text-[13px] tracking-[-0.005em] text-white/95 outline-none placeholder:text-white/35 transition-colors focus:border-white/25 disabled:opacity-40",
-        className
-      )}
-      {...props}
-    />
-  );
-}
+export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttributes<HTMLTextAreaElement>>(
+  function Textarea({ className, ...props }, ref) {
+    return (
+      <textarea
+        ref={ref}
+        className={cn(
+          "flex w-full rounded-[12px] border border-white/10 bg-white/[0.04] px-3 py-2 text-[13px] tracking-[-0.005em] text-white/95 outline-none placeholder:text-white/35 transition-colors focus:border-white/25 disabled:opacity-40",
+          className
+        )}
+        {...props}
+      />
+    );
+  }
+);
 
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (

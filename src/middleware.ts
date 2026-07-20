@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requiredRoleFor, roleSatisfies } from "./lib/auth/route-map";
+import { isLoopbackRequest } from "./lib/auth/loopback";
 
 function b64urlToBytes(s: string): Uint8Array {
   const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
@@ -58,11 +59,13 @@ export async function middleware(req: NextRequest) {
   // member's bad token authenticate as owner on localhost and quietly
   // promote every action they take — exactly the leak the isolation test
   // was catching.
-  if (!identity && !token) {
-    const host = req.headers.get("host") || "";
-    if (host.startsWith("localhost") || host.startsWith("127.0.0.1")) {
-      identity = { userId: "__localhost_owner__", role: "owner" };
-    }
+  //
+  // Locality is decided by isLoopbackRequest, NOT the raw Host header: a
+  // forged `Host: localhost` or a request relayed through a reverse proxy /
+  // Cloudflare tunnel must not be granted owner. Only a genuine direct
+  // loopback request (no forwarding headers) qualifies.
+  if (!identity && !token && isLoopbackRequest((h) => req.headers.get(h))) {
+    identity = { userId: "__localhost_owner__", role: "owner" };
   }
   if (!identity) {
     return deny(401, "unauthorized", "Sign in to access this resource.");

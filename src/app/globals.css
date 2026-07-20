@@ -101,9 +101,16 @@
 
 @layer base {
   * { @apply border-border; }
+  html {
+    /* App-wide type scale. --lm-root-fs is set from Settings (default 17).
+       Tailwind rem units and most native controls scale with this. */
+    font-size: var(--lm-root-fs, 17px);
+  }
   html, body { background: hsl(var(--background)); }
   body {
     @apply text-foreground antialiased;
+    font-size: 1rem;
+    line-height: 1.5;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
     text-rendering: optimizeLegibility;
     color-scheme: dark;
@@ -188,10 +195,10 @@
     );
   }
 
-  /* Type ramp — only three sizes. */
-  .lm-display { font-size: 28px; line-height: 34px; letter-spacing: -0.02em; font-weight: 480; }
-  .lm-body    { font-size: 14px; line-height: 22px; letter-spacing: -0.005em; font-weight: 420; }
-  .lm-micro   { font-size: 11px; line-height: 16px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 500; color: hsl(0 0% 100% / 0.38); }
+  /* Type ramp — rem so it tracks --lm-root-fs. */
+  .lm-display { font-size: 1.75rem; line-height: 1.2; letter-spacing: -0.02em; font-weight: 480; }
+  .lm-body    { font-size: 1rem; line-height: 1.5; letter-spacing: -0.005em; font-weight: 420; }
+  .lm-micro   { font-size: 0.75rem; line-height: 1.4; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 500; color: hsl(0 0% 100% / 0.38); }
 
   /* === v2 utility classes — shared across all redesigned pages === */
 
@@ -201,7 +208,7 @@
     border-radius: 12px;
     padding: 8px 12px;
     color: hsl(0 0% 100% / 0.96);
-    font-size: 13px;
+    font-size: 0.9375rem;
     letter-spacing: -0.005em;
     outline: none;
     transition: border-color var(--lm-dur-micro) var(--lm-ease-micro);
@@ -215,7 +222,7 @@
     background: hsl(0 0% 100%);
     color: hsl(234 22% 4%);
     border-radius: 12px;
-    font-size: 12.5px; letter-spacing: -0.005em; font-weight: 500;
+    font-size: 0.875rem; letter-spacing: -0.005em; font-weight: 500;
     transition: box-shadow var(--lm-dur-micro) var(--lm-ease-micro),
                 opacity   var(--lm-dur-micro) var(--lm-ease-micro);
     border: none;
@@ -243,7 +250,7 @@
   .lm-chip {
     display: inline-flex; align-items: center;
     padding: 2px 8px;
-    font-size: 10.5px;
+    font-size: 0.6875rem;
     letter-spacing: 0.04em;
     text-transform: uppercase;
     color: hsl(0 0% 100% / 0.7);
@@ -325,7 +332,7 @@
     display: inline-flex; align-items: center; gap: 6px;
     padding: 8px 14px;
     border-radius: 10px;
-    font-size: 12px; letter-spacing: -0.005em;
+    font-size: 0.8125rem; letter-spacing: -0.005em;
     color: hsl(0 0% 100% / 0.55);
     background: transparent; border: none;
     transition: background var(--lm-dur-micro) var(--lm-ease-micro),
@@ -347,14 +354,14 @@
     width: 100%;
     padding: 8px 10px;
     border-radius: 10px;
-    font-size: 13px;
+    font-size: 0.875rem;
     letter-spacing: -0.005em;
     color: hsl(0 0% 100% / 0.6);
     background: transparent;
     border: none;
     text-align: left;
     text-decoration: none;
-    line-height: 18px;
+    line-height: 1.35;
     transition: background var(--lm-dur-micro) var(--lm-ease-micro),
                 color      var(--lm-dur-micro) var(--lm-ease-micro);
   }
@@ -366,7 +373,7 @@
   }
   .lm-settings-link.is-external {
     color: hsl(0 0% 100% / 0.48);
-    font-size: 12.5px;
+    font-size: 0.8125rem;
     padding: 5px 10px 5px 22px;       /* indent under the group label */
     border-left: 1px solid hsl(0 0% 100% / 0.06);
     margin-left: 8px;
@@ -394,7 +401,7 @@
     border: none;
     outline: none;
     color: hsl(0 0% 100% / 0.96);
-    font-size: 12.5px;
+    font-size: 0.8125rem;
     letter-spacing: -0.005em;
   }
   .lm-settings-search input::placeholder { color: hsl(0 0% 100% / 0.35); }
@@ -404,7 +411,7 @@
   .lm-add-chip {
     display: inline-flex; align-items: center; gap: 4px;
     padding: 4px 10px;
-    font-size: 11.5px; letter-spacing: -0.005em;
+    font-size: 0.75rem; letter-spacing: -0.005em;
     color: hsl(0 0% 100% / 0.7);
     background: hsl(0 0% 100% / 0.03);
     border: 1px solid hsl(0 0% 100% / 0.10);
@@ -442,7 +449,7 @@
   .lm-transport__list li {
     padding-left: 14px;
     position: relative;
-    font-size: 12.5px; line-height: 19px;
+    font-size: 0.8125rem; line-height: 1.5;
     color: hsl(0 0% 100% / 0.78);
   }
   .lm-transport__list li {
@@ -455,7 +462,7 @@
   }
   .lm-transport__list code {
     font-family: ui-monospace, SF Mono, monospace;
-    font-size: 11.5px;
+    font-size: 0.75rem;
     padding: 1px 5px;
     background: hsl(0 0% 100% / 0.06);
     border-radius: 4px;
@@ -527,7 +534,7 @@
   border-radius: 10px;
   padding: 12px 14px;
   overflow-x: auto;
-  font-size: 13px;
+  font-size: 0.9em;
   margin: 8px 0;
 }
 .markdown code {

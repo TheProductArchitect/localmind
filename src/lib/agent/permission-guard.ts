@@ -16,10 +16,10 @@
  *      Sora and any agent she spawns cannot bypass.
  *
  *   3. Agent mode         — global stance, set in Settings:
- *        "auto" — trust the agent fully on non-destructive actions
+ *        "auto" — default. Trust the agent fully on non-destructive actions
  *        "plan" — Sora may read anything; mutations are blocked at the
  *                  permission layer with a tier of "ask"
- *        "ask"  — default. Reads allowed, mutations confirmed.
+ *        "ask"  — reads allowed, mutations confirmed.
  *
  *   4. Permission profile — per-action tiers (allow / ask / pin) from the
  *      legacy profile editor. Used as the base tier for "ask" mode.
@@ -78,6 +78,11 @@ const DESTRUCTIVE_ACTIONS: ReadonlySet<string> = new Set([
   "post_message",        // outbound social posts
   "git_force_push",
   "git_reset_hard",
+  // Creating/updating a recurring scheduled task commits Sora to future
+  // autonomous runs. That deserves an explicit confirmation regardless of
+  // agent mode — the user must see the resolved cron before it's committed.
+  // (Deleting an automation is covered by `delete_automation` above.)
+  "schedule_write",
   // Installing an MCP server registers a launch command that will execute as
   // the user's process. Always confirm — even in auto mode — because the user
   // has to vet the package source and trust the publisher. This is the floor
@@ -115,7 +120,7 @@ export function classify(actionType: string): Tier {
     return "ask";
   }
 
-  const mode: AgentMode = getSettings().agent_mode || "ask";
+  const mode: AgentMode = getSettings().agent_mode || "auto";
 
   // (3a) Auto mode: trust the agent fully on non-destructive actions.
   if (mode === "auto") return "allow";
@@ -126,7 +131,7 @@ export function classify(actionType: string): Tier {
     return "ask";
   }
 
-  // (3c) Ask mode (default): reads free; mutations consult the profile.
+  // (3c) Ask mode: reads free; mutations consult the profile.
   if (isRead(actionType)) return "allow";
 
   // (4) Per-action tier from the profile.
@@ -138,7 +143,7 @@ export function classify(actionType: string): Tier {
 
 /** Exposed for the system-prompt assembler so Sora knows the current stance. */
 export function currentAgentMode(): AgentMode {
-  return getSettings().agent_mode || "ask";
+  return getSettings().agent_mode || "auto";
 }
 
 /**

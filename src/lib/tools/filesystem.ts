@@ -73,7 +73,7 @@ export const filesystemTool: Tool = {
   definition: {
     name: "filesystem",
     description:
-      "Read, write, list, or delete files within user-approved directories. Operations: read, write, list, delete.",
+      "Read, write, list, or delete files within user-approved directories. Operations: read, write, list, delete. Only call when the user asked to touch a real local path they named. Never invent placeholder paths (e.g. /Users/username/...). Never use for jokes, chat, or web URLs (use read_secure_webpage for http(s)).",
     parameters: {
       type: "object",
       properties: {
@@ -86,7 +86,16 @@ export const filesystemTool: Tool = {
   },
   async execute(input, ctx) {
     const op = input.operation;
-    const safe = await resolveSafe(String(input.path || ""), ctx.approvedDirs);
+    const rawPath = String(input.path || "").trim();
+    if (/^https?:\/\//i.test(rawPath)) {
+      return {
+        ok: false,
+        output:
+          `filesystem cannot open web URLs. Call read_secure_webpage with url="${rawPath}" (or web_research if you need to search first).`,
+        summary: "rejected http(s) path — use read_secure_webpage",
+      };
+    }
+    const safe = await resolveSafe(rawPath, ctx.approvedDirs);
     if (!safe) {
       return { ok: false, output: "Path is not within an approved directory.", summary: "denied: path out of scope" };
     }

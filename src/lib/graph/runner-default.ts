@@ -45,14 +45,16 @@ export const defaultRunner: NodeRunner = async (node: TaskNode, ctx: RunnerConte
   const t0 = Date.now();
   const prompt = substitute(node.agent_spec.prompt_template, node.input, ctx.parent_outputs);
   const conversationId = ensureConversation(ctx);
+  const systemPrefix = stringify(node.input.system_prefix) || undefined;
 
   try {
-    // runAgentCollect is the existing non-streaming entry point — it runs
-    // the agent loop with tool calls and confirmations and returns the final
-    // assistant text. Tool calls inside the node go through the existing
-    // permission gate + audit log, so the V5 guarantees still hold.
     const text = await runAgentCollect(conversationId, prompt, {
-      systemPrefix: `You are executing a single node in a task graph. Goal: ${ctx.graph.root_goal}. Your output is captured verbatim — do not include conversational preamble.`,
+      systemPrefix: systemPrefix
+        ? `${systemPrefix}\n\nYou are executing a single node in a task graph. Goal: ${ctx.graph.root_goal}. Your output is captured verbatim — do not include conversational preamble.`
+        : `You are executing a single node in a task graph. Goal: ${ctx.graph.root_goal}. Your output is captured verbatim — do not include conversational preamble.`,
+      allowedTools: node.agent_spec.tools.length > 0 ? node.agent_spec.tools : undefined,
+      fromGraph: true,
+      modelPreference: node.agent_spec.model_preference,
     });
 
     const wallSeconds = (Date.now() - t0) / 1000;

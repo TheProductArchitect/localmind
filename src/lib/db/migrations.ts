@@ -23,7 +23,7 @@ const configMigrations: Migration[] = [
           https_enabled INTEGER NOT NULL DEFAULT 0,
           approved_dirs TEXT NOT NULL DEFAULT '[]',
           onboarded INTEGER NOT NULL DEFAULT 0,
-          chat_font_size INTEGER NOT NULL DEFAULT 14,
+          chat_font_size INTEGER NOT NULL DEFAULT 17,
           auto_backup INTEGER NOT NULL DEFAULT 1,
           backup_dir TEXT
         );
@@ -814,7 +814,7 @@ configMigrations.push({
         tools: [
           "memory", "knowledge_base", "web_search", "time", "filesystem",
           "calendar", "email", "browser", "peer_knowledge", "datastore",
-          "spreadsheet", "check_resources", "spawn_subagent", "spawn_subagents_parallel",
+          "spreadsheet", "check_resources", "spawn_subagent", "spawn_subagents_sequential", "spawn_subagents_parallel",
         ],
       },
       {
@@ -833,7 +833,7 @@ configMigrations.push({
         id: "agent-researcher",
         name: "Researcher",
         description: "Searches the web, reads documents, queries paired peers, and returns a synthesised brief with sources. Read-only; never writes or sends.",
-        tools: ["web_search", "browser", "knowledge_base", "peer_knowledge", "memory", "time"],
+        tools: ["web_research", "read_secure_webpage", "web_search", "browser", "knowledge_base", "peer_knowledge", "memory", "time"],
       },
       {
         id: "agent-scheduler",
@@ -925,6 +925,343 @@ configMigrations.push({
   version: 14,
   up: (db) => {
     db.exec("ALTER TABLE mcp_servers ADD COLUMN builtin INTEGER NOT NULL DEFAULT 0;");
+  },
+});
+
+// Workflow pause state for human_approval steps.
+configMigrations.push({
+  version: 15,
+  up: (db) => {
+    db.exec(`
+      ALTER TABLE workflow_runs ADD COLUMN paused_step_index INTEGER;
+      ALTER TABLE workflow_runs ADD COLUMN paused_vars TEXT;
+      ALTER TABLE workflow_runs ADD COLUMN paused_conv_id TEXT;
+      ALTER TABLE workflow_runs ADD COLUMN approval_message TEXT;
+
+      CREATE TABLE IF NOT EXISTS workflow_approvals (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        workflow_id TEXT NOT NULL,
+        message TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at INTEGER NOT NULL,
+        responded_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_workflow_approvals_run ON workflow_approvals(run_id);
+    `);
+  },
+});
+
+// v16: web-access controls, ported from Nova's browser design (three-layer
+// DOM-access model, adapted to LocalMind's tool architecture):
+//   - settings.web_access_killed — the kill switch. When 1, EVERY tool that
+//     touches the web (web_search, raw browser, Secure Browser MCP) refuses
+//     before any network I/O. Layer 3 in Nova terms: blunt, absolute.
+//   - site_grants — per-domain standing grants (Layer 2). policy='allow'
+//     lets agents read the domain even when it's sensitive-classed;
+//     policy='never' blinds agents to it entirely. Domains not listed fall
+//     through to the sensitive-context heuristics (Layer 1) in web-guard.ts.
+// NOTE: this was originally drafted as a second v15 migration and never ran
+// on DBs that already applied the workflow-pause v15. Kept at v16 so those
+// installs actually get the columns/tables.
+configMigrations.push({
+  version: 16,
+  up: (db) => {
+    db.exec(`
+      ALTER TABLE settings ADD COLUMN web_access_killed INTEGER NOT NULL DEFAULT 0;
+      CREATE TABLE IF NOT EXISTS site_grants (
+        domain TEXT PRIMARY KEY,
+        policy TEXT NOT NULL CHECK (policy IN ('allow','never')),
+        note TEXT,
+        created_at INTEGER NOT NULL
+      );
+    `);
+  },
+});
+
+// v17: give Researcher the page-reading tools the orchestrator expects
+// (web_research + read_secure_webpage). Prior seed only listed web_search /
+// browser, which pushed agents toward search-snippet workarounds.
+configMigrations.push({
+  version: 17,
+  up: (db) => {
+    const tools = JSON.stringify([
+      "web_research",
+      "read_secure_webpage",
+      "web_search",
+      "browser",
+      "knowledge_base",
+      "peer_knowledge",
+      "memory",
+      "time",
+    ]);
+    db.prepare(
+      "UPDATE personas SET enabled_tools=?, updated_at=? WHERE persona_id IN ('agent-researcher','persona-researcher')"
+    ).run(tools, Date.now());
+  },
+});
+
+// v18: re-enable date_context. Serving clock only via the `time` tool made
+// small models burn a tool call on every "hello". A one-line clock in the
+// prompt is cheaper; `time` remains for explicit clock/scheduling asks.
+configMigrations.push({
+  version: 18,
+  up: (db) => {
+    db.exec(`
+      UPDATE system_prompt_blocks
+      SET enabled = 1, updated_at = ${Date.now()}
+      WHERE block_type = 'builtin' AND block_name = 'date_context';
+    `);
+  },
+});
+
+// v19: bump default UI font size. Only touches installs still on a prior
+// baked default (14 or 16) so deliberate larger preferences are preserved.
+configMigrations.push({
+  version: 19,
+  up: (db) => {
+    db.prepare(
+      "UPDATE settings SET chat_font_size = 17 WHERE chat_font_size IN (14, 16)"
+    ).run();
+  },
+});
+
+// v20: app-wide font scale default settled at 17. Re-bump any leftover 14/16
+// from installs that already applied v19 when it only targeted 14→16.
+configMigrations.push({
+  version: 20,
+  up: (db) => {
+    db.prepare(
+      "UPDATE settings SET chat_font_size = 17 WHERE chat_font_size IN (14, 16)"
+    ).run();
+  },
+});
+
+// v21: Ops board (Feature A) + Pillars (Feature F). Tag each process with the
+// pillar it advances, link subagents to their spawner so the board can nest
+// them, and track an optional 0..1 progress value for a progress bar.
+// All nullable / back-filled null so existing rows are untouched.
+configMigrations.push({
+  version: 21,
+  up: (db) => {
+    db.exec(`
+      ALTER TABLE agent_processes ADD COLUMN pillar TEXT;
+      ALTER TABLE agent_processes ADD COLUMN parent_process_id TEXT;
+      ALTER TABLE agent_processes ADD COLUMN progress REAL;
+      CREATE INDEX IF NOT EXISTS idx_agent_processes_parent ON agent_processes(parent_process_id);
+    `);
+  },
+});
+
+// v22: selectable web-search backend (Feature C1). "auto" preserves today's
+// behavior (Brave if BRAVE_API_KEY set, else DuckDuckGo). "you" uses the
+// you.com search API with a key stored in api_keys.
+configMigrations.push({
+  version: 22,
+  up: (db) => {
+    db.exec("ALTER TABLE settings ADD COLUMN web_search_provider TEXT NOT NULL DEFAULT 'auto';");
+  },
+});
+
+// v23: the Brain's entity graph (§4.0/§4.3.1). Typed relationships between
+// brain entities (and the User Context Graph in §12), populated by a zero-LLM
+// extraction pass over [[wikilinks]] on note write. Additive — the existing
+// memory/notes/knowledge stores are untouched.
+configMigrations.push({
+  version: 23,
+  up: (db) => {
+    db.exec(`
+      CREATE TABLE brain_edges (
+        id TEXT PRIMARY KEY,
+        src_entity TEXT NOT NULL,
+        dst_entity TEXT NOT NULL,
+        edge_type TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'inferred',
+        weight REAL NOT NULL DEFAULT 1.0,
+        created_at INTEGER NOT NULL,
+        UNIQUE(src_entity, dst_entity, edge_type)
+      );
+      CREATE INDEX idx_brain_edges_src ON brain_edges(src_entity);
+      CREATE INDEX idx_brain_edges_dst ON brain_edges(dst_entity);
+    `);
+  },
+});
+
+// v24: the Ideate pillar's surface (§6.2) — a "Strategist" persona that runs
+// divergent→convergent brainstorming and writes the chosen plan to the Brain.
+// Implemented purely as a persona + a custom system-prompt block; no engine
+// changes. Reachable from the persona selector and ⌘K.
+configMigrations.push({
+  version: 24,
+  up: (db) => {
+    const NOW = Date.now();
+    db.prepare(`
+      INSERT INTO personas (persona_id, name, description, model_name, enabled_tools, permission_profile_id, created_at, updated_at)
+      VALUES ('persona-strategist', 'Strategist',
+        'Ideation mode — generates options, pressure-tests them, and converges to a plan, then saves the chosen plan to the Brain and can hand off to execute/coordinate.',
+        NULL, ?, 'normal', ?, ?)
+      ON CONFLICT(persona_id) DO UPDATE SET
+        description = excluded.description,
+        enabled_tools = excluded.enabled_tools,
+        updated_at = excluded.updated_at
+    `).run(
+      JSON.stringify(["memory", "knowledge_base", "web_search", "time", "spawn_subagents_parallel", "schedule_task"]),
+      NOW,
+      NOW
+    );
+
+    const insBlock = db.prepare(`
+      INSERT OR IGNORE INTO system_prompt_blocks
+        (block_id, persona_id, block_type, block_name, content, enabled, sort_order, condition_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+    `);
+    // Standard builtins so the persona has identity/permissions/tools context.
+    const builtins = [
+      { name: "identity", enabled: 1 },
+      { name: "permissions", enabled: 1 },
+      { name: "tools", enabled: 1 },
+    ];
+    builtins.forEach((b, i) => {
+      insBlock.run(`blk-strategist-${b.name}`, "persona-strategist", "builtin", b.name, "", b.enabled, i, NOW, NOW);
+    });
+    // The ideation method itself, as a custom-static block.
+    const ideate = `## Ideation method
+You are in Strategist mode. Work in two phases:
+1. DIVERGE — generate a wide set of distinct options. Do not filter yet. Aim for genuinely different approaches, not variations of one.
+2. CONVERGE — pressure-test the options (risks, cost, effort, reversibility). Optionally spawn a parallel "red team" via spawn_subagents_parallel to attack the leading ideas. Then converge to a single recommended plan.
+
+Output a structured plan: goal, the options you considered, the chosen approach and why, and concrete next actions. Save the chosen plan as an \`idea\` note in the Brain (knowledge_base) so it persists and can be linked to follow-on execute/coordinate work. Offer to schedule or spin up the execution steps, but do not start execution without the user's go-ahead.`;
+    insBlock.run("blk-strategist-ideate", "persona-strategist", "custom-static", "ideate", ideate, 1, 3, NOW, NOW);
+  },
+});
+
+// v25: idle self-improvement (Feature G.1/G.2). The two-gate flow: idle Sora
+// writes proposal *cards* only (Gate 1); a human approval enqueues a build that
+// produces a branch/PR (Gate 2); final merge stays human. `self_checks` records
+// idle test runs (read-only w.r.t. the app). Idle work is opt-in and windowed.
+configMigrations.push({
+  version: 25,
+  up: (db) => {
+    db.exec(`
+      CREATE TABLE improvement_proposals (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        rationale TEXT NOT NULL,
+        target_paths TEXT NOT NULL DEFAULT '[]',
+        benefit TEXT,
+        risk TEXT,
+        status TEXT NOT NULL DEFAULT 'proposed',
+        created_at INTEGER NOT NULL,
+        approved_at INTEGER,
+        branch TEXT,
+        pr_url TEXT,
+        audit_ref TEXT
+      );
+      CREATE INDEX idx_improvement_proposals_status ON improvement_proposals(status);
+
+      CREATE TABLE self_checks (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        summary TEXT,
+        detail TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_self_checks_created ON self_checks(created_at DESC);
+    `);
+    // Idle work is off by default. Window defaults to 01:00–06:00 local.
+    db.exec("ALTER TABLE settings ADD COLUMN idle_work_enabled INTEGER NOT NULL DEFAULT 0;");
+    db.exec("ALTER TABLE settings ADD COLUMN idle_start_hour INTEGER NOT NULL DEFAULT 1;");
+    db.exec("ALTER TABLE settings ADD COLUMN idle_end_hour INTEGER NOT NULL DEFAULT 6;");
+  },
+});
+
+// v26: one-shot reminders. Scheduled tasks were cron-only (recurring); a
+// "remind me in 4 minutes" is a one-time task. `run_at` (epoch ms) marks a
+// one-shot: the worker fires it once when due, then disables it. Recurring
+// tasks keep run_at NULL and continue to match on cron.
+configMigrations.push({
+  version: 26,
+  up: (db) => {
+    db.exec("ALTER TABLE scheduled_tasks ADD COLUMN run_at INTEGER;");
+  },
+});
+
+// v27: refresh Sora's enabled_tools — schedule_task / recall / browse_session
+// shipped after the v11 seed and were never backfilled on existing installs.
+configMigrations.push({
+  version: 27,
+  up: (db) => {
+    const tools = JSON.stringify([
+      "memory", "knowledge_base", "web_search", "time", "filesystem",
+      "calendar", "email", "browser", "browse_session", "peer_knowledge",
+      "datastore", "spreadsheet", "check_resources", "spawn_subagent",
+      "spawn_subagents_parallel", "schedule_task", "recall",
+      "web_research", "read_secure_webpage",
+    ]);
+    db.prepare(
+      "UPDATE personas SET enabled_tools=?, updated_at=? WHERE persona_id='persona-sora'"
+    ).run(tools, Date.now());
+  },
+});
+
+// v28: default agent_mode is now 'auto'. Until the settings PATCH allow-list
+// fix, the mode toggle never persisted — so any install still at 'ask' is on
+// the un-chosen v9 column default, not a deliberate user choice. Flip those
+// to 'auto'; explicit plan/auto selections (impossible before the fix) are
+// untouched, and the destructive-action floor still confirms regardless.
+configMigrations.push({
+  version: 28,
+  up: (db) => {
+    db.exec("UPDATE settings SET agent_mode='auto' WHERE agent_mode='ask'");
+  },
+});
+
+// v29: grant Sora spawn_subagents_sequential — the memory-friendly batch
+// spawn that runs one child at a time. Prefer over parallel when wall-clock
+// speedup is not needed.
+configMigrations.push({
+  version: 29,
+  up: (db) => {
+    const tools = JSON.stringify([
+      "memory", "knowledge_base", "web_search", "time", "filesystem",
+      "calendar", "email", "browser", "browse_session", "peer_knowledge",
+      "datastore", "spreadsheet", "check_resources", "spawn_subagent",
+      "spawn_subagents_sequential", "spawn_subagents_parallel", "schedule_task", "recall",
+      "web_research", "read_secure_webpage",
+    ]);
+    db.prepare(
+      "UPDATE personas SET enabled_tools=?, updated_at=? WHERE persona_id='persona-sora'"
+    ).run(tools, Date.now());
+  },
+});
+
+// v30: fleet mesh — conversation sync is on by default for newly recorded
+// peers (existing peers keep their policy_json untouched). The column is a
+// no-op marker; the real default lives in DEFAULT_PEER_POLICY.
+configMigrations.push({
+  version: 30,
+  up: (_db) => {
+    /* policy default change only — no schema */
+  },
+});
+
+// v31: unified spawn_agents + explicit grants for agent_memory / install_mcp_server
+// so persona ceilings and UI lists stay in sync with the registry.
+configMigrations.push({
+  version: 31,
+  up: (db) => {
+    const tools = JSON.stringify([
+      "memory", "knowledge_base", "web_search", "time", "filesystem",
+      "calendar", "email", "browser", "browse_session", "peer_knowledge",
+      "datastore", "spreadsheet", "check_resources", "spawn_subagent",
+      "spawn_subagents_sequential", "spawn_subagents_parallel", "spawn_agents",
+      "schedule_task", "recall", "web_research", "read_secure_webpage",
+      "agent_memory", "install_mcp_server",
+    ]);
+    db.prepare(
+      "UPDATE personas SET enabled_tools=?, updated_at=? WHERE persona_id='persona-sora'"
+    ).run(tools, Date.now());
   },
 });
 
@@ -1039,21 +1376,65 @@ const convMigrations: Migration[] = [
       db.exec("ALTER TABLE conversations ADD COLUMN owner_user_id TEXT;");
     },
   },
+  {
+    // v3: rolling conversation summary for intelligent history. Instead of
+    // dumping every past message into context, older turns are folded into a
+    // maintained summary (covered_count = how many leading messages it covers)
+    // and the raw messages stay queryable via the `recall` tool.
+    version: 3,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE conversation_summaries (
+          conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+          summary TEXT NOT NULL,
+          covered_count INTEGER NOT NULL DEFAULT 0,
+          updated_at INTEGER NOT NULL
+        );
+      `);
+    },
+  },
+  {
+    // v4: multimodal input. `attachments` holds a JSON array of
+    // { name, mime, data(base64) } for images sent with a user message.
+    version: 4,
+    up: (db) => {
+      db.exec("ALTER TABLE messages ADD COLUMN attachments TEXT;");
+    },
+  },
+  {
+    // v5: LAN mesh — every message carries which node authored it, and every
+    // conversation has a stable sync_id so paired devices can merge the same
+    // thread. origin_* is local-node by default; sync fills peers' labels.
+    version: 5,
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE messages ADD COLUMN origin_node_id TEXT;
+        ALTER TABLE messages ADD COLUMN origin_label TEXT;
+        ALTER TABLE conversations ADD COLUMN sync_id TEXT;
+        ALTER TABLE conversations ADD COLUMN origin_node_id TEXT;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_sync ON conversations(sync_id) WHERE sync_id IS NOT NULL;
+      `);
+      // Backfill sync_id = id so existing threads are syncable immediately.
+      db.exec("UPDATE conversations SET sync_id = id WHERE sync_id IS NULL;");
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database, kind: "config" | "conversations" | "knowledge") {
   db.exec("CREATE TABLE IF NOT EXISTS _schema (version INTEGER PRIMARY KEY)");
-  const cur = db.prepare("SELECT MAX(version) AS v FROM _schema").get() as { v: number | null };
-  const current = cur.v ?? 0;
+  const applied = new Set(
+    (db.prepare("SELECT version FROM _schema").all() as { version: number }[]).map((r) => r.version)
+  );
   const set =
     kind === "config" ? configMigrations : kind === "knowledge" ? knowledgeMigrations : convMigrations;
-  for (const m of set) {
-    if (m.version > current) {
-      const tx = db.transaction(() => {
-        m.up(db);
-        db.prepare("INSERT INTO _schema (version) VALUES (?)").run(m.version);
-      });
-      tx();
-    }
+  // Sort by version so declaration order in the array can't skip or reorder
+  // migrations (MAX(version) previously skipped any lower version inserted late).
+  const pending = [...set].filter((m) => !applied.has(m.version)).sort((a, b) => a.version - b.version);
+  for (const m of pending) {
+    const tx = db.transaction(() => {
+      m.up(db);
+      db.prepare("INSERT INTO _schema (version) VALUES (?)").run(m.version);
+    });
+    tx();
   }
 }

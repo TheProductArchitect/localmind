@@ -11,12 +11,19 @@ import { datastoreTool } from "./datastore";
 import { spreadsheetTool } from "./spreadsheet";
 import { peerKnowledgeTool } from "./peer-knowledge";
 import { piCodeTool } from "./pi-code";
-import { spawnSubagentTool, spawnSubagentsParallelTool } from "./subagent";
+import { spawnSubagentTool, spawnSubagentsParallelTool, spawnSubagentsSequentialTool, spawnAgentsTool } from "./subagent";
 import { checkResourcesTool } from "./check-resources";
 import { timeTool } from "./time";
 import { requestToolAccessTool } from "./request-tool-access";
 import { agentMemoryAdminTool } from "./agent-memory-admin";
 import { installMcpServerTool } from "./install-mcp";
+import { remindersTool } from "./reminders";
+import { contactsTool } from "./contacts";
+import { scheduleTool } from "./schedule";
+import { recallTool } from "./recall";
+import { webResearchTool } from "./web-research";
+import { readSecureWebpageTool, SECURE_BROWSER_MCP_NAME } from "./read-secure-webpage";
+import { browseSessionTool } from "./browse-session";
 import { getMcpTools } from "./mcp";
 import type { Tool } from "./types";
 
@@ -28,6 +35,13 @@ const BUILTIN: Tool[] = [
   emailTool,
   macAutomationTool,
   browserTool,
+  remindersTool,
+  contactsTool,
+  scheduleTool,
+  recallTool,
+  webResearchTool,
+  readSecureWebpageTool,
+  browseSessionTool,
   knowledgeTool,
   devpmTool,
   datastoreTool,
@@ -40,7 +54,9 @@ const BUILTIN: Tool[] = [
   agentMemoryAdminTool,
   installMcpServerTool,
   spawnSubagentTool,
+  spawnSubagentsSequentialTool,
   spawnSubagentsParallelTool,
+  spawnAgentsTool,
 ];
 
 export function listBuiltinTools(): Tool[] {
@@ -49,7 +65,10 @@ export function listBuiltinTools(): Tool[] {
 
 export async function listAllTools(): Promise<Tool[]> {
   const mcp = await getMcpTools().catch(() => []);
-  return [...BUILTIN, ...mcp];
+  // Secure Browser is exposed via the first-class `read_secure_webpage` alias
+  // so the model doesn't see two names for the same capability.
+  const otherMcp = mcp.filter((t) => t.definition.name !== SECURE_BROWSER_MCP_NAME);
+  return [...BUILTIN, ...otherMcp];
 }
 
 export function getBuiltinTool(name: string): Tool | undefined {

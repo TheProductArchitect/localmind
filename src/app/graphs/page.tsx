@@ -54,8 +54,10 @@ export default function GraphsPage() {
   const load = useCallback(async () => {
     try {
       const r = await fetch("/api/graphs");
-      const j = await r.json();
+      const j = await r.json().catch(() => ({}));
       setGraphs(j.graphs || []);
+    } catch {
+      /* keep last good list */
     } finally {
       setLoaded(true);
     }

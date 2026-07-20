@@ -35,6 +35,7 @@ export type EnvelopeKind =
   | "pair-request"
   | "pair-confirm"
   | "chat-relay"
+  | "conversation-sync"
   // Response kinds — the server wraps every reply as `${request}-result`
   | "capabilities-result"
   | "capabilities-pull-result"
@@ -46,7 +47,8 @@ export type EnvelopeKind =
   | "knowledge-response"
   | "pair-request-result"
   | "pair-confirm-result"
-  | "chat-relay-result";
+  | "chat-relay-result"
+  | "conversation-sync-result";
 
 export type SignedEnvelope<P = unknown> = {
   v: number;                 // envelope version

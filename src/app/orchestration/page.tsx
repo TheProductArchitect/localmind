@@ -1,5 +1,6 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Button, Card, Badge, Input, Textarea } from "@/components/ui";
 import { toast } from "@/components/toast";
 import { Network, Eye, Pause, Play, X, Clock, RefreshCw, Plus, Zap, Send, BookOpen, ChevronDown } from "lucide-react";
@@ -65,6 +66,18 @@ type LongJob = {
 };
 
 export default function OrchestrationPage() {
+  return (
+    <Suspense fallback={<div className="p-10 text-sm text-muted-foreground">Loading…</div>}>
+      <OrchestrationPageInner />
+    </Suspense>
+  );
+}
+
+function OrchestrationPageInner() {
+  const searchParams = useSearchParams();
+  const deepProcessId = searchParams.get("process");
+  const deepJobId = searchParams.get("job");
+  const deepOpened = useRef(false);
   const [active, setActive] = useState<Proc[]>([]);
   const [history, setHistory] = useState<Proc[]>([]);
   const [jobs, setJobs] = useState<LongJob[]>([]);
@@ -171,7 +184,11 @@ export default function OrchestrationPage() {
     refresh();
   }
 
-  function openTrace(p: Proc) {
+  const openTrace = useCallback((p: Proc) => {
+    // Close any prior SSE before attaching a new one — otherwise switching
+    // traces leaks EventSources until unmount.
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
     setTraceProc(p);
     setTraceEvents([]);
 
@@ -198,7 +215,7 @@ export default function OrchestrationPage() {
         es.onerror = () => { es.close(); eventSourceRef.current = null; };
       } catch { /* ignore */ }
     }
-  }
+  }, [refresh]);
 
   function closeTrace() {
     eventSourceRef.current?.close();
@@ -207,12 +224,28 @@ export default function OrchestrationPage() {
     setTraceEvents([]);
   }
 
+  // Deep-link: /orchestration?process=<id> opens that process's trace once.
+  useEffect(() => {
+    if (!loaded || !deepProcessId || deepOpened.current) return;
+    const p = [...active, ...history].find((x) => x.process_id === deepProcessId);
+    if (!p) return;
+    deepOpened.current = true;
+    openTrace(p);
+  }, [loaded, deepProcessId, active, history, openTrace]);
+
+  // Deep-link: /orchestration?job=<id> scrolls to that job card.
+  useEffect(() => {
+    if (!loaded || !deepJobId) return;
+    const el = document.getElementById(`job-${deepJobId}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [loaded, deepJobId, jobs]);
+
   // Clean up SSE on unmount.
   useEffect(() => () => { eventSourceRef.current?.close(); }, []);
 
   return (
-    <div className="flex h-full">
-      <div className="flex-1 overflow-y-auto px-10 py-14 space-y-6 max-w-5xl">
+    <div className="relative flex h-full">
+      <div className="flex-1 overflow-y-auto px-5 sm:px-10 py-8 sm:py-14 space-y-6 max-w-5xl min-w-0">
         <div className="flex items-end justify-between gap-6 mb-2">
           <div>
             <p className="lm-micro mb-2">Orchestration</p>
@@ -306,7 +339,12 @@ export default function OrchestrationPage() {
               {jobs.map((j) => {
                 const done = ["completed", "failed", "cancelled"].includes(j.status);
                 return (
-                  <Card key={j.job_id} className="p-3">
+                  <Card
+                    key={j.job_id}
+                    id={`job-${j.job_id}`}
+                    className="p-3"
+                    style={deepJobId === j.job_id ? { outline: "1px solid hsl(0 0% 100% / 0.35)" } : undefined}
+                  >
                     <div className="flex items-start gap-2">
                       <Badge variant="outline">Job</Badge>
                       <div className="flex-1 min-w-0">
@@ -450,7 +488,7 @@ export default function OrchestrationPage() {
 
       {/* Trace side panel */}
       {traceProc && (
-        <aside className="w-[420px] border-l flex flex-col bg-muted/10">
+        <aside className="absolute inset-0 z-20 flex flex-col border-l bg-background sm:static sm:z-auto sm:w-[420px] sm:bg-muted/10">
           <div className="border-b px-4 py-2 flex items-center gap-2">
             <p className="text-sm font-medium flex-1 truncate">{traceProc.display_name}</p>
             <Badge variant={STATUS_TONE[traceProc.status] || "outline"}>{traceProc.status}</Badge>
