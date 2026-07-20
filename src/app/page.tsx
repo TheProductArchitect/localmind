@@ -112,7 +112,7 @@ function ChatInner() {
   // `persona` value is preserved so the backend keeps routing to the right
   // assembled prompt, but the UI no longer exposes a selector.
   const [persona] = useState("general");
-  const [agentMode, setAgentMode] = useState<"auto" | "plan" | "ask">("ask");
+  const [agentMode, setAgentMode] = useState<"auto" | "plan" | "ask">("auto");
 
   // Fleet chat relay — when a peer is selected, send() routes through
   // /api/fleet/peers/[id]/chat instead of the local streaming /api/chat.
@@ -189,7 +189,7 @@ function ChatInner() {
         if (j.settings && !j.settings.onboarded) window.location.href = "/onboarding";
         else {
           setModel(j.settings?.active_model || null);
-          setAgentMode((j.settings?.agent_mode as "auto" | "plan" | "ask") || "ask");
+          setAgentMode((j.settings?.agent_mode as "auto" | "plan" | "ask") || "auto");
           const fs = Number(j.settings?.chat_font_size);
           if (fs >= 12 && fs <= 28) {
             document.documentElement.style.setProperty("--lm-root-fs", `${fs}px`);
@@ -907,7 +907,7 @@ function ChatInner() {
                   <Orb state="thinking" size={20} />
                   <div className="flex-1 min-w-0">
                     <p style={{ fontSize: 12, color: "hsl(0 0% 100% / 0.92)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>
-                      {name.replace(/^spawn_subagent(s_parallel)?$/, isSpawn && name.endsWith("parallel") ? "spawning batch…" : "spawning…")}
+                      {name.replace(/^spawn_subagent(s_(parallel|sequential))?$/, name.includes("sequential") ? "spawning sequentially…" : name.includes("parallel") ? "spawning batch…" : "spawning…")}
                     </p>
                     <p className="lm-micro" style={{ textTransform: "none", letterSpacing: 0, fontSize: 10, color: "hsl(0 0% 100% / 0.4)" }}>
                       {isSpawn ? "subagent" : "tool"}

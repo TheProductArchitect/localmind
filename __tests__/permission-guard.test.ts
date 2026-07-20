@@ -132,6 +132,13 @@ describe("permission-guard", () => {
       mockedProfile.mockReturnValue({ tiers: {} } as any);
       expect(classify("write_files")).toBe("ask");
     });
+
+    it("falls back to auto when agent_mode is unset (auto is the default)", () => {
+      mockedSettings.mockReturnValue({} as any);
+      expect(classify("write_files")).toBe("allow");
+      // Destructive floor still holds even on the auto fallback.
+      expect(classify("delete_files")).toBe("ask");
+    });
   });
 
   describe("isDestructiveCommand — shell-string heuristic", () => {

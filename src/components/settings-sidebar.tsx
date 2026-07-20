@@ -78,6 +78,7 @@ const ADMIN_GROUPS: { title: string; links: { href: string; label: string; Icon:
       { href: "/graphs",        label: "Task graphs",  Icon: Workflow },
       { href: "/orchestration", label: "Orchestration", Icon: Network },
       { href: "/automations",   label: "Automations",  Icon: Calendar },
+      { href: "/today",         label: "Today · goals & briefing", Icon: Calendar },
       { href: "/data",          label: "Data tables",  Icon: Database },
     ],
   },

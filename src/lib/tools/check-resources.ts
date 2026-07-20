@@ -29,7 +29,7 @@ export const checkResourcesTool: Tool = {
   definition: {
     name: "check_resources",
     description:
-      "Get a safe parallel-subagent count based on current RAM and active model. Call before spawn_subagents_parallel when batch size is uncertain. max_concurrent is a hard ceiling.",
+      "Get a safe parallel-subagent count based on current RAM and active model. Call before spawn_subagents_parallel when batch size is uncertain. Prefer spawn_subagents_sequential when speedup is not needed. max_concurrent is a hard ceiling for parallel only.",
     parameters: {
       type: "object",
       properties: {

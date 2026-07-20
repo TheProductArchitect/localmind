@@ -814,7 +814,7 @@ configMigrations.push({
         tools: [
           "memory", "knowledge_base", "web_search", "time", "filesystem",
           "calendar", "email", "browser", "peer_knowledge", "datastore",
-          "spreadsheet", "check_resources", "spawn_subagent", "spawn_subagents_parallel",
+          "spreadsheet", "check_resources", "spawn_subagent", "spawn_subagents_sequential", "spawn_subagents_parallel",
         ],
       },
       {
@@ -1197,6 +1197,37 @@ configMigrations.push({
       "calendar", "email", "browser", "browse_session", "peer_knowledge",
       "datastore", "spreadsheet", "check_resources", "spawn_subagent",
       "spawn_subagents_parallel", "schedule_task", "recall",
+      "web_research", "read_secure_webpage",
+    ]);
+    db.prepare(
+      "UPDATE personas SET enabled_tools=?, updated_at=? WHERE persona_id='persona-sora'"
+    ).run(tools, Date.now());
+  },
+});
+
+// v28: default agent_mode is now 'auto'. Until the settings PATCH allow-list
+// fix, the mode toggle never persisted — so any install still at 'ask' is on
+// the un-chosen v9 column default, not a deliberate user choice. Flip those
+// to 'auto'; explicit plan/auto selections (impossible before the fix) are
+// untouched, and the destructive-action floor still confirms regardless.
+configMigrations.push({
+  version: 28,
+  up: (db) => {
+    db.exec("UPDATE settings SET agent_mode='auto' WHERE agent_mode='ask'");
+  },
+});
+
+// v29: grant Sora spawn_subagents_sequential — the memory-friendly batch
+// spawn that runs one child at a time. Prefer over parallel when wall-clock
+// speedup is not needed.
+configMigrations.push({
+  version: 29,
+  up: (db) => {
+    const tools = JSON.stringify([
+      "memory", "knowledge_base", "web_search", "time", "filesystem",
+      "calendar", "email", "browser", "browse_session", "peer_knowledge",
+      "datastore", "spreadsheet", "check_resources", "spawn_subagent",
+      "spawn_subagents_sequential", "spawn_subagents_parallel", "schedule_task", "recall",
       "web_research", "read_secure_webpage",
     ]);
     db.prepare(

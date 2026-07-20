@@ -30,13 +30,17 @@ const COMMANDS: Command[] = [
   { label: "Task graphs",       href: "/graphs",     group: "Work" },
   { label: "Orchestration",     href: "/orchestration", group: "Work" },
   { label: "Automations",       href: "/automations", group: "Work" },
+  { label: "Today — briefing & goals", href: "/today", group: "Work" },
   { label: "Jobs",              href: "/work?tab=jobs", group: "Work" },
+  { label: "Processes",         href: "/work?tab=processes", group: "Work" },
 
   // Knowledge
   { label: "Knowledge base",    href: "/knowledge",  group: "Knowledge" },
   { label: "Browse the web", href: "/browse", group: "Knowledge" },
   { label: "Memory",            href: "/knowledge?tab=memory", group: "Knowledge" },
   { label: "My context — what Sora knows about me", href: "/knowledge?tab=context", group: "Knowledge" },
+  { label: "Knowledge sharing", href: "/knowledge?tab=sharing", group: "Knowledge" },
+  { label: "Peer search",       href: "/knowledge?tab=peer", group: "Knowledge" },
   { label: "Data tables",       href: "/data",       group: "Knowledge" },
 
   // Fleet
@@ -47,6 +51,9 @@ const COMMANDS: Command[] = [
 
   // Settings
   { label: "Settings",                href: "/settings",     group: "Settings" },
+  { label: "Settings · Reach",        href: "/settings?section=Reach", group: "Settings" },
+  { label: "Settings · Providers",    href: "/settings?section=Providers", group: "Settings" },
+  { label: "Settings · Tools",        href: "/settings?section=Tools", group: "Settings" },
   { label: "Permissions",             href: "/permissions",  group: "Settings" },
   { label: "Audit log",               href: "/audit",        group: "Settings" },
   { label: "Analytics",               href: "/analytics",    group: "Settings" },

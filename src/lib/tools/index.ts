@@ -11,7 +11,7 @@ import { datastoreTool } from "./datastore";
 import { spreadsheetTool } from "./spreadsheet";
 import { peerKnowledgeTool } from "./peer-knowledge";
 import { piCodeTool } from "./pi-code";
-import { spawnSubagentTool, spawnSubagentsParallelTool } from "./subagent";
+import { spawnSubagentTool, spawnSubagentsParallelTool, spawnSubagentsSequentialTool } from "./subagent";
 import { checkResourcesTool } from "./check-resources";
 import { timeTool } from "./time";
 import { requestToolAccessTool } from "./request-tool-access";
@@ -54,6 +54,7 @@ const BUILTIN: Tool[] = [
   agentMemoryAdminTool,
   installMcpServerTool,
   spawnSubagentTool,
+  spawnSubagentsSequentialTool,
   spawnSubagentsParallelTool,
 ];
 

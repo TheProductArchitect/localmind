@@ -40,15 +40,19 @@
  *
  * Serial vs parallel
  * ------------------
- * Two tools exist:
- *   - spawn_subagent           : single, await before next. Use when later
- *                                work depends on the result.
- *   - spawn_subagents_parallel : batch, runs with bounded concurrency capped
- *                                by the resource governor. Use when tasks are
- *                                independent.
- * Sora decides which based on whether the tasks have data dependencies. The
- * governor enforces the actual concurrency cap regardless of what Sora asks
- * for — Sora can request 8 parallel, the governor may permit only 2.
+ * Three tools exist:
+ *   - spawn_subagent              : single child. Use when the next step
+ *                                   depends on this child's output (chain).
+ *   - spawn_subagents_sequential  : batch, one child at a time. Use for
+ *                                   independent units when you want to spare
+ *                                   RAM/compute — only one subagent model
+ *                                   load at a time.
+ *   - spawn_subagents_parallel    : batch, bounded concurrency capped by the
+ *                                   resource governor. Use when independent
+ *                                   units benefit from wall-clock speedup
+ *                                   and the machine can take it.
+ * Sora picks based on data dependencies AND resource cost. The governor caps
+ * parallel concurrency regardless of what Sora asks for.
  */
 
 // NOTE: agent/engine.ts is imported DYNAMICALLY inside execute() to avoid a
@@ -373,7 +377,7 @@ export const spawnSubagentTool: Tool = {
 };
 
 // ---------------------------------------------------------------------------
-// spawn_subagents_parallel — bounded-concurrency batch spawn.
+// Batch spawn — shared runner for sequential + parallel.
 // ---------------------------------------------------------------------------
 
 const MAX_BATCH_SIZE = 8;
@@ -381,7 +385,7 @@ const MAX_BATCH_SIZE = 8;
 type BatchSpec = {
   goal: string;
   persona_id?: string;
-  allowed_tools?: string[];
+  allowed_tools?: string[] | string;
   timeout_seconds?: number;
 };
 
@@ -393,6 +397,8 @@ type BatchResult = {
   conversation_id?: string;
   error?: string;
 };
+
+type BatchMode = "sequential" | "parallel";
 
 /**
  * Run `items` with at most `limit` in-flight at once. Preserves order in the
@@ -426,6 +432,257 @@ async function bounded<T>(items: Array<() => Promise<T>>, limit: number): Promis
   return out;
 }
 
+function parseBatchInput(input: Record<string, unknown>): { ok: true; batch: BatchSpec[] } | { ok: false; output: string } {
+  // Small models sometimes send batch as a JSON string rather than an
+  // array. Accept it — the specs are validated below either way.
+  let rawBatch: unknown = input.batch;
+  if (typeof rawBatch === "string") {
+    try { rawBatch = JSON.parse(rawBatch); } catch { /* falls through to the empty-batch error */ }
+  }
+  const batch = (Array.isArray(rawBatch) ? rawBatch : []) as BatchSpec[];
+  if (batch.length === 0) {
+    return { ok: false, output: "batch is required and must contain at least one subagent spec" };
+  }
+  if (batch.length > MAX_BATCH_SIZE) {
+    return { ok: false, output: `batch size ${batch.length} exceeds the maximum of ${MAX_BATCH_SIZE}. Plan in waves.` };
+  }
+  for (let i = 0; i < batch.length; i++) {
+    if (!batch[i] || typeof batch[i].goal !== "string" || !batch[i].goal.trim()) {
+      return { ok: false, output: `batch[${i}].goal is required and must be a non-empty string` };
+    }
+  }
+  return { ok: true, batch };
+}
+
+const BATCH_ITEM_SCHEMA = {
+  type: "object",
+  properties: {
+    goal: { type: "string" },
+    persona_id: { type: "string" },
+    allowed_tools: { type: "array", items: { type: "string" } },
+    timeout_seconds: { type: "number" },
+  },
+  required: ["goal"],
+} as const;
+
+async function executeBatch(
+  input: Record<string, unknown>,
+  ctx: { conversationId: string },
+  mode: BatchMode
+): Promise<{ ok: boolean; output: string; summary?: string }> {
+  const parsed = parseBatchInput(input);
+  if (!parsed.ok) return parsed;
+  const batch = parsed.batch;
+
+  const parentDepth = readDepth(ctx.conversationId);
+  if (parentDepth >= MAX_SUBAGENT_DEPTH) {
+    return {
+      ok: false,
+      output: `Refusing to spawn — already at subagent depth ${parentDepth} / ${MAX_SUBAGENT_DEPTH}.`,
+    };
+  }
+  const childDepth = parentDepth + 1;
+
+  // Sequential always runs one at a time (cap=1) — that's the whole point:
+  // spare RAM/compute. Parallel consults the governor for advice but the
+  // only hard limit is SANITY_CEILING.
+  let cap = 1;
+  let requested = 1;
+  let governorAdvice = 1;
+  let warnings: string[] = [];
+  if (mode === "parallel") {
+    const { decideCapacity, SANITY_CEILING } = await import("../agent/resource-governor");
+    requested = typeof input.max_parallel === "number" ? Math.max(1, input.max_parallel) : batch.length;
+    const decision = await decideCapacity(Math.min(requested, batch.length));
+    governorAdvice = decision.max_concurrent;
+    warnings = decision.warnings;
+    cap = Math.min(requested, batch.length, SANITY_CEILING);
+  }
+
+  const personas = listPersonas();
+  function personaNameFor(id: string | undefined): string | undefined {
+    if (!id) return undefined;
+    return personas.find((p) => p.persona_id === id)?.name;
+  }
+
+  const parentConv = getConversation(ctx.conversationId);
+  const ownerUserId = parentConv?.owner_user_id ?? undefined;
+  const { runAgentCollect } = await import("../agent/engine");
+
+  const runners: Array<() => Promise<BatchResult>> = batch.map((spec) => {
+    return async () => {
+      const t0 = Date.now();
+      const timeoutSeconds = Math.max(
+        5,
+        Math.min(600, typeof spec.timeout_seconds === "number" ? spec.timeout_seconds : 180)
+      );
+
+      const subConv = createConversation(parentConv?.profile_id ?? undefined, ownerUserId);
+      writeDepth(subConv.id, childDepth);
+
+      const personaName = personaNameFor(spec.persona_id);
+      const personaObj = personas.find((p) => p.persona_id === spec.persona_id);
+      let personaTools: string[] | null = null;
+      if (personaObj) {
+        try {
+          const parsedTools = JSON.parse(personaObj.enabled_tools || "[]") as string[];
+          if (Array.isArray(parsedTools) && parsedTools.length > 0) personaTools = parsedTools;
+        } catch { /* persona has no whitelist */ }
+      }
+      const callerRaw = spec.allowed_tools;
+      const callerTools = Array.isArray(callerRaw)
+        ? callerRaw.filter((t): t is string => typeof t === "string")
+        : typeof callerRaw === "string"
+          ? (() => {
+              // Python-ish "['a','b']" from small models.
+              try {
+                const p = JSON.parse(callerRaw);
+                return Array.isArray(p) ? p.filter((t): t is string => typeof t === "string") : [];
+              } catch {
+                return callerRaw
+                  .replace(/^\[|\]$/g, "")
+                  .split(",")
+                  .map((s) => s.trim().replace(/^['"]|['"]$/g, ""))
+                  .filter(Boolean);
+              }
+            })()
+          : [];
+      const SAFE_DEFAULT = ["memory", "time", "knowledge_base", "web_search"];
+      let effectiveTools: string[];
+      if (personaTools && callerTools.length > 0) {
+        const personaSet = new Set(personaTools);
+        effectiveTools = callerTools.filter((t) => personaSet.has(t));
+        if (effectiveTools.length === 0) effectiveTools = personaTools;
+      } else if (personaTools) effectiveTools = personaTools;
+      else if (callerTools.length > 0) effectiveTools = callerTools;
+      else effectiveTools = SAFE_DEFAULT;
+
+      const systemPrefix = buildSubagentSystemPrefix({
+        goal: spec.goal,
+        persona_id: spec.persona_id,
+        persona_name: personaName,
+        allowed_tools: effectiveTools,
+        depth: childDepth,
+      });
+
+      const freeRamGbAtStart = Math.round((require("os").freemem() / 1024 ** 3) * 10) / 10;
+      let output = "";
+      let timedOut = false;
+      await Promise.race([
+        runAgentCollect(subConv.id, spec.goal, {
+          systemPrefix,
+          processDisplayName: `Subagent: ${spec.goal.slice(0, 60)}`,
+          allowedTools: effectiveTools,
+          processMetadata: {
+            kind: "subagent",
+            batch_mode: mode,
+            batch_size: batch.length,
+            parent_conversation_id: ctx.conversationId,
+            free_ram_gb_at_start: freeRamGbAtStart,
+            depth: childDepth,
+            cap_applied: cap,
+            allowed_tools: effectiveTools,
+            persona_id: spec.persona_id ?? null,
+            persona_name: personaName ?? null,
+          },
+        }).then((text) => {
+          output = text;
+        }).catch((e) => {
+          output = `(subagent error: ${(e as Error).message ?? "unknown"})`;
+        }),
+        new Promise<void>((resolve) =>
+          setTimeout(() => { timedOut = true; resolve(); }, timeoutSeconds * 1000)
+        ),
+      ]);
+
+      const duration = Date.now() - t0;
+      if (timedOut && !output) {
+        return {
+          goal: spec.goal,
+          ok: false,
+          output: `Subagent timed out after ${timeoutSeconds}s`,
+          duration_ms: duration,
+          conversation_id: subConv.id,
+          error: "timeout",
+        };
+      }
+      return {
+        goal: spec.goal,
+        ok: true,
+        output: (output || "(no output)").slice(0, 8 * 1024),
+        duration_ms: duration,
+        conversation_id: subConv.id,
+      };
+    };
+  });
+
+  const t0 = Date.now();
+  const results = await bounded(runners, cap);
+  const totalMs = Date.now() - t0;
+
+  const okCount = results.filter((r) => r.ok).length;
+  const failCount = results.length - okCount;
+
+  const lines: string[] = [];
+  if (mode === "sequential") {
+    lines.push(
+      `Sequential batch of ${results.length} subagent(s) complete in ${totalMs}ms (one at a time)`
+    );
+  } else {
+    lines.push(
+      `Parallel batch of ${results.length} subagent(s) complete in ${totalMs}ms (cap=${cap}, requested=${requested}, governor=${governorAdvice})`
+    );
+  }
+  if (warnings.length > 0) {
+    lines.push(`Governor warnings: ${warnings.join("; ")}`);
+  }
+  lines.push("");
+  results.forEach((r, i) => {
+    lines.push(`--- [${i + 1}/${results.length}] ${r.ok ? "OK" : "FAILED"} (${r.duration_ms}ms) ---`);
+    lines.push(`goal: ${r.goal.slice(0, 200)}`);
+    lines.push(r.output);
+    lines.push("");
+  });
+
+  return {
+    ok: failCount === 0,
+    output: lines.join("\n").slice(0, 64 * 1024),
+    summary: `${okCount}/${results.length} subagent(s) succeeded; mode=${mode}, cap=${cap}, total=${totalMs}ms`,
+  };
+}
+
+export const spawnSubagentsSequentialTool: Tool = {
+  actionType: "memory_write",
+  classify: () => "memory_write",
+  preview: (i) => {
+    const batch = Array.isArray(i.batch) ? (i.batch as BatchSpec[]) : [];
+    const n = batch.length;
+    return `Spawn ${n} subagent${n === 1 ? "" : "s"} sequentially (one at a time)`;
+  },
+  version: "1",
+  cacheable: () => false,
+  definition: {
+    name: "spawn_subagents_sequential",
+    description:
+      "Spawn a batch of independent subagents one at a time. Prefer this over parallel when wall-clock speedup is not needed — it keeps peak RAM/compute to a single child. Returns results in input order. Use spawn_subagent (singular) when later work depends on an earlier child's output.",
+    parameters: {
+      type: "object",
+      properties: {
+        batch: {
+          type: "array",
+          maxItems: MAX_BATCH_SIZE,
+          description: `Array of subagent specs (max ${MAX_BATCH_SIZE}). Each spec is {goal, persona_id?, allowed_tools?, timeout_seconds?}.`,
+          items: BATCH_ITEM_SCHEMA,
+        },
+      },
+      required: ["batch"],
+    },
+  },
+  async execute(input, ctx) {
+    return executeBatch(input, ctx, "sequential");
+  },
+};
+
 export const spawnSubagentsParallelTool: Tool = {
   actionType: "memory_write",
   classify: () => "memory_write",
@@ -439,7 +696,7 @@ export const spawnSubagentsParallelTool: Tool = {
   definition: {
     name: "spawn_subagents_parallel",
     description:
-      "Spawn a batch of independent subagents in parallel. Concurrency is capped by the resource governor — you ask, it decides. Returns results in input order. Use spawn_subagent sequentially if B needs A's output.",
+      "Spawn a batch of independent subagents in parallel. Concurrency is capped by the resource governor — you ask, it decides. Prefer spawn_subagents_sequential when speedup is not worth the RAM cost. Use spawn_subagent (singular) when B needs A's output.",
     parameters: {
       type: "object",
       properties: {
@@ -447,16 +704,7 @@ export const spawnSubagentsParallelTool: Tool = {
           type: "array",
           maxItems: MAX_BATCH_SIZE,
           description: `Array of subagent specs (max ${MAX_BATCH_SIZE}). Each spec is {goal, persona_id?, allowed_tools?, timeout_seconds?}.`,
-          items: {
-            type: "object",
-            properties: {
-              goal: { type: "string" },
-              persona_id: { type: "string" },
-              allowed_tools: { type: "array", items: { type: "string" } },
-              timeout_seconds: { type: "number" },
-            },
-            required: ["goal"],
-          },
+          items: BATCH_ITEM_SCHEMA,
         },
         max_parallel: {
           type: "number",
@@ -467,175 +715,7 @@ export const spawnSubagentsParallelTool: Tool = {
     },
   },
   async execute(input, ctx) {
-    const batch = (Array.isArray(input.batch) ? input.batch : []) as BatchSpec[];
-    if (batch.length === 0) {
-      return { ok: false, output: "batch is required and must contain at least one subagent spec" };
-    }
-    if (batch.length > MAX_BATCH_SIZE) {
-      return { ok: false, output: `batch size ${batch.length} exceeds the maximum of ${MAX_BATCH_SIZE}. Plan in waves.` };
-    }
-    for (let i = 0; i < batch.length; i++) {
-      if (!batch[i] || typeof batch[i].goal !== "string" || !batch[i].goal.trim()) {
-        return { ok: false, output: `batch[${i}].goal is required and must be a non-empty string` };
-      }
-    }
-
-    // Depth check — same logic as the single-spawn variant.
-    const parentDepth = readDepth(ctx.conversationId);
-    if (parentDepth >= MAX_SUBAGENT_DEPTH) {
-      return {
-        ok: false,
-        output: `Refusing to spawn — already at subagent depth ${parentDepth} / ${MAX_SUBAGENT_DEPTH}.`,
-      };
-    }
-    const childDepth = parentDepth + 1;
-
-    // V6.9: the governor's number is ADVICE, not enforcement. Sora can
-    // overrule the advisory based on recent performance (e.g. she's seen
-    // batches of 4 succeed on this hardware, so she ignores the RAM-pressure
-    // 1-cap and tries 4). The only hard limit is SANITY_CEILING to prevent a
-    // confused model from spawning hundreds.
-    const { decideCapacity, SANITY_CEILING } = await import("../agent/resource-governor");
-    const requested = typeof input.max_parallel === "number" ? Math.max(1, input.max_parallel) : batch.length;
-    const decision = await decideCapacity(Math.min(requested, batch.length));
-    const cap = Math.min(requested, batch.length, SANITY_CEILING);
-    const advisoryDelta = cap - decision.max_concurrent;
-
-    // Pre-resolve persona names (cheap lookup; same as single-spawn).
-    const personas = listPersonas();
-    function personaNameFor(id: string | undefined): string | undefined {
-      if (!id) return undefined;
-      return personas.find((p) => p.persona_id === id)?.name;
-    }
-
-    const parentConv = getConversation(ctx.conversationId);
-    const ownerUserId = parentConv?.owner_user_id ?? undefined;
-
-    // Build the per-item runner closures. Each is independent; bounded()
-    // picks them up in order with up to `cap` in flight at once.
-    // Resolve runAgentCollect once for the whole batch (dynamic import to
-    // sidestep the circular dependency described at the top of this file).
-    const { runAgentCollect } = await import("../agent/engine");
-
-    const runners: Array<() => Promise<BatchResult>> = batch.map((spec) => {
-      return async () => {
-        const t0 = Date.now();
-        const timeoutSeconds = Math.max(
-          5,
-          Math.min(600, typeof spec.timeout_seconds === "number" ? spec.timeout_seconds : 180)
-        );
-
-        const subConv = createConversation(parentConv?.profile_id ?? undefined, ownerUserId);
-        writeDepth(subConv.id, childDepth);
-
-        const personaName = personaNameFor(spec.persona_id);
-        // Persona ceiling ∩ caller request, same as the single-spawn path.
-        const personaObj = personas.find((p) => p.persona_id === spec.persona_id);
-        let personaTools: string[] | null = null;
-        if (personaObj) {
-          try {
-            const parsed = JSON.parse(personaObj.enabled_tools || "[]") as string[];
-            if (Array.isArray(parsed) && parsed.length > 0) personaTools = parsed;
-          } catch { /* persona has no whitelist */ }
-        }
-        const callerTools = spec.allowed_tools && spec.allowed_tools.length > 0 ? spec.allowed_tools : [];
-        const SAFE_DEFAULT = ["memory", "time", "knowledge_base", "web_search"];
-        let effectiveTools: string[];
-        if (personaTools && callerTools.length > 0) {
-          const personaSet = new Set(personaTools);
-          effectiveTools = callerTools.filter((t) => personaSet.has(t));
-          if (effectiveTools.length === 0) effectiveTools = personaTools;
-        } else if (personaTools) effectiveTools = personaTools;
-        else if (callerTools.length > 0) effectiveTools = callerTools;
-        else effectiveTools = SAFE_DEFAULT;
-
-        const systemPrefix = buildSubagentSystemPrefix({
-          goal: spec.goal,
-          persona_id: spec.persona_id,
-          persona_name: personaName,
-          allowed_tools: effectiveTools,
-          depth: childDepth,
-        });
-
-        const freeRamGbAtStart = Math.round((require("os").freemem() / 1024 ** 3) * 10) / 10;
-        let output = "";
-        let timedOut = false;
-        await Promise.race([
-          runAgentCollect(subConv.id, spec.goal, {
-            systemPrefix,
-            processDisplayName: `Subagent: ${spec.goal.slice(0, 60)}`,
-            allowedTools: effectiveTools,
-            processMetadata: {
-              kind: "subagent",
-              batch_size: batch.length,
-              parent_conversation_id: ctx.conversationId,
-              free_ram_gb_at_start: freeRamGbAtStart,
-              depth: childDepth,
-              cap_applied: cap,
-              allowed_tools: effectiveTools,
-              persona_id: spec.persona_id ?? null,
-              persona_name: personaName ?? null,
-            },
-          }).then((text) => {
-            output = text;
-          }).catch((e) => {
-            output = `(subagent error: ${(e as Error).message ?? "unknown"})`;
-          }),
-          new Promise<void>((resolve) =>
-            setTimeout(() => { timedOut = true; resolve(); }, timeoutSeconds * 1000)
-          ),
-        ]);
-
-        const duration = Date.now() - t0;
-        if (timedOut && !output) {
-          return {
-            goal: spec.goal,
-            ok: false,
-            output: `Subagent timed out after ${timeoutSeconds}s`,
-            duration_ms: duration,
-            conversation_id: subConv.id,
-            error: "timeout",
-          };
-        }
-        return {
-          goal: spec.goal,
-          ok: true,
-          output: (output || "(no output)").slice(0, 8 * 1024),
-          duration_ms: duration,
-          conversation_id: subConv.id,
-        };
-      };
-    });
-
-    const t0 = Date.now();
-    const results = await bounded(runners, cap);
-    const totalMs = Date.now() - t0;
-
-    const okCount = results.filter((r) => r.ok).length;
-    const failCount = results.length - okCount;
-
-    // Format the output as a compact human-readable digest. Sora's next turn
-    // gets this back as the tool result.
-    const lines: string[] = [];
-    lines.push(
-      `Batch of ${results.length} subagent(s) complete in ${totalMs}ms (cap=${cap}, requested=${requested}, governor=${decision.max_concurrent})`
-    );
-    if (decision.warnings.length > 0) {
-      lines.push(`Governor warnings: ${decision.warnings.join("; ")}`);
-    }
-    lines.push("");
-    results.forEach((r, i) => {
-      lines.push(`--- [${i + 1}/${results.length}] ${r.ok ? "OK" : "FAILED"} (${r.duration_ms}ms) ---`);
-      lines.push(`goal: ${r.goal.slice(0, 200)}`);
-      lines.push(r.output);
-      lines.push("");
-    });
-
-    return {
-      ok: failCount === 0,
-      output: lines.join("\n").slice(0, 64 * 1024),
-      summary: `${okCount}/${results.length} subagent(s) succeeded; cap=${cap}, total=${totalMs}ms`,
-    };
+    return executeBatch(input, ctx, "parallel");
   },
 };
 

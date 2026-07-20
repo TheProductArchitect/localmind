@@ -70,7 +70,7 @@ critic queue. Cron tasks are **not** duplicated in the Next.js process unless yo
 |-------|--------|
 | Frontend | Next.js 15 App Router, React 19, Tailwind, Radix |
 | Database | SQLite (`~/.localmind/config.db`, `conversations.db`, knowledge DB) + Markdown Brain vault (`~/.localmind/brain/`) |
-| AI | Provider abstraction — Ollama (default), Anthropic, OpenAI, Groq, OpenRouter |
+| AI | Provider abstraction — Ollama (default), LM Studio, Anthropic, OpenAI, Groq, OpenRouter |
 | Retrieval | Local `nomic-embed-text` embeddings + sqlite-vec; Context Broker packs cited slices within a token budget |
 | Agent | Tool-calling loop with streaming SSE, subagents, task graphs, routing rules, pillar tagging |
 | Worker | `worker.js` — cron, monitors, jobs, critic, idle self-improvement (via `/api/internal/*`) |
@@ -92,10 +92,16 @@ Built-ins that matter for web work:
 | `web_search` | Snippets / discovery only |
 | `browser` | Raw Chromium — confirmation on every call |
 | `schedule_task` | Create/list/update/disable recurring tasks (NL → cron, confirmed) |
-| `spawn_subagent` / `spawn_subagents_parallel` | Specialist personas (researcher, coder, …) |
+| `spawn_subagent` | Single specialist child (chain when B needs A's output) |
+| `spawn_subagents_sequential` | Batch, one child at a time — default for multi-unit work (spares RAM) |
+| `spawn_subagents_parallel` | Batch with governor-capped concurrency |
 
 Chat shows spawn work as a high-level agent card; expand **Show what this agent did**
-to drill into child tool Input/Output.
+to drill into child tool Input/Output. Small models that narrate tool JSON as text
+are recovered by `parseTextToolCalls` and still run through the permission guard.
+
+Agent mode defaults to **auto** (non-destructive actions run freely; deletes and
+other destructive floors still confirm). Toggle Auto / Plan / Ask in chat or Settings.
 
 ### Agent capabilities
 
@@ -212,12 +218,16 @@ materially with larger ones (8B+). Pull and select models under **Models**.
 
 ### Key paths
 
+- `docs/architecture.md` — surface map + agent/spawn/data code graphs (mermaid)
+- `docs/sora-v2-implementation.md` — PRD feature → code status
 - `src/lib/agent/` — engine, routing, web-guard, confirmations, critic, system prompt,
-  `context-broker.ts` (RAG), `pillar-classify.ts`, `idle.ts` / `idle-cycle.ts`
-- `src/lib/tools/` — built-in tools (`read-secure-webpage`, web research, subagent, `schedule`, …)
+  `context-broker.ts` (RAG), `pillar-classify.ts`, `idle.ts` / `idle-cycle.ts`,
+  `text-tool-calls.ts` (narrated-JSON recovery)
+- `src/lib/tools/` — built-in tools (`read-secure-webpage`, web research, subagent sequential/parallel, `schedule`, …)
 - `src/lib/db/brain.ts` — Brain entity graph (`brain_edges`); `proposals.ts` / `self-checks.ts`
 - `src/lib/context-graph.ts` — User Context Graph assembler (`/api/context/graph`)
 - `src/components/context-graph-view.tsx` — the "About you" tab (in `/knowledge`)
+- `src/components/rail.tsx` / `command-palette.tsx` — primary nav + ⌘K
 - `src/app/ops/` — Agent Ops Kanban board
 - `src/app/browse/` — user-facing secure reader
 - `src/lib/workflow/` — workflow executor and delivery

@@ -295,11 +295,11 @@ function GeneralSection() {
         </p>
         <div className="grid grid-cols-3 gap-2">
           {([
-            { id: "auto",  label: "Auto",   hint: "Trust Sora fully. Every action runs through." },
+            { id: "auto",  label: "Auto",   hint: "Default. Trust Sora fully; destructive actions still confirm." },
             { id: "plan",  label: "Plan",   hint: "Read-only. Mutations require leaving plan mode." },
-            { id: "ask",   label: "Ask",    hint: "Default. Reads free, mutations confirmed." },
+            { id: "ask",   label: "Ask",    hint: "Reads free, mutations confirmed." },
           ] as const).map((m) => {
-            const active = (s.agent_mode || "ask") === m.id;
+            const active = (s.agent_mode || "auto") === m.id;
             return (
               <button
                 key={m.id}

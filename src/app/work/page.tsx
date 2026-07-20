@@ -14,7 +14,7 @@
 
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Workflow, Network, Calendar, Briefcase, ChevronRight, RefreshCw, Users } from "lucide-react";
 
 type Kind = "graph" | "process" | "job" | "automation";
@@ -62,6 +62,7 @@ export default function WorkPage() {
 
 function WorkPageInner() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [rows, setRows] = useState<Row[]>([]);
   const [filter, setFilter] = useState<Kind | "all">("all");
   const [highlightId, setHighlightId] = useState<string | null>(null);
@@ -74,8 +75,15 @@ function WorkPageInner() {
     else if (tab === "processes" || tab === "process") setFilter("process");
     else if (tab === "graphs" || tab === "graph") setFilter("graph");
     else if (tab === "automations" || tab === "automation") setFilter("automation");
+    else if (!tab) setFilter("all");
     if (id) setHighlightId(id);
   }, [searchParams]);
+
+  function selectFilter(id: Kind | "all") {
+    setFilter(id);
+    const qs = id === "all" ? "/work" : `/work?tab=${id === "automation" ? "automations" : id === "process" ? "processes" : id === "graph" ? "graphs" : "jobs"}`;
+    router.replace(qs, { scroll: false });
+  }
 
   useEffect(() => {
     if (!highlightId || loading) return;
@@ -202,7 +210,7 @@ function WorkPageInner() {
           return (
             <button
               key={f.id}
-              onClick={() => setFilter(f.id)}
+              onClick={() => selectFilter(f.id)}
               className="px-3 py-1.5 text-[12px] transition-colors"
               style={{
                 border: "1px solid hsl(0 0% 100% / 0.10)",

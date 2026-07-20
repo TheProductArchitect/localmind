@@ -16,10 +16,10 @@
  *      Sora and any agent she spawns cannot bypass.
  *
  *   3. Agent mode         — global stance, set in Settings:
- *        "auto" — trust the agent fully on non-destructive actions
+ *        "auto" — default. Trust the agent fully on non-destructive actions
  *        "plan" — Sora may read anything; mutations are blocked at the
  *                  permission layer with a tier of "ask"
- *        "ask"  — default. Reads allowed, mutations confirmed.
+ *        "ask"  — reads allowed, mutations confirmed.
  *
  *   4. Permission profile — per-action tiers (allow / ask / pin) from the
  *      legacy profile editor. Used as the base tier for "ask" mode.
@@ -120,7 +120,7 @@ export function classify(actionType: string): Tier {
     return "ask";
   }
 
-  const mode: AgentMode = getSettings().agent_mode || "ask";
+  const mode: AgentMode = getSettings().agent_mode || "auto";
 
   // (3a) Auto mode: trust the agent fully on non-destructive actions.
   if (mode === "auto") return "allow";
@@ -131,7 +131,7 @@ export function classify(actionType: string): Tier {
     return "ask";
   }
 
-  // (3c) Ask mode (default): reads free; mutations consult the profile.
+  // (3c) Ask mode: reads free; mutations consult the profile.
   if (isRead(actionType)) return "allow";
 
   // (4) Per-action tier from the profile.
@@ -143,7 +143,7 @@ export function classify(actionType: string): Tier {
 
 /** Exposed for the system-prompt assembler so Sora knows the current stance. */
 export function currentAgentMode(): AgentMode {
-  return getSettings().agent_mode || "ask";
+  return getSettings().agent_mode || "auto";
 }
 
 /**

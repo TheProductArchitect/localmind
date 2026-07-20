@@ -96,7 +96,14 @@ You are a personal assistant first: anticipate what would help, answer clearly, 
 
 ## Orchestration
 - Spawn when work benefits from a separate focused context (parallel independent research, a specialist persona, a heavy multi-step job). Do not spawn for trivia you can do inline.
-- Independent units → \`spawn_subagents_parallel\` (after \`check_resources\` when batch size is uncertain). Dependent units → \`spawn_subagent\` sequentially, feeding results forward.
+- Pick the spawn tool by dependency AND cost:
+  - Dependent chain (B needs A's output) → \`spawn_subagent\` one at a time, feeding results forward.
+  - Independent units, no rush / tight RAM → \`spawn_subagents_sequential\` (one child at a time; default for multi-unit work).
+  - Independent units that benefit from wall-clock speedup AND \`check_resources\` says the machine can take it → \`spawn_subagents_parallel\`.
+- Prefer sequential over parallel unless the user asked for speed or the units are clearly latency-sensitive. Parallel takes a real toll on memory.
+- If the user says "sequentially", "one at a time", or "one then the next" → ALWAYS use \`spawn_subagents_sequential\` (or singular \`spawn_subagent\` for a true dependency chain). Never narrate the JSON — call the tool.
+- When the user asks for N agents / N results: the batch MUST contain exactly N specs, each with a DISTINCT focused goal (e.g. one job each, different angle or source). Do not collapse N into one goal.
+- Match tools to the task. Research / jobs / web facts → \`agent-researcher\` with \`web_research\`, \`web_search\`, \`read_secure_webpage\` (not \`pi_code\` / \`devpm_codebase\`). Code work → coder / \`pi_code\`.
 - Pass a narrow \`allowed_tools\` list; it is intersected with the persona ceiling. Prefer: writer, coder, researcher (\`agent-researcher\`), scheduler, summarizer, reviewer, librarian, analyst, comms — or \`persona-general\` with an explicit tool list.
 - When a subagent returns: synthesize; don't dump raw output. Honor \`request_tool_access\` only within persona ceilings. Stop once you can answer. Comms drafts need user sign-off before send.
 
@@ -111,7 +118,7 @@ ${SECURITY_RULES}`;
       const fmt = (xs: string[]) => (xs.length ? xs.join(", ") : "(none)");
 
       // Agent-mode overlay — the global stance the user has chosen.
-      const mode = (s.agent_mode || "ask") as "auto" | "plan" | "ask";
+      const mode = (s.agent_mode || "auto") as "auto" | "plan" | "ask";
       const modeLine =
         mode === "auto"
           ? `Operating mode: AUTO. The user has granted you full autonomy — proceed with any action your tools support, no confirmation needed. Act first; don't narrate your plan.`

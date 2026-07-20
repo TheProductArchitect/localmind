@@ -12,7 +12,7 @@
  */
 
 import { Suspense, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "@/components/toast";
 import { NoteGraph } from "@/components/note-graph";
 import { ContextGraphView } from "@/components/context-graph-view";
@@ -32,13 +32,24 @@ const TABS: { id: TabId; label: string; Icon: React.ComponentType<{ className?: 
 
 function KnowledgeInner() {
   const params = useSearchParams();
+  const router = useRouter();
   const initial = (params.get("tab") as TabId | null) ?? "search";
-  const [tab, setTab] = useState<TabId>(initial);
+  const [tab, setTab] = useState<TabId>(
+    initial && TABS.some((x) => x.id === initial) ? initial : "search"
+  );
 
   useEffect(() => {
     const t = params.get("tab") as TabId | null;
     if (t && TABS.some((x) => x.id === t)) setTab(t);
   }, [params]);
+
+  function selectTab(id: TabId) {
+    setTab(id);
+    // Keep the URL in sync so sidebar links, ⌘K, and shareable deep-links
+    // stay mapped to the visible surface.
+    const qs = id === "search" ? "/knowledge" : `/knowledge?tab=${id}`;
+    router.replace(qs, { scroll: false });
+  }
 
   return (
     <div className="mx-auto max-w-4xl px-5 sm:px-10 py-10 sm:py-16">
@@ -57,7 +68,7 @@ function KnowledgeInner() {
           return (
             <button
               key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => selectTab(t.id)}
               className={`lm-tab ${active ? "is-active" : ""}`}
               data-pulse="true"
             >
