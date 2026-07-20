@@ -17,7 +17,7 @@ See also the live surface / code graph: [`architecture.md`](./architecture.md).
 | C1 | you.com search backend | ✅ (opt-in, keyed) | migration v22, `src/lib/tools/websearch.ts`, `web_search_provider` setting | `__tests__/websearch-provider.test.ts` |
 | C2 | Brain vault + `brain_edges` | ✅ | migration v23, `src/lib/db/brain.ts`, `paths.ts` (`BRAIN_DIR`) | `__tests__/brain.test.ts` |
 | F | Pillars + Ideate persona | ✅ | migration v24 (Strategist), `src/lib/agent/pillar-classify.ts`, `engine.ts` tagging | `__tests__/pillar-classify.test.ts` |
-| G.1/G.2 | Idle cycle + self-improve proposals | ✅ | migration v25, `src/lib/db/proposals.ts` / `self-checks.ts`, `src/lib/agent/idle.ts` / `idle-cycle.ts`, `/api/ops/proposals/*`, `/api/internal/idle-tick`, worker tick | `__tests__/proposals.test.ts`, `__tests__/idle.test.ts` |
+| G.1/G.2 | Idle cycle + self-improve proposals | ✅ Gate 1 | migration v25, proposals/self-checks, idle-cycle `proposeFromFailingChecks` → `/ops` cards when `LM_SELF_IMPROVE=propose`; Gate 2 build-after-approve not yet auto | `__tests__/proposals.test.ts`, `__tests__/idle.test.ts` |
 | H | User Context Graph `/context` | ✅ Phase 1 (REST + viz) | `src/lib/context-graph.ts`, `/api/context/graph`, Knowledge **About you** tab; `/context` redirects | `__tests__/context-graph.test.ts` |
 | E | Renovate + CI | ✅ | `renovate.json` (CI already present) | — |
 | — | Agent mode (auto / plan / ask) | ✅ | `permission-guard.ts`, settings + chat toggle; **default `auto`** (migration v28); settings PATCH allow-list | `__tests__/permission-guard.test.ts`, `__tests__/settings-allowlist.test.ts` |
@@ -42,7 +42,7 @@ tests**. Typecheck clean.
 - **H** is Phase 1 (read-only viz + REST ingestion). The GraphQL layer and
   confirm/edit/delete of inferred nodes are the documented later phase.
 - **Small-model spawn robustness** — recovery + sequential default help 3B-class
-  models; a unified `spawn_agents` + intent compiler is the next hardening step
+  models; unified `spawn_agents` + `compileSpawnIntent` is preferred (triad kept).
   (see chat notes / architecture follow-up).
 
 ## Deferred — paid cloud (await owner decision)

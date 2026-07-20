@@ -1246,6 +1246,25 @@ configMigrations.push({
   },
 });
 
+// v31: unified spawn_agents + explicit grants for agent_memory / install_mcp_server
+// so persona ceilings and UI lists stay in sync with the registry.
+configMigrations.push({
+  version: 31,
+  up: (db) => {
+    const tools = JSON.stringify([
+      "memory", "knowledge_base", "web_search", "time", "filesystem",
+      "calendar", "email", "browser", "browse_session", "peer_knowledge",
+      "datastore", "spreadsheet", "check_resources", "spawn_subagent",
+      "spawn_subagents_sequential", "spawn_subagents_parallel", "spawn_agents",
+      "schedule_task", "recall", "web_research", "read_secure_webpage",
+      "agent_memory", "install_mcp_server",
+    ]);
+    db.prepare(
+      "UPDATE personas SET enabled_tools=?, updated_at=? WHERE persona_id='persona-sora'"
+    ).run(tools, Date.now());
+  },
+});
+
 const knowledgeMigrations: Migration[] = [
   {
     version: 1,

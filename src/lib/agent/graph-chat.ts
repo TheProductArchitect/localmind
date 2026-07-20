@@ -1,6 +1,6 @@
 import { buildSingleNode } from "../graph/build";
 import { executeGraph } from "../graph/executor";
-import { defaultRunner } from "../graph/runner-default";
+import { createPlacementRunner } from "../graph/runner-placement";
 import { listNodes } from "../db/task-graphs";
 
 type CollectOpts = {
@@ -15,6 +15,9 @@ type CollectOpts = {
  * Execute a chat message through the V6 task-graph executor (single-node graph).
  * Used as the default path for runAgentCollect — the graph runner calls back
  * into runAgentCollect with fromGraph=true to avoid recursion.
+ *
+ * Placement runner picks local vs least-loaded peer; with no fresh peers this
+ * is identical to defaultRunner (local fallback).
  */
 export async function runCollectViaGraph(
   conversationId: string,
@@ -35,7 +38,7 @@ export async function runCollectViaGraph(
   });
 
   const outcome = await executeGraph(graph.graph_id, {
-    runner: defaultRunner,
+    runner: createPlacementRunner(),
     skip_refute: true,
   });
 

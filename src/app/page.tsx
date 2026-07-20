@@ -116,7 +116,7 @@ function ChatInner() {
 
   // Fleet chat relay — when a peer is selected, send() routes through
   // /api/fleet/peers/[id]/chat instead of the local streaming /api/chat.
-  // The selector defaults to null = "this machine".
+  // Defaults to Auto when any trusted peer is paired.
   type FleetPeer = {
     peer_node_id: string;
     label: string | null;
@@ -204,7 +204,11 @@ function ChatInner() {
     // the dropdown.
     fetch("/api/fleet/peers")
       .then((r) => (r.ok ? r.json() : { peers: [] }))
-      .then((j) => setPeers((j.peers as FleetPeer[]) || []))
+      .then((j) => {
+        const list = (j.peers as FleetPeer[]) || [];
+        setPeers(list);
+        if (list.some((p) => p.trusted === 1)) setRunOnPeer("__auto__");
+      })
       .catch(() => setPeers([]));
     // Pull conversation deltas from sync-enabled peers so this device
     // sees the shared mesh history.
@@ -493,14 +497,18 @@ function ChatInner() {
     if (peerTarget) {
       try {
         setStreaming(true);
+        const peerLabel =
+          peers.find((p) => p.peer_node_id === peerTarget)?.label || peerTarget.slice(0, 12);
+        setExecutorHint(`Waiting on ${peerLabel}…`);
         const res = await fetch(`/api/fleet/peers/${peerTarget}/chat`, {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", Accept: "text/event-stream" },
           body: JSON.stringify({ conversation_id: convId, message: text, persona_id: persona }),
         });
-        const j = await res.json();
-        if (!res.ok) {
-          setError(j.error ?? `Peer returned ${res.status}`);
+        const ct = res.headers.get("content-type") || "";
+        if (!res.ok && !ct.includes("text/event-stream")) {
+          const j = await res.json().catch(() => ({}));
+          setError((j as { error?: string }).error ?? `Peer returned ${res.status}`);
           setThread((t) => {
             const out = [...t];
             for (let i = out.length - 1; i >= 0; i--) {
@@ -508,18 +516,81 @@ function ChatInner() {
             }
             return out;
           });
-        } else {
-          const peerLabel = peers.find((p) => p.peer_node_id === peerTarget)?.label || peerTarget.slice(0, 12);
-          setThread((t) => {
-            const out = [...t];
-            for (let i = out.length - 1; i >= 0; i--) {
-              if (out[i].kind === "assistant") {
-                out[i] = { kind: "assistant", content: j.reply, originLabel: peerLabel };
-                break;
-              }
+        } else if (ct.includes("text/event-stream") && res.body) {
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = "";
+          let reply: string | null = null;
+          let errMsg: string | null = null;
+          let label = peerLabel;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const parts = buf.split("\n\n");
+            buf = parts.pop() || "";
+            for (const part of parts) {
+              const line = part.split("\n").find((l) => l.startsWith("data: "));
+              if (!line) continue;
+              try {
+                const ev = JSON.parse(line.slice(6));
+                if (ev.type === "status") {
+                  if (ev.peer_label) label = ev.peer_label;
+                  if (ev.phase === "relay_started") setExecutorHint(`Waiting on ${label}…`);
+                  if (ev.phase === "receiving") setExecutorHint(`Receiving from ${label}…`);
+                } else if (ev.type === "done") {
+                  reply = ev.reply ?? "";
+                  if (ev.peer_label) label = ev.peer_label;
+                } else if (ev.type === "error") {
+                  errMsg = ev.message || "Relay failed.";
+                }
+              } catch { /* ignore malformed SSE chunk */ }
             }
-            return out;
-          });
+          }
+          if (errMsg) {
+            setError(errMsg);
+            setThread((t) => {
+              const out = [...t];
+              for (let i = out.length - 1; i >= 0; i--) {
+                if (out[i].kind === "assistant") { out.splice(i, 1); break; }
+              }
+              return out;
+            });
+          } else if (reply != null) {
+            setThread((t) => {
+              const out = [...t];
+              for (let i = out.length - 1; i >= 0; i--) {
+                if (out[i].kind === "assistant") {
+                  out[i] = { kind: "assistant", content: reply!, originLabel: label };
+                  break;
+                }
+              }
+              return out;
+            });
+          }
+        } else {
+          const j = await res.json();
+          if (!res.ok) {
+            setError(j.error ?? `Peer returned ${res.status}`);
+            setThread((t) => {
+              const out = [...t];
+              for (let i = out.length - 1; i >= 0; i--) {
+                if (out[i].kind === "assistant") { out.splice(i, 1); break; }
+              }
+              return out;
+            });
+          } else {
+            setThread((t) => {
+              const out = [...t];
+              for (let i = out.length - 1; i >= 0; i--) {
+                if (out[i].kind === "assistant") {
+                  out[i] = { kind: "assistant", content: j.reply, originLabel: peerLabel };
+                  break;
+                }
+              }
+              return out;
+            });
+          }
         }
       } catch (e) {
         setError((e as Error).message);

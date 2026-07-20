@@ -179,7 +179,7 @@ export function recoverLooseSpawnCall(
   isKnownTool: (name: string) => boolean
 ): RecoveredCall | null {
   const nameMatch = text.match(
-    /"name"\s*:\s*"(spawn_subagents_parallel|spawn_subagents_sequential|spawn_subagent)"/i
+    /"name"\s*:\s*"(spawn_agents|spawn_subagents_parallel|spawn_subagents_sequential|spawn_subagent)"/i
   );
   if (!nameMatch) return null;
   let name = nameMatch[1];
@@ -221,7 +221,10 @@ export function recoverLooseSpawnCall(
   return {
     id: `text-call-loose-${Date.now().toString(36)}`,
     name,
-    arguments: { batch },
+    arguments: {
+      batch,
+      ...(wantsSequential && name === "spawn_agents" ? { mode: "sequential" } : {}),
+    },
   };
 }
 
@@ -264,9 +267,9 @@ const ALIASES: Record<string, string> = {
   research: "web_research",
   search: "web_search",
   websearch: "web_search",
-  spawn: "spawn_subagent",
+  spawn: "spawn_agents",
   spawn_agent: "spawn_subagent",
-  spawn_agents: "spawn_subagents_sequential",
+  spawn_agents: "spawn_agents",
   spawn_sequential: "spawn_subagents_sequential",
   spawn_agents_sequential: "spawn_subagents_sequential",
   spawn_parallel: "spawn_subagents_parallel",
@@ -325,10 +328,16 @@ function preferSequentialIfAsked(text: string, calls: RecoveredCall[], isKnownTo
     /\bsequential(ly)?\b|\bone\s+at\s+a\s+time\b|\bone\s+(?:agent|subagent)\b[\s\S]{0,40}\bthen\b|\bthen\s+(?:the\s+)?next\b/i.test(
       text
     );
-  if (!wantsSequential || !isKnownTool("spawn_subagents_sequential")) return calls;
-  return calls.map((c) =>
-    c.name === "spawn_subagents_parallel" ? { ...c, name: "spawn_subagents_sequential" } : c
-  );
+  if (!wantsSequential) return calls;
+  return calls.map((c) => {
+    if (c.name === "spawn_subagents_parallel" && isKnownTool("spawn_subagents_sequential")) {
+      return { ...c, name: "spawn_subagents_sequential" };
+    }
+    if (c.name === "spawn_agents") {
+      return { ...c, arguments: { ...c.arguments, mode: "sequential" } };
+    }
+    return c;
+  });
 }
 
 function parseOnce(cleaned: string, isKnownTool: (name: string) => boolean): RecoveredCall[] {

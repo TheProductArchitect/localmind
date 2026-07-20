@@ -17,7 +17,7 @@ Architecture you must respect and reuse:
 |---|---|
 | **Agent engine** | `src/lib/agent/engine.ts` — streaming SSE tool-calling loop (max 12 iterations, 25 tool calls), subagents, confirmations, audit. |
 | **System prompt** | `src/lib/agent/assemble-system-prompt.ts` — composable blocks (`identity`, `permissions`, `tools`, `memory`, `date_context`) stored per-persona in SQLite. |
-| **Tools** | `src/lib/tools/*` — 24 built-ins registered in `BUILTIN[]` in `src/lib/tools/index.ts`. Contract in `src/lib/tools/types.ts`: `{ definition, actionType, execute, classify?, preview?, cacheable?, forcedTier?, version? }`. |
+| **Tools** | `src/lib/tools/*` — built-ins registered in `BUILTIN[]` in `src/lib/tools/index.ts` (incl. `spawn_agents`, `schedule_task`, …). Contract in `src/lib/tools/types.ts`: `{ definition, actionType, execute, classify?, preview?, cacheable?, forcedTier?, version? }`. |
 | **Providers** | `src/lib/providers/*` — `getProviderByName()`; Ollama (default), Anthropic, OpenAI, Groq, OpenRouter, LM Studio, HuggingFace. |
 | **Databases** | `better-sqlite3`, three files in `~/.localmind/`: `config.db`, `conversations.db`, `knowledge.db`. Migrations in `src/lib/db/migrations.ts`. |
 | **Process tracking** | `src/lib/db/agent-processes.ts` — `agent_processes` table (`process_id, process_type, status, current_step, ...`) + `/api/orchestration/processes`. Already surfaced in `/work` (timeline) and `/orchestration` (control + trace). |
@@ -44,7 +44,7 @@ Architecture you must respect and reuse:
 | C3 | ~~gbrain~~ **(dropped)** | ❌ Not used | Owner decision: no dependency on gbrain. A few of its *ideas* (markdown-git brain, entity graph, overnight consolidation) are implemented natively — see §4.0/§4.3. |
 | C4 | **Unipile** (messaging/email/LinkedIn) | ✅ Build behind opt-in | Cloud service → data leaves machine. Gate like a cloud provider; powers the "communicate" pillar. |
 | C5 | **MindStudio SDK** (many models) | ⚠️ Optional cloud provider only | Hosted model router = data leaves machine. Add as an explicitly-flagged cloud provider, never default. |
-| D | **Sora schedules cron jobs via a tool** | ✅ Build | Add a `schedule_task` tool wrapping existing `createTask` + `nlToCron`. Missing today. |
+| D | **Sora schedules cron jobs via a tool** | ✅ Shipped | `schedule_task` in `src/lib/tools/schedule.ts`; granted to Sora (migrations v27+). |
 | E | **Dependency auto-update** | ✅ Build (PR-gated) | Renovate + CI. **Never auto-merge majors.** See §8. |
 | F | **Five pillars (ideate/research/execute/coordinate/communicate)** | ✅ Frame + fill gaps | Mostly a mapping over existing tools; only "ideate" and "communicate" need new surface. |
 | G | **Idle self-improvement + `memory.md` + efficient local RAG** | ⚠️ Build carefully | Idle "consolidation cycle" + retrieval broker = yes. **Self-improvement is two-gate: Sora only proposes to the Kanban; it builds a branch/PR *only after the owner approves*, and never hot-patches or merges into the running app.** See §7. |
@@ -283,37 +283,11 @@ Every row resolves to code that exists or is specified natively above. **There i
 
 ## 5. Feature D — Sora schedules cron jobs via a tool
 
-### 5.1 Problem
-Scheduling exists (`scheduled_tasks`, `worker.js`, `createTask`, `nlToCron`) but only via UI/API. Sora has **no tool** to schedule work herself, so "remind me every morning" can't be self-served from chat.
+### 5.1 Status: ✅ shipped
 
-### 5.2 Goal
-A `schedule_task` tool so Sora can create/list/update/disable/delete scheduled tasks (and, later, monitors) — with the same confirmation gating as any state-changing action.
+`schedule_task` lives at `src/lib/tools/schedule.ts`, is registered in `BUILTIN[]`, and is on Sora's `enabled_tools` (config migrations v27 / v29 / v31). Recurring creates stay confirmation-gated via the permission guard. See `docs/sora-v2-implementation.md` for the live surface.
 
-### 5.3 Technical design
-- New tool `src/lib/tools/schedule.ts`, registered in `BUILTIN[]`.
-- `actionType: "schedule_write"`; add to the permission guard (`src/lib/agent/permission-guard.ts`) so creating/deleting a recurring job is **`ask` tier by default** (it commits Sora to future autonomous runs — that deserves a confirmation).
-- Operations:
-  - `create` — args: `name`, `schedule` (natural language OR 5-field cron), `prompt`, `delivery_channel?`. If natural language, convert via `nlToCron()` and echo the resolved cron + human description (`describeCron()`) in the tool result and confirmation card so the user sees "every day at 8am" before approving.
-  - `list` — return `listTasks()` summarized.
-  - `set_enabled` / `delete` / `update`.
-  - Optional `create_monitor` (wraps `createMonitor`) in a later phase.
-- Delivery channels reuse existing options (`browser`, email, Telegram, and — once §4.4 lands — Unipile). Validate against the enabled channels.
-- The task's `creator_user_id` = the conversation owner so multi-user installs stay scoped.
-- Add a tools-block mention in `assemble-system-prompt.ts` so Sora knows to prefer `schedule_task` over telling the user to "set a reminder manually," and knows recurring tasks need confirmation.
-
-### 5.4 Workflow example
-> User: "Every weekday at 7:30, research overnight AI news and DM me the top 3 on Telegram."
-> Sora → `schedule_task.create({ name:"Weekday AI news", schedule:"weekdays at 7:30", prompt:"Research overnight AI news; deliver top 3 with links", delivery_channel:"telegram" })`
-> → tool resolves cron `30 7 * * 1-5`, returns a confirmation card ("Create recurring task, runs every weekday 07:30, delivers via Telegram?") → user approves → row inserted → worker fires it → each run appears on the Ops board (Feature A) with `pillar=research`.
-
-### 5.5 Acceptance criteria
-- [ ] Sora can create a recurring task from natural language; the resolved cron + human description are shown before approval.
-- [ ] Creating/deleting a task requires confirmation; runs are audited and appear on the Ops board.
-- [ ] `list`/`set_enabled`/`delete` work and respect owner scoping.
-- [ ] No duplicate scheduler execution (in-process scheduler stays off unless `LOCALMIND_IN_PROCESS_SCHEDULER=1`).
-
-### 5.6 Effort
-~1 day (thin wrapper over existing DB + cron helpers + permission entry).
+Remaining polish (optional): richer Ops-board tagging of scheduled runs; monitors via the same tool.
 
 ---
 
@@ -326,7 +300,7 @@ The owner wants Sora to "ideate, research, execute, coordinate, communicate effi
 |---|---|---|
 | **Research** | `web_search`, `web_research`, `read_secure_webpage`, knowledge base, (you.com §4.1) | Tag research processes `pillar=research`. |
 | **Execute** | `pi_code`, `filesystem`, `mac_automation`, `datastore`, `spreadsheet`, long-running jobs | Tag `pillar=execute`. |
-| **Coordinate** | `spawn_subagent(s)`, task graphs, orchestration, resource governor, critic | Tag `pillar=coordinate`; expose on Ops board with nesting. |
+| **Coordinate** | `spawn_agents` (preferred) + triad `spawn_subagent` / `spawn_subagents_sequential` / `spawn_subagents_parallel`, task graphs, orchestration, resource governor, critic | Tag `pillar=coordinate`; expose on Ops board with nesting. |
 | **Communicate** | Telegram, Twilio, email | Unipile (§4.4) for LinkedIn/WhatsApp/unified inbox; tag `pillar=communicate`. |
 | **Ideate** | — (no dedicated surface) | **New:** an ideation/planning mode (below). |
 
@@ -451,12 +425,12 @@ Use **Renovate** (preferred over Dependabot for grouping + auto-merge policies),
 
 ## 10. Suggested build order (dependency-aware)
 1. **B — Hide/Summon Sora** (½d, warm-up).
-2. **D — `schedule_task` tool** (1d, self-contained, high daily value).
+2. ~~**D — `schedule_task` tool**~~ ✅ shipped.
 3. **A — Ops Kanban** + `pillar`/`parent_process_id` migration (2–3d). Foundational surface everything else reports into.
 4. **G.3 — Context Broker** (2d). Highest-leverage intelligence upgrade; unblocks efficient memory/brain use.
 5. **C.1 you.com** (1d) + **C.2 Obsidian vault/brain scaffolding + `brain_edges`** (2d).
 6. **F — Pillars tagging + Ideate persona** (1–2d, mostly config once A + broker exist).
-7. **G.1/G.2 — Idle cycle + test runner + self-improve proposals** (4–5d, guardrail-heavy).
+7. **G.1/G.2 — Idle cycle + test runner + self-improve proposals** (Gate 1 proposal cards from failing self-checks are wired; Gate 2 build-after-approve remains).
 8. **C.4 Unipile** (3–4d) → enables the communicate pillar fully.
 9. **C.5 MindStudio provider** (1–2d) + **E Renovate/CI** (1d).
 

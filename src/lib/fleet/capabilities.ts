@@ -16,6 +16,7 @@ import { getTlsMaterial } from "./tls";
 import { PLATFORM, PLATFORM_CAPS, describePlatform } from "../platform";
 import { listActive } from "../db/agent-processes";
 import { getSettings } from "../db/queries";
+import { listPeers, parsePeerPolicy } from "../db/fleet";
 
 export const APP_VERSION = "0.6.0";
 
@@ -39,6 +40,8 @@ export type Capability = {
   };
   gpu_available: boolean;
   pairing_open: boolean;                  // V6.2: true only while a pairing window is open
+  /** True when at least one trusted peer may drive chat on this node. */
+  accepts_chat_relay: boolean;
   generated_at: number;
 };
 
@@ -93,6 +96,15 @@ export async function snapshotCapability(): Promise<Capability> {
 
   const [models, tools] = await Promise.all([fetchModels(), fetchTools()]);
 
+  let acceptsChatRelay = false;
+  try {
+    acceptsChatRelay = listPeers().some(
+      (p) => p.trusted === 1 && parsePeerPolicy(p).accept_chat_relay
+    );
+  } catch {
+    acceptsChatRelay = false;
+  }
+
   return {
     node_id: id.node_id,
     app_version: APP_VERSION,
@@ -106,6 +118,7 @@ export async function snapshotCapability(): Promise<Capability> {
     },
     gpu_available: PLATFORM_CAPS.hasGPU,
     pairing_open: false,
+    accepts_chat_relay: acceptsChatRelay,
     generated_at: Date.now(),
   };
 }

@@ -33,7 +33,44 @@ import { getNodeIdentity } from "./identity";
 
 const MAX_SYNC_MESSAGES = 200;
 const MAX_CONTENT_CHARS = 32_000;
+/** Total attachment JSON budget per conversation pack (and per message). */
+export const MAX_ATTACHMENTS_BYTES = 256 * 1024;
+const MAX_ATTACH_ITEMS = 6;
 const DEBOUNCE_MS = 1_500;
+
+/**
+ * Validate and size-cap message attachments for the sync wire.
+ * Only image/* items; drops oversized / malformed payloads.
+ */
+export function sanitizeAttachmentsForSync(raw: string | null | undefined): string | null {
+  if (!raw || typeof raw !== "string") return null;
+  if (Buffer.byteLength(raw, "utf8") > MAX_ATTACHMENTS_BYTES) return null;
+  try {
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return null;
+    const cleaned: { name: string; mime: string; data: string }[] = [];
+    for (const item of arr.slice(0, MAX_ATTACH_ITEMS)) {
+      if (!item || typeof item !== "object") continue;
+      const rec = item as Record<string, unknown>;
+      const mime = String(rec.mime || "");
+      if (!mime.startsWith("image/")) continue;
+      const data = String(rec.data || "");
+      if (!data) continue;
+      if (Buffer.byteLength(data, "utf8") > MAX_ATTACHMENTS_BYTES) continue;
+      cleaned.push({
+        name: String(rec.name || "image").slice(0, 200),
+        mime,
+        data,
+      });
+    }
+    if (cleaned.length === 0) return null;
+    const out = JSON.stringify(cleaned);
+    if (Buffer.byteLength(out, "utf8") > MAX_ATTACHMENTS_BYTES) return null;
+    return out;
+  } catch {
+    return null;
+  }
+}
 
 export type SyncMessage = {
   id: string;
@@ -93,21 +130,32 @@ function syncPeers(): FleetPeer[] {
 
 function packConversation(conv: Conversation, sinceMs: number): SyncConversation | null {
   const syncId = conv.sync_id || conv.id;
+  let attachBudget = MAX_ATTACHMENTS_BYTES;
   const msgs = getMessages(conv.id)
     .filter((m) => m.created_at >= sinceMs)
     .slice(-MAX_SYNC_MESSAGES)
-    .map((m): SyncMessage => ({
-      id: m.id,
-      role: m.role,
-      content: m.content.slice(0, MAX_CONTENT_CHARS),
-      created_at: m.created_at,
-      token_count: m.token_count,
-      parent_message_id: m.parent_message_id,
-      // Skip bulky attachments on the wire for now — text sync is the MVP.
-      attachments: null,
-      origin_node_id: m.origin_node_id ?? null,
-      origin_label: m.origin_label ?? null,
-    }));
+    .map((m): SyncMessage => {
+      let attachments: string | null = null;
+      const sanitized = sanitizeAttachmentsForSync(m.attachments);
+      if (sanitized) {
+        const n = Buffer.byteLength(sanitized, "utf8");
+        if (n <= attachBudget) {
+          attachBudget -= n;
+          attachments = sanitized;
+        }
+      }
+      return {
+        id: m.id,
+        role: m.role,
+        content: m.content.slice(0, MAX_CONTENT_CHARS),
+        created_at: m.created_at,
+        token_count: m.token_count,
+        parent_message_id: m.parent_message_id,
+        attachments,
+        origin_node_id: m.origin_node_id ?? null,
+        origin_label: m.origin_label ?? null,
+      };
+    });
   if (msgs.length === 0 && conv.updated_at < sinceMs) return null;
   return {
     sync_id: syncId,
@@ -185,7 +233,7 @@ export function applySyncedConversations(
           m.created_at || Date.now(),
           m.token_count || 0,
           m.parent_message_id ?? null,
-          null,
+          sanitizeAttachmentsForSync(m.attachments),
           m.origin_node_id ?? null,
           label
         );

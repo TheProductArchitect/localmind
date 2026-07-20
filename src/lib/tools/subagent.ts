@@ -719,6 +719,79 @@ export const spawnSubagentsParallelTool: Tool = {
   },
 };
 
+/**
+ * Unified spawn entry for small models — one tool name, runtime picks mode.
+ * Prefer this over the triad when the model is unsure which spawn_* to call.
+ */
+export const spawnAgentsTool: Tool = {
+  actionType: "memory_write",
+  classify: () => "memory_write",
+  preview: (i) => {
+    const { compileSpawnIntent } = require("../agent/spawn-intent") as typeof import("../agent/spawn-intent");
+    const intent = compileSpawnIntent(i);
+    const n = intent.batch.length;
+    return `Spawn ${n || "?"} agent${n === 1 ? "" : "s"} (${intent.mode})`;
+  },
+  version: "1",
+  cacheable: () => false,
+  definition: {
+    name: "spawn_agents",
+    description:
+      "Spawn one or more subagents. Prefer this single tool over spawn_subagent / sequential / parallel. Pass `goal` for one child, or `batch` for many. Omit `mode` unless the user asked for parallel or a dependency chain — the runtime defaults multi-unit work to sequential (one at a time) to spare RAM.",
+    parameters: {
+      type: "object",
+      properties: {
+        goal: { type: "string", description: "Single-child goal (optional if batch is set)." },
+        batch: {
+          type: "array",
+          maxItems: MAX_BATCH_SIZE,
+          description: `Array of subagent specs (max ${MAX_BATCH_SIZE}).`,
+          items: BATCH_ITEM_SCHEMA,
+        },
+        mode: {
+          type: "string",
+          enum: ["single", "sequential", "parallel"],
+          description: "Optional. Omit to let the runtime infer from batch size + user intent.",
+        },
+        max_parallel: {
+          type: "number",
+          description: "Only for mode=parallel. Governor may cap lower.",
+        },
+        persona_id: { type: "string" },
+        allowed_tools: { type: "array", items: { type: "string" } },
+        timeout_seconds: { type: "number" },
+      },
+    },
+  },
+  async execute(input, ctx) {
+    const { compileSpawnIntent } = await import("../agent/spawn-intent");
+    const intent = compileSpawnIntent(input);
+    if (intent.batch.length === 0) {
+      return { ok: false, output: "goal or batch with at least one goal is required" };
+    }
+    if (intent.mode === "single") {
+      const spec = intent.batch[0];
+      return spawnSubagentTool.execute(
+        {
+          goal: spec.goal,
+          persona_id: spec.persona_id,
+          allowed_tools: spec.allowed_tools,
+          timeout_seconds: spec.timeout_seconds,
+        },
+        ctx
+      );
+    }
+    return executeBatch(
+      {
+        batch: intent.batch,
+        max_parallel: intent.max_parallel,
+      },
+      ctx,
+      intent.mode
+    );
+  },
+};
+
 /** Exported for the self-test only. */
 export const __test_internals = { bounded };
 

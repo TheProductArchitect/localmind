@@ -6,7 +6,7 @@ import {
 } from "../src/lib/agent/text-tool-calls";
 
 const known = (n: string) =>
-  ["pi_code", "schedule_task", "spawn_subagents_parallel", "spawn_subagents_sequential", "web_research", "memory"].includes(n);
+  ["pi_code", "schedule_task", "spawn_subagents_parallel", "spawn_subagents_sequential", "spawn_agents", "web_research", "memory"].includes(n);
 
 describe("extractJsonSnippets", () => {
   it("extracts a balanced object ignoring braces inside strings", () => {

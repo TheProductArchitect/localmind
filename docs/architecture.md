@@ -45,7 +45,7 @@ flowchart LR
 
 Primary nav is the **rail** (`src/components/rail.tsx`). Long-tail destinations
 are reached via **⌘K** (`command-palette.tsx`) and the **settings sidebar**
-(`settings-sidebar.tsx`). Legacy `MainNav` / `MobileNav` are unused.
+(`settings-sidebar.tsx`).
 
 ## Agent loop & spawn
 
@@ -59,11 +59,16 @@ flowchart TD
   Recover --> Guard
   Guard -->|allow / ask / pin| Tools[Tool registry]
 
+  Tools --> Unified[spawn_agents]
   Tools --> Single[spawn_subagent]
   Tools --> Seq[spawn_subagents_sequential]
   Tools --> Par[spawn_subagents_parallel]
   Tools --> Other[web_research / schedule_task / …]
 
+  Unified --> Intent[compileSpawnIntent]
+  Intent --> Single
+  Intent --> Seq
+  Intent --> Par
   Single --> Child[runAgentCollect child conv]
   Seq --> Child
   Par --> Child
@@ -74,8 +79,9 @@ flowchart TD
 
 | Spawn tool | Concurrency | Use when |
 |---|---|---|
+| `spawn_agents` | inferred | Preferred; mode from batch size + prose |
 | `spawn_subagent` | 1 child | B needs A's output (chain) |
-| `spawn_subagents_sequential` | 1 at a time over a batch | Independent units; spare RAM (default for multi-unit) |
+| `spawn_subagents_sequential` | 1 at a time over a batch | Independent units; spare RAM |
 | `spawn_subagents_parallel` | Governor-capped | Independent units; wall-clock speedup |
 
 `agent_mode` (`auto` default / `plan` / `ask`) overlays the permission guard.
@@ -106,6 +112,8 @@ versions:
 | v27 | Sora `enabled_tools` backfill (`schedule_task`, `recall`, browse, …) |
 | v28 | Default `agent_mode` → `auto` |
 | v29 | Grant `spawn_subagents_sequential` to Sora |
+| v30 | Fleet mesh conversation-sync policy default |
+| v31 | Grant `spawn_agents`, `agent_memory`, `install_mcp_server` |
 
 ## Fleet mesh (LAN)
 
@@ -122,7 +130,7 @@ flowchart LR
   SparkSora --> Msg
 ```
 
-- **Sync** — `sync_conversations` peer policy (default on). Push/pull via fleet envelope `conversation-sync`. Each message keeps `origin_node_id` / `origin_label`.
+- **Sync** — `sync_conversations` peer policy (default on). Push/pull via fleet envelope `conversation-sync`. Each message keeps `origin_node_id` / `origin_label`. Image attachments sync under a 256 KiB budget (validated `image/*` only).
 - **Attribution** — chat UI shows `from …` / `via …` per turn.
-- **Compute** — chat **Run on → Auto** uses the same load-based placement as task graphs (freshest peer, lowest `active_processes`, local on ties). Explicit peer or “This machine” still available.
-- **Remote drive** — `accept_chat_relay` still required before a peer may execute chat on you.
+- **Compute** — chat **Run on** defaults to **Auto** when peers are paired; placement prefers peers advertising `accepts_chat_relay`. Task-graph collect path uses `createPlacementRunner` (local fallback when alone).
+- **Remote drive** — relay SSE surfaces progressive status (`Waiting on…` / `Receiving…`); `accept_chat_relay` still required on the executor.

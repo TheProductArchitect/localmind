@@ -188,4 +188,55 @@ describe("conversation sync", () => {
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/disabled/i);
   });
+
+  it("syncs small image attachments and drops oversized ones", async () => {
+    const tiny = JSON.stringify([
+      { name: "a.jpg", mime: "image/jpeg", data: Buffer.from("hi").toString("base64") },
+    ]);
+    const huge = JSON.stringify([
+      { name: "big.jpg", mime: "image/jpeg", data: "x".repeat(300 * 1024) },
+    ]);
+
+    const applied = applySyncedConversations(
+      [
+        {
+          sync_id: "thread-attach",
+          title: "Pics",
+          updated_at: 3000,
+          origin_node_id: "peer-a",
+          messages: [
+            {
+              id: "ma1",
+              role: "user",
+              content: "see this",
+              created_at: 2500,
+              token_count: 2,
+              parent_message_id: null,
+              attachments: tiny,
+              origin_node_id: "peer-a",
+              origin_label: "Lab Box",
+            },
+            {
+              id: "ma2",
+              role: "user",
+              content: "too big",
+              created_at: 2600,
+              token_count: 2,
+              parent_message_id: null,
+              attachments: huge,
+              origin_node_id: "peer-a",
+              origin_label: "Lab Box",
+            },
+          ],
+        },
+      ],
+      "Lab Box"
+    );
+    expect(applied.messages).toBe(2);
+    const db = await import("../src/lib/db");
+    const m1 = (db as any).__store.messages.find((m: any) => m.id === "ma1");
+    const m2 = (db as any).__store.messages.find((m: any) => m.id === "ma2");
+    expect(m1.attachments).toContain("image/jpeg");
+    expect(m2.attachments).toBeNull();
+  });
 });

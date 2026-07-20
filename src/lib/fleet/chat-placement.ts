@@ -24,16 +24,22 @@ function parseCaps(json: string): Partial<Capability> {
 
 /**
  * Decide where the next chat turn should execute.
- * Only peers that advertise capabilities (and are fresh) are candidates;
- * chat-relay still requires `accept_chat_relay` on the *executor* side —
- * we filter to peers we've marked as willing remote chat targets via
- * a soft signal: they advertise capabilities and are trusted. The hard
- * gate remains on the executor when the relay arrives.
+ * Candidates: trusted peers that advertise capabilities AND advertise
+ * `accepts_chat_relay` (they have granted inbound chat-relay to at least
+ * one peer). The hard gate still runs on the executor when the relay arrives.
  */
 export async function pickChatExecutor(): Promise<ChatExecutor> {
   const localCaps = await snapshotCapability();
   const peers: PeerCandidate[] = listPeers()
-    .filter((p) => p.trusted === 1 && parsePeerPolicy(p).advertise_capabilities)
+    .filter((p) => {
+      if (p.trusted !== 1) return false;
+      if (!parsePeerPolicy(p).advertise_capabilities) return false;
+      const caps = parseCaps(p.capabilities_json);
+      // Prefer peers that advertise relay willingness; if the field is
+      // missing (older builds), still consider them — executor will refuse.
+      if (caps.accepts_chat_relay === false) return false;
+      return true;
+    })
     .map((p) => ({
       node_id: p.peer_node_id,
       capabilities: parseCaps(p.capabilities_json),
