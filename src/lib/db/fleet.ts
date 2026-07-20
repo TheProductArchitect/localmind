@@ -59,6 +59,11 @@ export type FleetPeerPolicy = {
   // Maximum inbound chat-relay messages per minute from this peer.
   // Defends against a compromised peer flooding our local model.
   chat_relay_rate_per_min: number;
+  // Whether to sync conversation threads (messages + titles) with this peer
+  // so every paired device sees the same chat history. Attribution
+  // (origin_node_id / origin_label) is preserved. Default ON for personal
+  // LAN mesh; turn off for a peer that should only share compute/knowledge.
+  sync_conversations: boolean;
 };
 
 export const DEFAULT_PEER_POLICY: FleetPeerPolicy = {
@@ -67,6 +72,7 @@ export const DEFAULT_PEER_POLICY: FleetPeerPolicy = {
   advertise_capabilities: true,
   accept_chat_relay: false,
   chat_relay_rate_per_min: 30,
+  sync_conversations: true,
 };
 
 function readNow(): number {

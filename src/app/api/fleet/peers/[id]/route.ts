@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getPeer, unpairPeer, updatePeerLabel, updatePeerPolicy, DEFAULT_PEER_POLICY } from "@/lib/db/fleet";
+import { getPeer, unpairPeer, updatePeerLabel, updatePeerPolicy } from "@/lib/db/fleet";
 
 export const runtime = "nodejs";
 
@@ -21,6 +21,7 @@ const PatchBody = z
         advertise_capabilities: z.boolean().optional(),
         accept_chat_relay: z.boolean().optional(),
         chat_relay_rate_per_min: z.number().int().min(1).max(600).optional(),
+        sync_conversations: z.boolean().optional(),
       })
       .optional(),
   })
@@ -37,7 +38,7 @@ export async function PATCH(req: NextRequest, { params: paramsPromise }: { param
     updatePeerLabel(params.id, parsed.data.label);
   }
   if (parsed.data.policy) {
-    updatePeerPolicy(params.id, { ...DEFAULT_PEER_POLICY, ...parsed.data.policy });
+    updatePeerPolicy(params.id, parsed.data.policy);
   }
   return NextResponse.json({ peer: getPeer(params.id) });
 }

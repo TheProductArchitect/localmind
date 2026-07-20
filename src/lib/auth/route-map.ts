@@ -226,6 +226,8 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/fleet/pair/accept", methods: ["POST"], role: "owner" },
   { path: "/api/fleet/peers", methods: ["GET"], role: "owner" },
   { path: "/api/fleet/peers/*", methods: ["GET", "PATCH", "DELETE"], role: "owner" },
+  { path: "/api/fleet/sync", methods: ["POST"], role: "authenticated" },
+  { path: "/api/fleet/chat-placement", methods: ["GET"], role: "authenticated" },
   // Chat relay is per-authenticated-user (not owner-only) since each user on
   // this node should be able to drive their own peer chats; the peer's
   // accept_chat_relay flag is the trust gate, not user role on this side.

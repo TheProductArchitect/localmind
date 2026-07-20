@@ -35,6 +35,8 @@ type Peer = {
     allow_self_actions: boolean;
     allowed_tools: string[];
     advertise_capabilities: boolean;
+    accept_chat_relay?: boolean;
+    sync_conversations?: boolean;
   };
   capabilities: PeerCapabilities;
 };
@@ -155,8 +157,9 @@ export default function FleetPage() {
           <h1 className="lm-display">What Sora can reach</h1>
           <p className="lm-body mt-3 max-w-xl" style={{ color: "hsl(0 0% 100% / 0.5)" }}>
             Other computers running LocalMind that you&apos;ve paired with this one — your
-            laptop, a homelab, a teammate&apos;s box. Once paired, this Sora can ask theirs to
-            run tasks, share knowledge, or take over work that needs a bigger model.
+            laptop, a homelab, a teammate&apos;s box. Once paired, chats can sync across
+            devices (you&apos;ll still see which machine each message came from), and
+            compute can land where load is lightest.
           </p>
           <div className="lm-transport mt-5 max-w-xl" data-open={transportOpen}>
             <button
@@ -228,6 +231,25 @@ export default function FleetPage() {
             </p>
           </div>
           <div className="flex gap-2">
+            <button
+              onClick={async () => {
+                const r = await fetch("/api/fleet/sync", { method: "POST" });
+                const j = await r.json().catch(() => ({}));
+                if (!r.ok) { toast(j.error || "Sync failed", "error"); return; }
+                toast(
+                  j.messages
+                    ? `Synced ${j.messages} message${j.messages === 1 ? "" : "s"} from ${j.peers} peer${j.peers === 1 ? "" : "s"}`
+                    : `Checked ${j.peers || 0} peer${(j.peers || 0) === 1 ? "" : "s"} — already up to date`,
+                  "success"
+                );
+                load();
+              }}
+              className="lm-action lm-action--ghost"
+              data-pulse="true"
+              disabled={peers.length === 0}
+            >
+              <RefreshCw className="h-3.5 w-3.5" /> Sync chats
+            </button>
             <button onClick={() => setAcceptOpen((o) => !o)} className="lm-action lm-action--ghost" data-pulse="true">
               <ScanLine className="h-3.5 w-3.5" /> Accept invitation
             </button>
@@ -335,6 +357,22 @@ export default function FleetPage() {
                           type="checkbox"
                           checked={p.policy.advertise_capabilities}
                           onChange={(e) => togglePolicy(p, "advertise_capabilities", e.target.checked)}
+                        />
+                      </label>
+                      <label className="lm-toggle">
+                        <span>Sync conversations (shared chat history; each turn shows which device it came from)</span>
+                        <input
+                          type="checkbox"
+                          checked={p.policy.sync_conversations !== false}
+                          onChange={(e) => togglePolicy(p, "sync_conversations", e.target.checked)}
+                        />
+                      </label>
+                      <label className="lm-toggle">
+                        <span>Allow this peer to drive chat on us (remote execution)</span>
+                        <input
+                          type="checkbox"
+                          checked={!!p.policy.accept_chat_relay}
+                          onChange={(e) => togglePolicy(p, "accept_chat_relay", e.target.checked)}
                         />
                       </label>
                     </div>

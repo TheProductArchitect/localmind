@@ -111,6 +111,7 @@ other destructive floors still confirm). Toggle Auto / Plan / Ask in chat or Set
 - **Automations** — scheduled tasks, condition monitors, multi-step workflows with human approval;
   Sora can self-serve recurring work via `schedule_task` (confirmed before it commits)
 - **Orchestration** — personas, routing rules (model per task shape), task graphs, fleet federation
+  (paired LAN devices sync chats with per-device attribution; **Run on → Auto** places turns on the least-loaded peer)
 - **Pillars** — every unit of work is tagged `ideate · research · execute · coordinate · communicate · maintain`
   so the Ops board can filter and group it; the **Strategist** persona runs divergent→convergent ideation
 - **Channels** — Telegram, SMS/voice (Twilio); reply YES/NO to approve gated actions

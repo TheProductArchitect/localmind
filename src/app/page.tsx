@@ -38,8 +38,8 @@ import { Plus, Send, Trash2, Star, Copy, RefreshCw, Volume2, Download, Paperclip
 type Conversation = { id: string; title: string; updated_at: number; starred: number };
 type Attachment = { name: string; mime: string; data: string; url: string };
 type ThreadItem =
-  | { kind: "user"; content: string; images?: string[] }
-  | { kind: "assistant"; content: string }
+  | { kind: "user"; content: string; images?: string[]; originLabel?: string | null }
+  | { kind: "assistant"; content: string; originLabel?: string | null }
   | { kind: "tool"; tc: ToolCallState }
   | { kind: "confirmation"; c: ConfirmationState };
 
@@ -126,7 +126,9 @@ function ChatInner() {
     trusted: number;
   };
   const [peers, setPeers] = useState<FleetPeer[]>([]);
+  // null = this machine; "__auto__" = least-loaded across mesh; else peer id
   const [runOnPeer, setRunOnPeer] = useState<string | null>(null);
+  const [executorHint, setExecutorHint] = useState<string | null>(null);
 
   // Conversation-mode handshake with <ConversationButton/>. When streaming
   // ends and `conversationActive` is on, we hand the latest assistant reply
@@ -204,6 +206,14 @@ function ChatInner() {
       .then((r) => (r.ok ? r.json() : { peers: [] }))
       .then((j) => setPeers((j.peers as FleetPeer[]) || []))
       .catch(() => setPeers([]));
+    // Pull conversation deltas from sync-enabled peers so this device
+    // sees the shared mesh history.
+    fetch("/api/fleet/sync", { method: "POST" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (j?.messages > 0) loadConversations();
+      })
+      .catch(() => { /* no peers / fleet off */ });
   }, [loadConversations]);
 
   async function changeMode(next: "auto" | "plan" | "ask") {
@@ -250,8 +260,9 @@ function ChatInner() {
     if (req !== openReqRef.current) return;
     const items: ThreadItem[] = [];
     for (const m of j.messages || []) {
-      if (m.role === "user") items.push({ kind: "user", content: m.content, images: attachmentsToImageUrls(m.attachments) });
-      else if (m.role === "assistant") items.push({ kind: "assistant", content: m.content });
+      const origin = m.origin_label || null;
+      if (m.role === "user") items.push({ kind: "user", content: m.content, images: attachmentsToImageUrls(m.attachments), originLabel: origin });
+      else if (m.role === "assistant") items.push({ kind: "assistant", content: m.content, originLabel: origin });
       else if (m.role === "tool") {
         try {
           const p = JSON.parse(m.content);
@@ -462,14 +473,27 @@ function ChatInner() {
       { kind: "assistant", content: "" },
     ]);
 
-    // Fleet chat relay: when the user selects a peer, route the turn through
-    // /api/fleet/peers/[id]/chat instead of the local streaming endpoint. The
-    // relay is non-streaming for v1 (single response back); the executor's
-    // local permission profile + destructive-action floor still apply.
-    if (runOnPeer) {
+    // Fleet chat relay: explicit peer, or Auto (least-loaded across the mesh).
+    let peerTarget = runOnPeer;
+    setExecutorHint(null);
+    if (peerTarget === "__auto__") {
+      try {
+        const place = await fetch("/api/fleet/chat-placement").then((r) => r.json());
+        if (place?.kind === "peer" && place.peer_node_id) {
+          peerTarget = place.peer_node_id;
+          setExecutorHint(`Auto → ${place.label || place.peer_node_id.slice(0, 12)}`);
+        } else {
+          peerTarget = null;
+          setExecutorHint("Auto → this machine");
+        }
+      } catch {
+        peerTarget = null;
+      }
+    }
+    if (peerTarget) {
       try {
         setStreaming(true);
-        const res = await fetch(`/api/fleet/peers/${runOnPeer}/chat`, {
+        const res = await fetch(`/api/fleet/peers/${peerTarget}/chat`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ conversation_id: convId, message: text, persona_id: persona }),
@@ -485,10 +509,14 @@ function ChatInner() {
             return out;
           });
         } else {
+          const peerLabel = peers.find((p) => p.peer_node_id === peerTarget)?.label || peerTarget.slice(0, 12);
           setThread((t) => {
             const out = [...t];
             for (let i = out.length - 1; i >= 0; i--) {
-              if (out[i].kind === "assistant") { out[i] = { kind: "assistant", content: j.reply }; break; }
+              if (out[i].kind === "assistant") {
+                out[i] = { kind: "assistant", content: j.reply, originLabel: peerLabel };
+                break;
+              }
             }
             return out;
           });
@@ -723,6 +751,11 @@ function ChatInner() {
               if (item.kind === "user")
                 return (
                   <div key={i} className="lm-turn lm-turn--user">
+                    {item.originLabel && (
+                      <p className="lm-micro mb-1 text-right" style={{ color: "hsl(0 0% 100% / 0.35)", textTransform: "none", letterSpacing: 0 }}>
+                        from {item.originLabel}
+                      </p>
+                    )}
                     <div className="lm-bubble">
                       {item.images?.length ? (
                         <div className="flex flex-wrap gap-2 mb-2 justify-end">
@@ -739,6 +772,11 @@ function ChatInner() {
               if (item.kind === "assistant")
                 return item.content ? (
                   <div key={i} className="lm-turn lm-turn--assistant group">
+                    {item.originLabel && (
+                      <p className="lm-micro mb-1" style={{ color: "hsl(0 0% 100% / 0.35)", textTransform: "none", letterSpacing: 0 }}>
+                        via {item.originLabel}
+                      </p>
+                    )}
                     <div className="markdown">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.content}</ReactMarkdown>
                     </div>
@@ -779,13 +817,19 @@ function ChatInner() {
                 aria-label="Choose which machine runs this turn"
               >
                 <option value="">This machine</option>
+                <option value="__auto__">Auto — least loaded</option>
                 {peers.map((p) => (
                   <option key={p.peer_node_id} value={p.peer_node_id}>
                     {p.label || p.peer_node_id.slice(0, 12)}
                   </option>
                 ))}
               </select>
-              {runOnPeer && (() => {
+              {executorHint && (
+                <span className="lm-micro" style={{ color: "hsl(160 40% 70%)", textTransform: "none", letterSpacing: 0 }}>
+                  {executorHint}
+                </span>
+              )}
+              {runOnPeer && runOnPeer !== "__auto__" && (() => {
                 const p = peers.find((x) => x.peer_node_id === runOnPeer);
                 if (!p) return null;
                 const fmt = (ms: number | null) =>
@@ -819,6 +863,15 @@ function ChatInner() {
                   </>
                 );
               })()}
+              {runOnPeer === "__auto__" && (
+                <span
+                  className="lm-micro"
+                  style={{ color: "hsl(40 80% 70%)", textTransform: "none", letterSpacing: 0 }}
+                  title="Picks the freshest peer with the lowest active load; ties stay local."
+                >
+                  ↗ mesh placement
+                </span>
+              )}
             </div>
           )}
           {attachments.length > 0 && (

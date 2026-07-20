@@ -107,8 +107,22 @@ versions:
 | v28 | Default `agent_mode` → `auto` |
 | v29 | Grant `spawn_subagents_sequential` to Sora |
 
-## Auth
+## Fleet mesh (LAN)
 
-Every `src/app/api/**/route.ts` is covered by `src/lib/auth/route-map.ts`
-(unmapped routes default to owner). Share-policy owner routes must stay
-**above** the `/api/knowledge/*` wildcard.
+Paired devices can share one chat timeline and split compute:
+
+```mermaid
+flowchart LR
+  Mac[Mac · UI] -->|conversation-sync| Spark[DGX / peer]
+  Spark -->|conversation-sync| Mac
+  Mac -->|Auto placement| Place{least load?}
+  Place -->|local| MacSora[Local Sora]
+  Place -->|peer| SparkSora[Peer Sora]
+  MacSora --> Msg[(messages + origin_label)]
+  SparkSora --> Msg
+```
+
+- **Sync** — `sync_conversations` peer policy (default on). Push/pull via fleet envelope `conversation-sync`. Each message keeps `origin_node_id` / `origin_label`.
+- **Attribution** — chat UI shows `from …` / `via …` per turn.
+- **Compute** — chat **Run on → Auto** uses the same load-based placement as task graphs (freshest peer, lowest `active_processes`, local on ties). Explicit peer or “This machine” still available.
+- **Remote drive** — `accept_chat_relay` still required before a peer may execute chat on you.

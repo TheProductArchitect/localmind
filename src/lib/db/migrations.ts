@@ -1236,6 +1236,16 @@ configMigrations.push({
   },
 });
 
+// v30: fleet mesh — conversation sync is on by default for newly recorded
+// peers (existing peers keep their policy_json untouched). The column is a
+// no-op marker; the real default lives in DEFAULT_PEER_POLICY.
+configMigrations.push({
+  version: 30,
+  up: (_db) => {
+    /* policy default change only — no schema */
+  },
+});
+
 const knowledgeMigrations: Migration[] = [
   {
     version: 1,
@@ -1370,6 +1380,23 @@ const convMigrations: Migration[] = [
     version: 4,
     up: (db) => {
       db.exec("ALTER TABLE messages ADD COLUMN attachments TEXT;");
+    },
+  },
+  {
+    // v5: LAN mesh — every message carries which node authored it, and every
+    // conversation has a stable sync_id so paired devices can merge the same
+    // thread. origin_* is local-node by default; sync fills peers' labels.
+    version: 5,
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE messages ADD COLUMN origin_node_id TEXT;
+        ALTER TABLE messages ADD COLUMN origin_label TEXT;
+        ALTER TABLE conversations ADD COLUMN sync_id TEXT;
+        ALTER TABLE conversations ADD COLUMN origin_node_id TEXT;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_sync ON conversations(sync_id) WHERE sync_id IS NOT NULL;
+      `);
+      // Backfill sync_id = id so existing threads are syncable immediately.
+      db.exec("UPDATE conversations SET sync_id = id WHERE sync_id IS NULL;");
     },
   },
 ];
