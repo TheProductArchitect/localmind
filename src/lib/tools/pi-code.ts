@@ -81,13 +81,23 @@ export const piCodeTool: Tool = {
       properties: {
         operation: { type: "string", enum: ["run", "status"] },
         goal: { type: "string", description: "Plain-English description of what pi should accomplish. Required for run." },
-        cwd: { type: "string", description: "Absolute path to a directory inside the user's approved folders. Required for run." },
+        cwd: {
+          type: "string",
+          description:
+            "Absolute path inside approved folders OR a coding session worktree. Optional when coding_session_id is set (defaults to the worktree).",
+        },
+        coding_session_id: {
+          type: "string",
+          description: "Active coding session — scopes cwd/approved dirs to that worktree only.",
+        },
       },
       required: ["operation"],
     },
   },
   async execute(input, ctx) {
     const op = String(input.operation || "");
+    const { resolveCodingSession } = await import("./coding-session-ctx");
+    const { sessionId, approvedDirs } = resolveCodingSession(input, ctx);
 
     if (op === "status") {
       const probe = piAvailable();
@@ -104,16 +114,17 @@ export const piCodeTool: Tool = {
       const probe = piAvailable();
       if (!probe.ok) return { ok: false, output: probe.reason ?? "pi not available" };
 
-      const cwd = String(input.cwd || "").trim();
+      let cwd = String(input.cwd || "").trim();
       const goal = String(input.goal || "").trim();
-      if (!cwd) return { ok: false, output: "cwd is required for run" };
+      if (!cwd && sessionId && approvedDirs[0]) cwd = approvedDirs[0];
+      if (!cwd) return { ok: false, output: "cwd or coding_session_id is required for run" };
       if (!goal) return { ok: false, output: "goal is required for run" };
 
-      const safeCwd = await resolveWithinApproved(cwd, ctx.approvedDirs);
+      const safeCwd = await resolveWithinApproved(cwd, approvedDirs);
       if (!safeCwd) {
         return {
           ok: false,
-          output: `Refusing to run pi in "${cwd}" — not inside an approved folder. Add it under Settings → Approved folders.`,
+          output: `Refusing to run pi in "${cwd}" — not inside an approved folder or coding session worktree.`,
         };
       }
 

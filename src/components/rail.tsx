@@ -19,6 +19,7 @@ import {
   MessageSquare,    // Chat
   Workflow,         // Work
   Columns3,         // Ops (Kanban)
+  FolderGit2,       // Projects (coding sessions)
   Globe,            // Browse
   BookOpen,         // Knowledge (incl. the "About you" context graph)
   Wifi,             // Fleet
@@ -38,6 +39,7 @@ const DESTS: Dest[] = [
   { href: "/",          label: "Chat",      Icon: MessageSquare,     matches: ["/"] },
   { href: "/work",      label: "Work",      Icon: Workflow,          matches: ["/work", "/graphs", "/orchestration", "/automations", "/agents", "/today"] },
   { href: "/ops",       label: "Ops",       Icon: Columns3,          matches: ["/ops"] },
+  { href: "/projects",  label: "Projects",  Icon: FolderGit2,        matches: ["/projects"] },
   { href: "/browse",    label: "Browse",    Icon: Globe,             matches: ["/browse"] },
   { href: "/knowledge", label: "Knowledge", Icon: BookOpen,          matches: ["/knowledge", "/memory", "/data", "/context"] },
   { href: "/fleet",     label: "Fleet",     Icon: Wifi,              matches: ["/fleet", "/mcp", "/models", "/plugins"] },

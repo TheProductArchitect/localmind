@@ -48,6 +48,11 @@ export const defaultRunner: NodeRunner = async (node: TaskNode, ctx: RunnerConte
   const systemPrefix = stringify(node.input.system_prefix) || undefined;
 
   try {
+    const codingSessionId =
+      (typeof node.input.coding_session_id === "string" && node.input.coding_session_id) ||
+      (typeof (ctx as { coding_session_id?: string }).coding_session_id === "string"
+        ? (ctx as { coding_session_id?: string }).coding_session_id
+        : null);
     const text = await runAgentCollect(conversationId, prompt, {
       systemPrefix: systemPrefix
         ? `${systemPrefix}\n\nYou are executing a single node in a task graph. Goal: ${ctx.graph.root_goal}. Your output is captured verbatim — do not include conversational preamble.`
@@ -55,6 +60,7 @@ export const defaultRunner: NodeRunner = async (node: TaskNode, ctx: RunnerConte
       allowedTools: node.agent_spec.tools.length > 0 ? node.agent_spec.tools : undefined,
       fromGraph: true,
       modelPreference: node.agent_spec.model_preference,
+      codingSessionId,
     });
 
     const wallSeconds = (Date.now() - t0) / 1000;

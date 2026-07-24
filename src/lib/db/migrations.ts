@@ -1265,6 +1265,54 @@ configMigrations.push({
   },
 });
 
+// v32: coding projects + sessions (autonomous SWE / worktree isolation)
+configMigrations.push({
+  version: 32,
+  up: (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS coding_projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        repo_path TEXT NOT NULL,
+        default_branch TEXT NOT NULL DEFAULT 'main',
+        remote_url TEXT,
+        github_owner TEXT,
+        github_repo TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS coding_sessions (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        worktree_path TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        goal TEXT NOT NULL DEFAULT '',
+        process_id TEXT,
+        pr_url TEXT,
+        graph_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES coding_projects(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_coding_sessions_project ON coding_sessions(project_id);
+      CREATE INDEX IF NOT EXISTS idx_coding_sessions_status ON coding_sessions(status);
+    `);
+    const tools = JSON.stringify([
+      "memory", "knowledge_base", "web_search", "time", "filesystem",
+      "calendar", "email", "browser", "browse_session", "peer_knowledge",
+      "datastore", "spreadsheet", "check_resources", "spawn_subagent",
+      "spawn_subagents_sequential", "spawn_subagents_parallel", "spawn_agents",
+      "schedule_task", "recall", "web_research", "read_secure_webpage",
+      "agent_memory", "install_mcp_server", "pi_code",
+      "coding_project", "git",
+    ]);
+    db.prepare(
+      "UPDATE personas SET enabled_tools=?, updated_at=? WHERE persona_id='persona-sora'"
+    ).run(tools, Date.now());
+  },
+});
+
 const knowledgeMigrations: Migration[] = [
   {
     version: 1,

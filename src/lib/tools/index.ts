@@ -12,6 +12,8 @@ import { spreadsheetTool } from "./spreadsheet";
 import { peerKnowledgeTool } from "./peer-knowledge";
 import { piCodeTool } from "./pi-code";
 import { spawnSubagentTool, spawnSubagentsParallelTool, spawnSubagentsSequentialTool, spawnAgentsTool } from "./subagent";
+import { codingProjectTool } from "./coding-project";
+import { gitTool } from "./git";
 import { checkResourcesTool } from "./check-resources";
 import { timeTool } from "./time";
 import { requestToolAccessTool } from "./request-tool-access";
@@ -57,6 +59,8 @@ const BUILTIN: Tool[] = [
   spawnSubagentsSequentialTool,
   spawnSubagentsParallelTool,
   spawnAgentsTool,
+  codingProjectTool,
+  gitTool,
 ];
 
 export function listBuiltinTools(): Tool[] {

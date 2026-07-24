@@ -9,6 +9,7 @@ type CollectOpts = {
   processDisplayName?: string;
   allowedTools?: readonly string[];
   modelPreference?: string | null;
+  codingSessionId?: string | null;
 };
 
 /**
@@ -34,7 +35,11 @@ export async function runCollectViaGraph(
       prompt_template: message,
       max_iterations: 12,
     },
-    input: { message, system_prefix: opts?.systemPrefix ?? "" },
+    input: {
+      message,
+      system_prefix: opts?.systemPrefix ?? "",
+      ...(opts?.codingSessionId ? { coding_session_id: opts.codingSessionId } : {}),
+    },
   });
 
   const outcome = await executeGraph(graph.graph_id, {

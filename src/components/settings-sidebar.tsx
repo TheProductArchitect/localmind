@@ -55,6 +55,7 @@ const HIDDEN_ROUTES = [
   "/",          // chat
   "/work",
   "/ops",       // Agent Ops board — full-bleed workspace surface
+  "/projects",  // Coding projects / worktree sessions
   "/agents",
   "/browse",    // Browse has its own chrome + Sora panel; no config sidebar
   "/knowledge",

@@ -15,6 +15,7 @@ export const NOTES_DIR = path.join(KNOWLEDGE_DIR, "notes");
 // The Brain (§4.0): a plain-markdown, Obsidian-compatible vault of one file
 // per entity (people, companies, topics, ideas, …). Created on first use.
 export const BRAIN_DIR = path.join(DATA_DIR, "brain");
+export const WORKSPACES_DIR = path.join(DATA_DIR, "workspaces");
 export const MCP_SERVERS_DIR = path.join(DATA_DIR, "mcp-servers");
 export const MODELS_DIR = path.join(DATA_DIR, "models");
 export const KEYS_DIR = path.join(DATA_DIR, "keys");
@@ -24,7 +25,7 @@ export const TLS_CERT_FILE = path.join(KEYS_DIR, "tls.crt");
 export const TLS_FINGERPRINT_FILE = path.join(KEYS_DIR, "tls.sha256");
 
 export function ensureDataDir() {
-  for (const d of [DATA_DIR, BACKUPS_DIR, LOGS_DIR, TRASH_DIR, KNOWLEDGE_DIR, NOTES_DIR, BRAIN_DIR, MCP_SERVERS_DIR]) {
+  for (const d of [DATA_DIR, BACKUPS_DIR, LOGS_DIR, TRASH_DIR, KNOWLEDGE_DIR, NOTES_DIR, BRAIN_DIR, WORKSPACES_DIR, MCP_SERVERS_DIR]) {
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
   }
   // Keys directory is mode 0700 — private material lives here.

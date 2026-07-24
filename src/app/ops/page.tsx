@@ -192,6 +192,9 @@ export default function OpsPage() {
     const active = !p.completed_at;
     const kind = metaOf(p).kind;
     const isApproval = kind === "workflow_approval" || kind === "proposal";
+    const isCoding = kind === "coding_session";
+    const codingSessionId = metaOf(p).session_id as string | undefined;
+    const prUrl = metaOf(p).pr_url as string | undefined;
     return (
       <Card key={p.process_id} className="p-3 space-y-2">
         <div className="flex items-start gap-2">
@@ -212,12 +215,52 @@ export default function OpsPage() {
         <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
           <span>{formatDuration((p.completed_at || now) - p.started_at)}</span>
           {model && <Badge variant="outline">{model}</Badge>}
+          {isCoding && <Badge variant="outline">coding</Badge>}
         </div>
         <div className="flex flex-wrap gap-1">
           {!isApproval && (
             <Button size="sm" variant="outline" onClick={() => openTrace(p)}>
               <Eye className="h-3 w-3" /> View
             </Button>
+          )}
+          {isCoding && (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  window.location.href = `/projects?project=${metaOf(p).project_id || ""}&focus=1`;
+                }}
+              >
+                Projects
+              </Button>
+              {prUrl && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => window.open(prUrl, "_blank", "noopener")}
+                >
+                  PR
+                </Button>
+              )}
+              {codingSessionId && active && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={async () => {
+                    if (!confirm("Discard coding session (undo worktree)?")) return;
+                    await fetch("/api/coding/projects", {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ action: "discard", session_id: codingSessionId }),
+                    });
+                    refresh();
+                  }}
+                >
+                  <X className="h-3 w-3" /> Discard
+                </Button>
+              )}
+            </>
           )}
           {isApproval ? (
             <>
@@ -229,7 +272,7 @@ export default function OpsPage() {
                 <X className="h-3 w-3" /> Deny
               </Button>
             </>
-          ) : active ? (
+          ) : active && !isCoding ? (
             <>
               {p.status !== "paused" ? (
                 <Button size="sm" variant="outline" onClick={() => pauseProc(p.process_id)}>

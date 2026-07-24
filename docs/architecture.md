@@ -11,6 +11,7 @@ flowchart LR
     Chat["/"]
     Work["/work"]
     Ops["/ops"]
+    Projects["/projects"]
     Browse["/browse"]
     Knowledge["/knowledge"]
     Fleet["/fleet"]
@@ -22,6 +23,8 @@ flowchart LR
   Work --> Auto["/automations"]
   Work --> Agents["/agents"]
   Work --> Today["/today"]
+  Projects --> Sessions["worktree sessions"]
+  Projects --> Swe["SWE graph"]
 
   Knowledge --> Memory["/memory → ?tab=memory"]
   Knowledge --> Context["/context → ?tab=context"]
@@ -114,7 +117,30 @@ versions:
 | v29 | Grant `spawn_subagents_sequential` to Sora |
 | v30 | Fleet mesh conversation-sync policy default |
 | v31 | Grant `spawn_agents`, `agent_memory`, `install_mcp_server` |
+| v32 | `coding_projects` / `coding_sessions`; grant `coding_project`, `git`, `pi_code` |
 
+## Coding projects (autonomous SWE)
+
+Undoable coding sessions use **git worktrees** under `~/.localmind/workspaces/`:
+
+```mermaid
+flowchart LR
+  Reg[Register repo] --> Sess[start_session]
+  Sess --> WT[worktree + localmind/branch]
+  WT --> Loop[SWE graph]
+  Loop --> Plan[Strategist]
+  Loop --> Impl[Coder]
+  Loop --> Test[Verify]
+  Loop --> Review[Reviewer]
+  Loop --> Ship[push + open_pr]
+  Ship --> PR[Feature PR only]
+  Sess -->|Discard| Undo[remove worktree + delete branch]
+```
+
+- Tools: `coding_project`, `git` (refuses push to main/master), `pi_code` / `filesystem` scoped via `coding_session_id` (engine injects worktree `approvedDirs` for the whole turn)
+- UI: `/projects` (+ Electron secondary coding window); Ops cards link Projects / PR / Discard
+- Gate 2: approved Ops proposals → session + SWE loop when a project is registered
+- Tests: `__tests__/coding-worktree.test.ts`, `__tests__/swe-graph.test.ts`, `__tests__/gate2.test.ts`
 ## Fleet mesh (LAN)
 
 Paired devices can share one chat timeline and split compute:

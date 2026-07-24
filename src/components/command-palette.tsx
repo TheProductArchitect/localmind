@@ -26,6 +26,7 @@ const COMMANDS: Command[] = [
   // Work
   { label: "Work timeline",     href: "/work",       group: "Work" },
   { label: "Agent Ops board",   href: "/ops",        group: "Work" },
+  { label: "Projects — coding sessions", href: "/projects", group: "Work" },
   { label: "Agents — live + catalog", href: "/agents", group: "Work" },
   { label: "Task graphs",       href: "/graphs",     group: "Work" },
   { label: "Orchestration",     href: "/orchestration", group: "Work" },

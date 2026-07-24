@@ -99,6 +99,8 @@ export async function* runAgent(
     modelPreference?: string | null;
     /** Image attachments for a multimodal user turn ({ name, mime, data(base64) }). */
     images?: { name?: string; mime: string; data: string }[];
+    /** Bind tools to a coding session worktree for the whole turn. */
+    codingSessionId?: string | null;
   }
 ): AsyncGenerator<SSEEvent> {
   const settings = getSettings();
@@ -478,10 +480,28 @@ export async function* runAgent(
           // input_hash) is a known good match. Side-effectful ops and tools
           // that don't opt in via `cacheable()` go straight through.
           const { executeWithCache } = await import("./tool-cache-wrapper");
+          let approvedDirs: string[] = JSON.parse(settings.approved_dirs || "[]");
+          const sessionFromArgs =
+            typeof call.arguments?.coding_session_id === "string"
+              ? call.arguments.coding_session_id
+              : opts?.codingSessionId || null;
+          if (sessionFromArgs) {
+            try {
+              const { sessionApprovedDirs } = await import("../coding/worktree");
+              const overlay = sessionApprovedDirs(sessionFromArgs);
+              if (overlay?.length) approvedDirs = overlay;
+              // Ensure the model-visible args include the session id so tools
+              // that read input.coding_session_id also see it.
+              if (call.arguments && call.arguments.coding_session_id == null) {
+                call.arguments = { ...call.arguments, coding_session_id: sessionFromArgs };
+              }
+            } catch { /* keep global approved dirs */ }
+          }
           const result = await withTimeout(
             executeWithCache(tool, call.arguments, {
               conversationId,
-              approvedDirs: JSON.parse(settings.approved_dirs || "[]"),
+              approvedDirs,
+              codingSessionId: sessionFromArgs,
             }),
             timeoutMs,
             `Tool "${call.name}"`
@@ -627,6 +647,7 @@ export async function runAgentCollect(
     /** Set by the graph runner to prevent recursive graph execution. */
     fromGraph?: boolean;
     modelPreference?: string | null;
+    codingSessionId?: string | null;
   }
 ): Promise<string> {
   if (!opts?.fromGraph && process.env.LOCALMIND_USE_GRAPHS !== "0") {
@@ -644,6 +665,7 @@ export async function runAgentCollect(
     processDisplayName: opts?.processDisplayName,
     allowedTools: opts?.allowedTools,
     modelPreference: opts?.modelPreference,
+    codingSessionId: opts?.codingSessionId,
   })) {
     if (ev.type === "text_chunk") text += ev.delta;
     if (ev.type === "error") return ev.message;

@@ -42,7 +42,9 @@ if (process.env.LM_AGENT_BRIDGE !== "0") {
 }
 
 let win = null;
+let codingWin = null;
 let serverProc = null;
+let codingWatchTimer = null;
 
 // ---------------------------------------------------------------- server ---
 
@@ -251,6 +253,38 @@ async function boot() {
 
   await win.loadURL(url);
 
+  // Secondary "coding browser" — opens when the app writes open-coding-window.json
+  const dataDir = process.env.LOCALMIND_DATA_DIR || path.join(require("os").homedir(), ".localmind");
+  const signalPath = path.join(dataDir, "open-coding-window.json");
+  let lastSignalAt = 0;
+  codingWatchTimer = setInterval(() => {
+    try {
+      if (!fs.existsSync(signalPath)) return;
+      const raw = JSON.parse(fs.readFileSync(signalPath, "utf8"));
+      if (!raw?.at || raw.at <= lastSignalAt) return;
+      lastSignalAt = raw.at;
+      const href = raw.path || "/projects";
+      if (codingWin && !codingWin.isDestroyed()) {
+        codingWin.focus();
+        codingWin.loadURL(`${url.replace(/\/$/, "")}${href}`);
+        return;
+      }
+      codingWin = new BrowserWindow({
+        width: 1280,
+        height: 860,
+        title: "LocalMind · Projects",
+        webPreferences: {
+          preload: path.join(__dirname, "preload.js"),
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: false,
+        },
+      });
+      codingWin.on("closed", () => { codingWin = null; });
+      codingWin.loadURL(`${url.replace(/\/$/, "")}${href}`);
+    } catch { /* ignore */ }
+  }, 1500);
+
   if (SMOKE) {
     // CI/agent smoke: prove the shell boots, a tab loads, and the CDP bridge
     // can identify it. Prints the targetId so an external harness can
@@ -282,5 +316,6 @@ app.whenReady().then(boot).catch((e) => {
 
 app.on("window-all-closed", () => app.quit());
 app.on("quit", () => {
+  if (codingWatchTimer) clearInterval(codingWatchTimer);
   if (serverProc && !serverProc.killed) serverProc.kill();
 });
