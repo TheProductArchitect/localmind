@@ -2,6 +2,8 @@ import { evaluateRules, type RoutingContext } from "../db/routing-rules";
 import { listPersonas } from "../db/personas";
 
 export type RoutedModel = {
+  /** Chat provider name, or null to inherit settings.provider. */
+  provider: string | null;
   model: string | null;
   matchedAgent: string | null;
   ruleId: string | null;
@@ -59,11 +61,11 @@ export function buildRoutingContext(
 /** True when `target` looks like a model id rather than an agent/persona name. */
 function looksLikeModelId(target: string): boolean {
   // provider/model, family:tag, or dotted model families commonly used by Ollama/OpenAI.
-  return /[/:]/.test(target) || /\b(gpt|claude|llama|mistral|qwen|phi|gemma|deepseek)\b/i.test(target);
+  return /[/:]/.test(target) || /\b(gpt|claude|llama|mistral|qwen|phi|gemma|deepseek|gemini)\b/i.test(target);
 }
 
 /**
- * Resolve which model to use for a user message based on routing rules.
+ * Resolve which provider+model to use for a user message based on routing rules.
  * Falls back to the settings default when no rule matches, or when a rule
  * targets an unknown agent with no model configured. Never invents an
  * Ollama model name from an agent label like "Research" — that previously
@@ -72,14 +74,23 @@ function looksLikeModelId(target: string): boolean {
 export function resolveRoutedModel(
   userMessage: string,
   defaultModel: string | null,
-  activePersona?: string | null
+  activePersona?: string | null,
+  defaultProvider?: string | null
 ): RoutedModel {
+  const inheritProvider = defaultProvider ?? null;
   const match = evaluateRules(buildRoutingContext(userMessage, activePersona));
-  if (!match) return { model: defaultModel, matchedAgent: null, ruleId: null };
+  if (!match) {
+    return { provider: inheritProvider, model: defaultModel, matchedAgent: null, ruleId: null };
+  }
 
   const target = match.target_agent_name.trim();
   if (!target || target.toLowerCase() === "main") {
-    return { model: defaultModel, matchedAgent: "Main", ruleId: match.rule_id };
+    return {
+      provider: inheritProvider,
+      model: defaultModel,
+      matchedAgent: "Main",
+      ruleId: match.rule_id,
+    };
   }
 
   const personas = listPersonas();
@@ -96,6 +107,7 @@ export function resolveRoutedModel(
   );
   if (persona) {
     return {
+      provider: persona.provider || inheritProvider,
       model: persona.model_name || defaultModel,
       matchedAgent: persona.name,
       ruleId: match.rule_id,
@@ -103,10 +115,34 @@ export function resolveRoutedModel(
   }
 
   if (looksLikeModelId(target)) {
-    return { model: target, matchedAgent: target, ruleId: match.rule_id };
+    // Optional "provider/model" form for explicit cloud ids
+    const slash = target.indexOf("/");
+    if (slash > 0) {
+      const maybeProvider = target.slice(0, slash).toLowerCase();
+      const known = ["ollama", "openai", "anthropic", "groq", "openrouter", "lmstudio", "gemini"];
+      if (known.includes(maybeProvider)) {
+        return {
+          provider: maybeProvider,
+          model: target.slice(slash + 1),
+          matchedAgent: target,
+          ruleId: match.rule_id,
+        };
+      }
+    }
+    return {
+      provider: inheritProvider,
+      model: target,
+      matchedAgent: target,
+      ruleId: match.rule_id,
+    };
   }
 
   // Unknown agent label with no persona — keep the default model rather than
   // asking the provider for a nonexistent model named after the agent.
-  return { model: defaultModel, matchedAgent: target, ruleId: match.rule_id };
+  return {
+    provider: inheritProvider,
+    model: defaultModel,
+    matchedAgent: target,
+    ruleId: match.rule_id,
+  };
 }

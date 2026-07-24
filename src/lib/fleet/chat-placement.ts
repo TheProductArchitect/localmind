@@ -4,6 +4,8 @@
  * Uses the same load-based placement engine as task graphs: prefer the
  * freshest peer with the lowest active_process count; tie-break to local
  * (avoids a network hop when load is equal).
+ *
+ * Honors compute pins via resolveComputePin when a pin is supplied.
  */
 
 import { decidePlacement, type PeerCandidate } from "../graph/placement";
@@ -23,7 +25,7 @@ function parseCaps(json: string): Partial<Capability> {
 }
 
 /**
- * Decide where the next chat turn should execute.
+ * Decide where the next chat turn should execute (auto / load-based).
  * Candidates: trusted peers that advertise capabilities AND advertise
  * `accepts_chat_relay` (they have granted inbound chat-relay to at least
  * one peer). The hard gate still runs on the executor when the relay arrives.
@@ -59,4 +61,10 @@ export async function pickChatExecutor(): Promise<ChatExecutor> {
     label: peer?.label || peerId.slice(0, 12),
     reason: decision.reason,
   };
+}
+
+/** Honor an explicit compute pin (conversation / settings / UI). */
+export async function pickChatExecutorWithPin(pin?: string | null): Promise<ChatExecutor> {
+  const { resolveComputePin } = await import("./placement-pins");
+  return resolveComputePin(pin);
 }

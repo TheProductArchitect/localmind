@@ -432,4 +432,13 @@ function registerBuiltinHandlers(): void {
       payload: envelope.payload,
     });
   });
+
+  // workspace-relay — peer asks us to run allowlisted git/coding/fs ops on our disk.
+  registerHandler<
+    import("./handlers/workspace-relay").WorkspaceRelayRequest,
+    import("./handlers/workspace-relay").WorkspaceRelayResponse
+  >("workspace-relay", async ({ envelope, senderNodeId }) => {
+    const { handleWorkspaceRelay } = await import("./handlers/workspace-relay");
+    return handleWorkspaceRelay({ envelope, senderNodeId });
+  });
 }

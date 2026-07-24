@@ -56,6 +56,9 @@ export type FleetPeerPolicy = {
   // allow_self_actions because chat relay implies persistent conversation
   // state, not just one-shot delegations.
   accept_chat_relay: boolean;
+  // Whether this peer may drive coding/git/worktree ops on our disk (workspace host).
+  // Default OFF — grant explicitly per peer.
+  accept_workspace_relay: boolean;
   // Maximum inbound chat-relay messages per minute from this peer.
   // Defends against a compromised peer flooding our local model.
   chat_relay_rate_per_min: number;
@@ -71,6 +74,7 @@ export const DEFAULT_PEER_POLICY: FleetPeerPolicy = {
   allowed_tools: [],
   advertise_capabilities: true,
   accept_chat_relay: false,
+  accept_workspace_relay: false,
   chat_relay_rate_per_min: 30,
   sync_conversations: true,
 };

@@ -42,6 +42,8 @@ export type Capability = {
   pairing_open: boolean;                  // V6.2: true only while a pairing window is open
   /** True when at least one trusted peer may drive chat on this node. */
   accepts_chat_relay: boolean;
+  /** True when at least one trusted peer may run workspace/git ops on this node. */
+  accepts_workspace_relay: boolean;
   generated_at: number;
 };
 
@@ -97,12 +99,18 @@ export async function snapshotCapability(): Promise<Capability> {
   const [models, tools] = await Promise.all([fetchModels(), fetchTools()]);
 
   let acceptsChatRelay = false;
+  let acceptsWorkspaceRelay = false;
   try {
-    acceptsChatRelay = listPeers().some(
+    const peers = listPeers();
+    acceptsChatRelay = peers.some(
       (p) => p.trusted === 1 && parsePeerPolicy(p).accept_chat_relay
+    );
+    acceptsWorkspaceRelay = peers.some(
+      (p) => p.trusted === 1 && parsePeerPolicy(p).accept_workspace_relay
     );
   } catch {
     acceptsChatRelay = false;
+    acceptsWorkspaceRelay = false;
   }
 
   return {
@@ -119,6 +127,7 @@ export async function snapshotCapability(): Promise<Capability> {
     gpu_available: PLATFORM_CAPS.hasGPU,
     pairing_open: false,
     accepts_chat_relay: acceptsChatRelay,
+    accepts_workspace_relay: acceptsWorkspaceRelay,
     generated_at: Date.now(),
   };
 }

@@ -345,6 +345,84 @@
     box-shadow: 0 0 0 1px hsl(0 0% 100% / 0.06) inset;
   }
 
+  /* Confirmation card in chat — mono glass, not amber alert chrome */
+  .lm-confirm {
+    margin: 12px 0;
+    padding: 14px 16px;
+    border-radius: 14px;
+    border: 1px solid hsl(0 0% 100% / 0.12);
+    background: hsl(234 18% 9% / 0.88);
+    box-shadow:
+      0 0 0 1px hsl(0 0% 100% / 0.04) inset,
+      0 0 28px hsl(0 0% 100% / 0.06);
+    backdrop-filter: blur(16px) saturate(140%);
+  }
+  .lm-confirm__head {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .lm-confirm__timer {
+    margin-left: auto;
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    font-variant-numeric: tabular-nums;
+    color: hsl(0 0% 100% / 0.45);
+  }
+  .lm-confirm__timer[data-urgent] {
+    color: hsl(0 0% 100% / 0.92);
+    text-shadow: 0 0 12px hsl(0 0% 100% / 0.35);
+  }
+  .lm-confirm__pin-note {
+    display: flex; align-items: center; gap: 6px;
+    margin-top: 8px;
+    font-size: 0.75rem;
+    color: hsl(0 0% 100% / 0.55);
+  }
+  .lm-confirm__preview {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid hsl(0 0% 100% / 0.08);
+    background: hsl(0 0% 0% / 0.25);
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    color: hsl(0 0% 100% / 0.78);
+    max-height: 160px;
+    overflow: auto;
+  }
+  .lm-confirm__actions {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin-top: 12px;
+  }
+  .lm-confirm__pin {
+    width: 9rem;
+    height: 36px;
+  }
+
+  /* Quiet panel for forms on admin/work surfaces */
+  .lm-panel {
+    padding: 16px;
+    border-radius: 14px;
+    border: 1px solid hsl(0 0% 100% / 0.08);
+    background: hsl(0 0% 100% / 0.03);
+  }
+  .lm-panel + .lm-panel { margin-top: 10px; }
+
+  /* Soft mount for overlays (⌘K) */
+  @keyframes lm-overlay-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  @keyframes lm-panel-in {
+    from { opacity: 0; transform: translateY(-8px) scale(0.985); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .lm-overlay-in {
+    animation: lm-overlay-in var(--lm-dur-macro) var(--lm-ease-micro) both;
+  }
+  .lm-panel-in {
+    animation: lm-panel-in var(--lm-dur-macro) var(--lm-ease-micro) both;
+  }
+
   /* Settings side nav — in-page section buttons (top) and external page links
    * (bottom Agent / Governance / Observability clusters). Must live in
    * globals because next/link renders an <a> outside the parent component's

@@ -8,6 +8,7 @@ import { CommandPalette } from "@/components/command-palette";
 import { DiskBanner } from "@/components/disk-banner";
 import { SettingsSidebar } from "@/components/settings-sidebar";
 import { FontScale } from "@/components/font-scale";
+import { ConfirmProvider } from "@/components/confirm-dialog";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -33,18 +34,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // mismatch warning. This suppresses that one-level attribute diff only.
     <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body className="font-sans">
-        <div className="flex flex-col h-screen overflow-hidden relative z-10">
-          <DiskBanner />
-          <div className="flex flex-1 overflow-hidden">
-            <Rail />
-            <SettingsSidebar />
-            <main className="flex-1 min-h-0 overflow-auto relative pb-16 md:pb-0">{children}</main>
+        <ConfirmProvider>
+          <div className="flex flex-col h-screen overflow-hidden relative z-10">
+            <DiskBanner />
+            <div className="flex flex-1 overflow-hidden">
+              <Rail />
+              <SettingsSidebar />
+              <main className="flex-1 min-h-0 overflow-auto relative pb-16 md:pb-0">{children}</main>
+            </div>
           </div>
-        </div>
-        <Toaster />
-        <CommandPalette />
-        <EdgePulse />
-        <FontScale />
+          <Toaster />
+          <CommandPalette />
+          <EdgePulse />
+          <FontScale />
+        </ConfirmProvider>
       </body>
     </html>
   );

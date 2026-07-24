@@ -6,6 +6,8 @@ export type Persona = {
   name: string;
   description: string | null;
   model_name: string | null;
+  /** Chat provider for model_name; NULL inherits settings.provider. */
+  provider: string | null;
   enabled_tools: string;            // JSON array
   permission_profile_id: string | null;
   created_at: number;
@@ -37,6 +39,7 @@ export function createPersona(p: {
   name: string;
   description?: string | null;
   model_name?: string | null;
+  provider?: string | null;
   enabled_tools?: string[];
   permission_profile_id?: string | null;
 }): Persona {
@@ -44,13 +47,14 @@ export function createPersona(p: {
   const now = readNow();
   getConfigDb()
     .prepare(
-      "INSERT INTO personas (persona_id, name, description, model_name, enabled_tools, permission_profile_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
+      "INSERT INTO personas (persona_id, name, description, model_name, provider, enabled_tools, permission_profile_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
     )
     .run(
       id,
       p.name,
       p.description ?? null,
       p.model_name ?? null,
+      p.provider ?? null,
       JSON.stringify(p.enabled_tools ?? []),
       p.permission_profile_id ?? null,
       now,
@@ -61,7 +65,7 @@ export function createPersona(p: {
 
 export function updatePersona(
   id: string,
-  patch: Partial<Pick<Persona, "name" | "description" | "model_name" | "enabled_tools" | "permission_profile_id">>
+  patch: Partial<Pick<Persona, "name" | "description" | "model_name" | "provider" | "enabled_tools" | "permission_profile_id">>
 ): void {
   const keys = Object.keys(patch);
   if (keys.length === 0) return;

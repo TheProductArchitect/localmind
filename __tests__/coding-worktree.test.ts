@@ -110,10 +110,32 @@ describe("worktree session", () => {
     if (!created.ok) return;
     expect(fs.existsSync(created.session.worktree_path)).toBe(true);
     expect(created.session.branch.startsWith("localmind/")).toBe(true);
+    const branch = created.session.branch;
 
     const discarded = discardWorktreeSession(created.session.id);
     expect(discarded.ok).toBe(true);
     expect(fs.existsSync(created.session.worktree_path)).toBe(false);
+    // Session branch must be deleted (project root / main unchanged).
+    const branches = execFileSync("git", ["branch", "--list", branch], {
+      cwd: repo,
+      encoding: "utf8",
+    }).trim();
+    expect(branches).toBe("");
+    expect(store.sessions.find((s) => s.id === created.session.id)?.status).toBe("discarded");
+  });
+
+  it("cleans orphan tmp worktree dirs on discard", () => {
+    const created = createWorktreeSession({ projectId: "cproj-1", goal: "Orphan cleanup" });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const projectRoot = path.dirname(created.session.worktree_path);
+    const orphan = path.join(projectRoot, `tmp-orphan-${Date.now().toString(36)}`);
+    fs.mkdirSync(orphan, { recursive: true });
+    fs.writeFileSync(path.join(orphan, "junk.txt"), "x");
+
+    const discarded = discardWorktreeSession(created.session.id);
+    expect(discarded.ok).toBe(true);
+    expect(fs.existsSync(orphan)).toBe(false);
   });
 });
 
@@ -129,6 +151,23 @@ describe("git tool push guard", () => {
 
     const result = await gitTool.execute(
       { operation: "push", cwd: repo },
+      { conversationId: "c", approvedDirs: [os.tmpdir()] }
+    );
+    expect(result.ok).toBe(false);
+    expect(result.output).toMatch(/protected/i);
+  });
+
+  it("refuses push when args target master", async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "lm-git-"));
+    execFileSync("git", ["-c", "init.defaultBranch=feat", "init", "--template="], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "test@localmind"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: repo });
+    fs.writeFileSync(path.join(repo, "a.txt"), "x\n");
+    execFileSync("git", ["add", "."], { cwd: repo });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: repo });
+
+    const result = await gitTool.execute(
+      { operation: "push", cwd: repo, args: "origin HEAD:master" },
       { conversationId: "c", approvedDirs: [os.tmpdir()] }
     );
     expect(result.ok).toBe(false);

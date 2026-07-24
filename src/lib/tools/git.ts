@@ -160,6 +160,24 @@ export const gitTool: Tool = {
             output: `Refusing to push protected branch "${branch}". Use a feature branch (localmind/…).`,
           };
         }
+        // Refuse explicit refspecs that target protected branch names (main/master/…).
+        const extraArgs = String(input.args || "");
+        const refHit = extraArgs.match(/(?:^|[\s:])((?:refs\/heads\/)?[A-Za-z0-9._/-]+)$/);
+        if (refHit && isProtectedBranch(refHit[1])) {
+          return {
+            ok: false,
+            output: `Refusing to push to protected branch "${refHit[1]}". Feature branch + PR only.`,
+          };
+        }
+        for (const token of extraArgs.split(/\s+/).filter(Boolean)) {
+          const tip = token.includes(":") ? token.split(":").pop()! : token;
+          if (isProtectedBranch(tip.replace(/^refs\/heads\//, ""))) {
+            return {
+              ok: false,
+              output: `Refusing to push to protected branch "${tip}". Feature branch + PR only.`,
+            };
+          }
+        }
         const args = input.force
           ? ["push", "--force-with-lease", "-u", "origin", branch]
           : ["push", "-u", "origin", branch];

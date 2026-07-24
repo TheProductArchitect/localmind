@@ -40,6 +40,8 @@ export type CodingSession = {
   process_id: string | null;
   pr_url: string | null;
   graph_id: string | null;
+  compute_peer_id?: string | null;
+  workspace_peer_id?: string | null;
   created_at: number;
   updated_at: number;
 };
@@ -98,25 +100,50 @@ export function createCodingSession(args: {
   worktree_path: string;
   goal: string;
   process_id?: string | null;
+  compute_peer_id?: string | null;
+  workspace_peer_id?: string | null;
 }): CodingSession {
   const id = `csess-${nanoid(10)}`;
   const now = Date.now();
-  getConfigDb()
-    .prepare(
-      `INSERT INTO coding_sessions
-        (id, project_id, branch, worktree_path, status, goal, process_id, pr_url, graph_id, created_at, updated_at)
-       VALUES (?,?,?,?,'active',?,?,NULL,NULL,?,?)`
-    )
-    .run(
-      id,
-      args.project_id,
-      args.branch,
-      args.worktree_path,
-      args.goal.slice(0, 4000),
-      args.process_id ?? null,
-      now,
-      now
-    );
+  // Prefer columns from v37 when present; fall back if migration not yet applied.
+  try {
+    getConfigDb()
+      .prepare(
+        `INSERT INTO coding_sessions
+          (id, project_id, branch, worktree_path, status, goal, process_id, pr_url, graph_id,
+           compute_peer_id, workspace_peer_id, created_at, updated_at)
+         VALUES (?,?,?,?,'active',?,?,NULL,NULL,?,?,?,?)`
+      )
+      .run(
+        id,
+        args.project_id,
+        args.branch,
+        args.worktree_path,
+        args.goal.slice(0, 4000),
+        args.process_id ?? null,
+        args.compute_peer_id ?? null,
+        args.workspace_peer_id ?? null,
+        now,
+        now
+      );
+  } catch {
+    getConfigDb()
+      .prepare(
+        `INSERT INTO coding_sessions
+          (id, project_id, branch, worktree_path, status, goal, process_id, pr_url, graph_id, created_at, updated_at)
+         VALUES (?,?,?,?,'active',?,?,NULL,NULL,?,?)`
+      )
+      .run(
+        id,
+        args.project_id,
+        args.branch,
+        args.worktree_path,
+        args.goal.slice(0, 4000),
+        args.process_id ?? null,
+        now,
+        now
+      );
+  }
   return getCodingSession(id)!;
 }
 
@@ -155,6 +182,8 @@ export function updateCodingSession(
     graph_id?: string | null;
     goal?: string;
     worktree_path?: string;
+    compute_peer_id?: string | null;
+    workspace_peer_id?: string | null;
   }
 ): CodingSession | null {
   const cur = getCodingSession(id);
@@ -166,22 +195,48 @@ export function updateCodingSession(
     graph_id: patch.graph_id !== undefined ? patch.graph_id : cur.graph_id,
     goal: patch.goal ?? cur.goal,
     worktree_path: patch.worktree_path ?? cur.worktree_path,
+    compute_peer_id:
+      patch.compute_peer_id !== undefined ? patch.compute_peer_id : cur.compute_peer_id ?? null,
+    workspace_peer_id:
+      patch.workspace_peer_id !== undefined ? patch.workspace_peer_id : cur.workspace_peer_id ?? null,
   };
-  getConfigDb()
-    .prepare(
-      `UPDATE coding_sessions SET
-         status=?, process_id=?, pr_url=?, graph_id=?, goal=?, worktree_path=?, updated_at=?
-       WHERE id=?`
-    )
-    .run(
-      next.status,
-      next.process_id,
-      next.pr_url,
-      next.graph_id,
-      next.goal,
-      next.worktree_path,
-      Date.now(),
-      id
-    );
+  try {
+    getConfigDb()
+      .prepare(
+        `UPDATE coding_sessions SET
+           status=?, process_id=?, pr_url=?, graph_id=?, goal=?, worktree_path=?,
+           compute_peer_id=?, workspace_peer_id=?, updated_at=?
+         WHERE id=?`
+      )
+      .run(
+        next.status,
+        next.process_id,
+        next.pr_url,
+        next.graph_id,
+        next.goal,
+        next.worktree_path,
+        next.compute_peer_id,
+        next.workspace_peer_id,
+        Date.now(),
+        id
+      );
+  } catch {
+    getConfigDb()
+      .prepare(
+        `UPDATE coding_sessions SET
+           status=?, process_id=?, pr_url=?, graph_id=?, goal=?, worktree_path=?, updated_at=?
+         WHERE id=?`
+      )
+      .run(
+        next.status,
+        next.process_id,
+        next.pr_url,
+        next.graph_id,
+        next.goal,
+        next.worktree_path,
+        Date.now(),
+        id
+      );
+  }
   return getCodingSession(id);
 }

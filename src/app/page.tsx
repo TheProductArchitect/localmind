@@ -106,6 +106,14 @@ function ChatInner() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [model, setModel] = useState<string | null>(null);
+  const [provider, setProvider] = useState<string>("ollama");
+  const [defaultModel, setDefaultModel] = useState<string | null>(null);
+  const [defaultProvider, setDefaultProvider] = useState<string>("ollama");
+  const [convModelOverride, setConvModelOverride] = useState(false);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [pickerProviders, setPickerProviders] = useState<{ name: string; connected: boolean }[]>([]);
+  const [pickerModels, setPickerModels] = useState<{ name: string }[]>([]);
+  const [pickerProvider, setPickerProvider] = useState<string>("ollama");
   const [autoRead, setAutoRead] = useState(false);
   // Sora is now the only "lead" persona for chat. Sub-agents (Writer, Coder,
   // Researcher, etc.) are summoned by Sora via spawn_subagent. The legacy
@@ -124,10 +132,13 @@ function ChatInner() {
     paired_at: number;
     last_seen_at: number | null;
     trusted: number;
+    policy?: { accept_workspace_relay?: boolean; accept_chat_relay?: boolean };
+    capabilities?: { accepts_workspace_relay?: boolean; accepts_chat_relay?: boolean };
   };
   const [peers, setPeers] = useState<FleetPeer[]>([]);
   // null = this machine; "__auto__" = least-loaded across mesh; else peer id
   const [runOnPeer, setRunOnPeer] = useState<string | null>(null);
+  const [workspacePeer, setWorkspacePeer] = useState<string>("");
   const [executorHint, setExecutorHint] = useState<string | null>(null);
 
   // Conversation-mode handshake with <ConversationButton/>. When streaming
@@ -191,6 +202,9 @@ function ChatInner() {
         if (j.settings && !j.settings.onboarded) window.location.href = "/onboarding";
         else {
           setModel(j.settings?.active_model || null);
+          setDefaultModel(j.settings?.active_model || null);
+          setProvider(j.settings?.provider || "ollama");
+          setDefaultProvider(j.settings?.provider || "ollama");
           setAgentMode((j.settings?.agent_mode as "auto" | "plan" | "ask") || "auto");
           const fs = Number(j.settings?.chat_font_size);
           if (fs >= 12 && fs <= 28) {
@@ -230,6 +244,69 @@ function ChatInner() {
     toast(`Mode → ${next}`, "success");
   }
 
+  async function openModelPicker() {
+    setModelPickerOpen(true);
+    setPickerProvider(provider || defaultProvider || "ollama");
+    const [provRes, modRes] = await Promise.all([
+      fetch("/api/providers"),
+      fetch(`/api/models?provider=${encodeURIComponent(provider || defaultProvider || "ollama")}`),
+    ]);
+    const pj = await provRes.json().catch(() => ({ providers: [] }));
+    const mj = await modRes.json().catch(() => ({ models: [] }));
+    setPickerProviders(pj.providers || []);
+    setPickerModels(mj.models || []);
+  }
+
+  async function loadPickerModels(p: string) {
+    setPickerProvider(p);
+    const r = await fetch(`/api/models?provider=${encodeURIComponent(p)}`);
+    const j = await r.json().catch(() => ({ models: [] }));
+    setPickerModels(j.models || []);
+  }
+
+  async function applyChatModel(nextProvider: string, nextModel: string) {
+    if (!activeId) {
+      // No conversation yet — set global default
+      await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: nextProvider, active_model: nextModel }),
+      });
+      setDefaultProvider(nextProvider);
+      setDefaultModel(nextModel);
+      setProvider(nextProvider);
+      setModel(nextModel);
+      setConvModelOverride(false);
+      setModelPickerOpen(false);
+      toast(`Default → ${nextProvider} / ${nextModel}`, "success");
+      return;
+    }
+    await fetch(`/api/conversations/${activeId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model_provider: nextProvider, model_name: nextModel }),
+    });
+    setProvider(nextProvider);
+    setModel(nextModel);
+    setConvModelOverride(true);
+    setModelPickerOpen(false);
+    toast(`This chat → ${nextProvider} / ${nextModel}`, "success");
+  }
+
+  async function clearChatModelOverride() {
+    if (!activeId) return;
+    await fetch(`/api/conversations/${activeId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clear_model_override: true }),
+    });
+    setProvider(defaultProvider);
+    setModel(defaultModel);
+    setConvModelOverride(false);
+    setModelPickerOpen(false);
+    toast("Using default model", "success");
+  }
+
   useEffect(() => {
     if (searchParams.get("new") === "1") newConversation();
     // Prefill from other surfaces (e.g. Browse → "Ask Sora about this page").
@@ -262,6 +339,16 @@ function ChatInner() {
     if (req !== openReqRef.current) return; // stale — a newer open won
     const j = await r.json();
     if (req !== openReqRef.current) return;
+    const conv = j.conversation;
+    if (conv?.model_name || conv?.model_provider) {
+      setConvModelOverride(true);
+      setModel(conv.model_name || defaultModel);
+      setProvider(conv.model_provider || defaultProvider);
+    } else {
+      setConvModelOverride(false);
+      setModel(defaultModel);
+      setProvider(defaultProvider);
+    }
     const items: ThreadItem[] = [];
     for (const m of j.messages || []) {
       const origin = m.origin_label || null;
@@ -740,9 +827,65 @@ function ChatInner() {
       {/* Thread column */}
       <section className="lm-thread">
         <header className="lm-thread__head">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <span className="lm-micro">Model</span>
-            <span className="lm-body" style={{ color: "hsl(0 0% 100% / 0.92)" }}>{model || "—"}</span>
+            <button
+              type="button"
+              onClick={() => (modelPickerOpen ? setModelPickerOpen(false) : openModelPicker())}
+              className="lm-body"
+              style={{ color: "hsl(0 0% 100% / 0.92)", textDecoration: "underline", textUnderlineOffset: 3 }}
+              data-pulse="true"
+              title="Pick provider and model for this chat"
+            >
+              {provider ? `${provider}/` : ""}{model || "—"}
+              {convModelOverride ? " · chat" : ""}
+            </button>
+            {modelPickerOpen && (
+              <div
+                className="absolute z-40 mt-10 left-4 right-4 max-w-md rounded-lg border bg-background p-3 shadow-lg"
+                style={{ top: "var(--lm-thread-head-top, 3rem)" }}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium">Provider & model</span>
+                  <button type="button" className="text-xs text-muted-foreground" onClick={() => setModelPickerOpen(false)}>Close</button>
+                </div>
+                <select
+                  className="w-full mb-2 h-8 rounded border bg-background px-2 text-sm"
+                  value={pickerProvider}
+                  onChange={(e) => loadPickerModels(e.target.value)}
+                >
+                  {(pickerProviders.length ? pickerProviders : [{ name: pickerProvider, connected: true }]).map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name}{p.connected === false ? " (no key)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <div className="max-h-40 overflow-y-auto space-y-1 mb-2">
+                  {pickerModels.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No models listed. Add a key in Settings or pull a local model.</p>
+                  ) : (
+                    pickerModels.map((m) => (
+                      <button
+                        key={m.name}
+                        type="button"
+                        className="block w-full text-left text-sm px-2 py-1 rounded hover:bg-accent"
+                        onClick={() => applyChatModel(pickerProvider, m.name)}
+                      >
+                        {m.name}
+                      </button>
+                    ))
+                  )}
+                </div>
+                {convModelOverride && (
+                  <button type="button" className="text-xs underline" onClick={clearChatModelOverride}>
+                    Clear chat override (use default)
+                  </button>
+                )}
+                <p className="text-[10px] text-muted-foreground mt-2">
+                  Default: {defaultProvider}/{defaultModel || "—"} · <a href="/models" className="underline">Models</a>
+                </p>
+              </div>
+            )}
             <span className="lm-thread__sep" />
             <span className="lm-micro">Lead</span>
             <span className="lm-body" style={{ color: "hsl(0 0% 100% / 0.92)" }}>Sora</span>
@@ -879,7 +1022,7 @@ function ChatInner() {
 
         <footer className="lm-composer">
           {peers.length > 0 && (
-            <div className="mx-auto flex items-center gap-2 mb-2" style={{ maxWidth: 720 }}>
+            <div className="mx-auto flex flex-wrap items-center gap-2 mb-2" style={{ maxWidth: 720 }}>
               <span className="lm-micro" style={{ color: "hsl(0 0% 100% / 0.4)" }}>Run on</span>
               <select
                 value={runOnPeer ?? ""}
@@ -894,6 +1037,42 @@ function ChatInner() {
                     {p.label || p.peer_node_id.slice(0, 12)}
                   </option>
                 ))}
+              </select>
+              <span className="lm-micro" style={{ color: "hsl(0 0% 100% / 0.4)" }}>Workspace</span>
+              <select
+                value={workspacePeer}
+                onChange={async (e) => {
+                  const v = e.target.value;
+                  setWorkspacePeer(v);
+                  if (activeId) {
+                    await fetch(`/api/conversations/${activeId}`, {
+                      method: "PATCH",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ workspace_placement: v || "local" }),
+                    });
+                  } else {
+                    await fetch("/api/settings", {
+                      method: "PATCH",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ workspace_placement: v || "local" }),
+                    });
+                  }
+                }}
+                className="lm-peer-select"
+                aria-label="Choose which machine holds the git workspace"
+              >
+                <option value="">This machine</option>
+                {peers
+                  .filter(
+                    (p) =>
+                      p.capabilities?.accepts_workspace_relay === true ||
+                      p.policy?.accept_workspace_relay === true
+                  )
+                  .map((p) => (
+                    <option key={`ws-${p.peer_node_id}`} value={p.peer_node_id}>
+                      {p.label || p.peer_node_id.slice(0, 12)}
+                    </option>
+                  ))}
               </select>
               {executorHint && (
                 <span className="lm-micro" style={{ color: "hsl(160 40% 70%)", textTransform: "none", letterSpacing: 0 }}>

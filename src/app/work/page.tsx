@@ -190,6 +190,12 @@ function WorkPageInner() {
           <h1 className="lm-display">Everything in motion</h1>
         </div>
         <div className="flex items-center gap-2">
+          <Link href="/presentations" className="lm-action lm-action--ghost" data-pulse="true">
+            Decks
+          </Link>
+          <Link href="/automations" className="lm-action lm-action--ghost" data-pulse="true">
+            Automations
+          </Link>
           <Link href="/agents" className="lm-action lm-action--ghost" data-pulse="true">
             <Users className="h-3.5 w-3.5" /> Agents
           </Link>

@@ -26,6 +26,8 @@ import { recallTool } from "./recall";
 import { webResearchTool } from "./web-research";
 import { readSecureWebpageTool, SECURE_BROWSER_MCP_NAME } from "./read-secure-webpage";
 import { browseSessionTool } from "./browse-session";
+import { manageWorkflowTool } from "./manage-workflow";
+import { presentationTool } from "./presentation";
 import { getMcpTools } from "./mcp";
 import type { Tool } from "./types";
 
@@ -40,6 +42,8 @@ const BUILTIN: Tool[] = [
   remindersTool,
   contactsTool,
   scheduleTool,
+  manageWorkflowTool,
+  presentationTool,
   recallTool,
   webResearchTool,
   readSecureWebpageTool,

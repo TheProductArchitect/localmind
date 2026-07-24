@@ -1,10 +1,23 @@
 import { getSettings } from "../db/queries";
 import { ollamaProvider } from "./ollama";
 import { anthropicProvider } from "./anthropic";
+import { geminiProvider } from "./gemini";
 import { makeOpenAICompatibleProvider } from "./openai-compatible";
 import type { Provider } from "./types";
 
 const cache: Record<string, Provider> = {};
+
+export const CHAT_PROVIDERS = [
+  "ollama",
+  "openai",
+  "anthropic",
+  "groq",
+  "openrouter",
+  "lmstudio",
+  "gemini",
+] as const;
+
+export type ChatProviderName = (typeof CHAT_PROVIDERS)[number];
 
 export function getProviderByName(name: string): Provider {
   if (cache[name]) return cache[name];
@@ -12,6 +25,9 @@ export function getProviderByName(name: string): Provider {
   switch (name) {
     case "anthropic":
       p = anthropicProvider;
+      break;
+    case "gemini":
+      p = geminiProvider;
       break;
     case "openai":
       p = makeOpenAICompatibleProvider("openai");
@@ -37,4 +53,4 @@ export function getProvider(): Provider {
   return getProviderByName(getSettings().provider);
 }
 
-export { ollamaProvider, anthropicProvider };
+export { ollamaProvider, anthropicProvider, geminiProvider };

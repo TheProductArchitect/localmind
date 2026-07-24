@@ -14,6 +14,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "@/components/toast";
+import { useConfirm } from "@/components/confirm-dialog";
 import { NoteGraph } from "@/components/note-graph";
 import { ContextGraphView } from "@/components/context-graph-view";
 import { Search, Plus, RefreshCw, Trash2, Upload, FileText, StickyNote, Share2, Wifi, Brain, Waypoints } from "lucide-react";
@@ -189,6 +190,7 @@ function SearchTab() {
 const BINARY_EXT = ["pdf", "docx", "epub"];
 
 function DocsTab() {
+  const confirm = useConfirm();
   const [docs, setDocs] = useState<any[]>([]);
   const [filter, setFilter] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -222,7 +224,12 @@ function DocsTab() {
     });
     const j = await r.json();
     if (j.duplicate) {
-      if (confirm(j.message)) {
+      const ok = await confirm({
+        title: "Document already indexed",
+        message: typeof j.message === "string" ? j.message : "Re-ingest this document?",
+        confirmLabel: "Re-ingest",
+      });
+      if (ok) {
         await fetch("/api/knowledge/documents", {
           method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ fileName: file.name, content, isBase64, confirmReingest: true }),

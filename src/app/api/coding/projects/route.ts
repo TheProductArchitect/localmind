@@ -100,10 +100,14 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid payload.", issues: parsed.error.issues }, { status: 400 });
     }
+    const { resolvePlacement } = await import("@/lib/fleet/placement-pins");
+    const placement = await resolvePlacement();
     const result = createWorktreeSession({
       projectId: parsed.data.project_id,
       goal: parsed.data.goal,
       ownerUserId: user.id,
+      computePeerId: placement.compute.kind === "peer" ? placement.compute.peer_node_id : "local",
+      workspacePeerId: placement.workspace.kind === "peer" ? placement.workspace.peer_node_id : "local",
     });
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
     let graph_id: string | undefined;

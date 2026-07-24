@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button, Card, Input, Badge } from "@/components/ui";
 import { toast } from "@/components/toast";
+import { useConfirm } from "@/components/confirm-dialog";
 import {
   RefreshCw, ExternalLink, CheckCircle2, AlertCircle, Wrench, MessagesSquare, Globe, Boxes,
 } from "lucide-react";
@@ -1128,6 +1129,7 @@ function CommsSection() {
 }
 
 function DataSection() {
+  const confirmDlg = useConfirm();
   const [pin, setPin] = useState("");
   const [confirm, setConfirm] = useState("");
 
@@ -1161,7 +1163,15 @@ function DataSection() {
         <Input type="password" placeholder="PIN (if set)" value={pin} onChange={(e) => setPin(e.target.value)} className="w-48" />
         <p className="font-medium text-sm">Delete all conversations</p>
         <Button size="sm" variant="destructive"
-          onClick={() => confirm2("Delete all conversations permanently?") && post("delete-conversations")}>
+          onClick={async () => {
+            const ok = await confirmDlg({
+              title: "Delete all conversations?",
+              message: "This permanently removes every chat. This cannot be undone.",
+              confirmLabel: "Delete all",
+              destructive: true,
+            });
+            if (ok) post("delete-conversations");
+          }}>
           Delete all conversations
         </Button>
         <p className="font-medium text-sm pt-2">Factory reset</p>
@@ -1173,10 +1183,6 @@ function DataSection() {
       </Card>
     </div>
   );
-}
-
-function confirm2(msg: string) {
-  return typeof window !== "undefined" && window.confirm(msg);
 }
 
 // Web access controls — ported from Nova's three-layer browser access model.
@@ -1282,13 +1288,20 @@ function WebAccessCard() {
 }
 
 function BackupSection() {
+  const confirm = useConfirm();
   const [snapshots, setSnapshots] = useState<any[]>([]);
   const [restoring, setRestoring] = useState(false);
   const load = () => fetch("/api/backup").then((r) => r.json()).then((j) => setSnapshots(j.snapshots || []));
   useEffect(() => { load(); }, []);
 
   async function restore(name: string) {
-    if (!confirm(`Restore "${name}"? Current data is snapshotted first, then the app restarts.`)) return;
+    const ok = await confirm({
+      title: `Restore "${name}"?`,
+      message: "Current data is snapshotted first, then the app restarts.",
+      confirmLabel: "Restore",
+      destructive: true,
+    });
+    if (!ok) return;
     setRestoring(true);
     await fetch("/api/backup/restore", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ snapshot: name }),

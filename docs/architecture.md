@@ -3,6 +3,8 @@
 Code graph of how UI, agent loop, tools, and data connect. Keep this in sync
 when adding pages, tools, or spawn modes.
 
+**PRDs:** [Sora v2](./PRD-sora-v2.md) ([status](./sora-v2-implementation.md)) · [Personal Assistant v3](./PRD-personal-assistant-v3.md) ([status](./personal-assistant-v3-implementation.md))
+
 ## Product surface (navigation)
 
 ```mermaid
@@ -21,6 +23,7 @@ flowchart LR
   Work --> Graphs["/graphs"]
   Work --> Orch["/orchestration"]
   Work --> Auto["/automations"]
+  Work --> Presentations["/presentations"]
   Work --> Agents["/agents"]
   Work --> Today["/today"]
   Projects --> Sessions["worktree sessions"]

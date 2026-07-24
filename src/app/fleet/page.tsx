@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { toast } from "@/components/toast";
+import { useConfirm } from "@/components/confirm-dialog";
 import { Wifi, Plus, RefreshCw, Trash2, ScanLine, ShieldCheck, Copy, Plug, Box, Package, ChevronRight, ChevronDown } from "lucide-react";
 
 type PeerCapabilities = {
@@ -36,6 +37,7 @@ type Peer = {
     allowed_tools: string[];
     advertise_capabilities: boolean;
     accept_chat_relay?: boolean;
+    accept_workspace_relay?: boolean;
     sync_conversations?: boolean;
   };
   capabilities: PeerCapabilities;
@@ -58,6 +60,7 @@ function ageOf(ms: number | null): string {
 }
 
 export default function FleetPage() {
+  const confirm = useConfirm();
   const [peers, setPeers] = useState<Peer[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [pairing, setPairing] = useState<PairingStart | null>(null);
@@ -123,7 +126,13 @@ export default function FleetPage() {
     } finally { setAccepting(false); }
   }
   async function unpair(peerId: string) {
-    if (!confirm("Unpair this device? All pinned trust is removed; you'd need to pair again to reconnect.")) return;
+    const ok = await confirm({
+      title: "Unpair this device?",
+      message: "All pinned trust is removed; you'd need to pair again to reconnect.",
+      confirmLabel: "Unpair",
+      destructive: true,
+    });
+    if (!ok) return;
     await fetch(`/api/fleet/peers/${peerId}`, { method: "DELETE" });
     load();
   }
@@ -373,6 +382,14 @@ export default function FleetPage() {
                           type="checkbox"
                           checked={!!p.policy.accept_chat_relay}
                           onChange={(e) => togglePolicy(p, "accept_chat_relay", e.target.checked)}
+                        />
+                      </label>
+                      <label className="lm-toggle">
+                        <span>Accept workspace relay (git / coding worktrees on this machine)</span>
+                        <input
+                          type="checkbox"
+                          checked={!!p.policy.accept_workspace_relay}
+                          onChange={(e) => togglePolicy(p, "accept_workspace_relay", e.target.checked)}
                         />
                       </label>
                     </div>

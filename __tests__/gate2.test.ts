@@ -17,6 +17,14 @@ vi.mock("../src/lib/db/proposals", () => ({
     Object.assign(p, { status, ...patch });
     return p;
   },
+  markProposalNeedsProject: (id: string, message?: string) => {
+    const p = proposals.find((x) => x.id === id);
+    if (!p) return null;
+    p.audit_ref =
+      message ||
+      "needs_project: Register a coding project on /projects (or set LM_SELF_IMPROVE_PROJECT_ID), then re-approve or wait for the next Gate 2 tick.";
+    return p;
+  },
 }));
 
 vi.mock("../src/lib/db/coding", () => ({
@@ -44,7 +52,7 @@ describe("processApprovedProposals", () => {
     delete process.env.LM_SELF_IMPROVE_PROJECT_ID;
   });
 
-  it("no-ops when no coding project is registered", async () => {
+  it("marks needs_project when no coding project is registered", async () => {
     proposals.push({
       id: "prop-1",
       title: "Fix tests",
@@ -55,6 +63,23 @@ describe("processApprovedProposals", () => {
     const r = await processApprovedProposals();
     expect(r.started).toBe(0);
     expect(r.errors[0]).toMatch(/no coding project/i);
+    expect(proposals[0].audit_ref).toMatch(/^needs_project:/);
+    expect(proposals[0].status).toBe("approved");
+    expect(createWorktreeSession).not.toHaveBeenCalled();
+  });
+
+  it("skips already-annotated needs_project proposals until a project exists", async () => {
+    proposals.push({
+      id: "prop-wait",
+      title: "Waiting",
+      rationale: "still",
+      target_paths: "[]",
+      status: "approved",
+      audit_ref: "needs_project: Register a coding project on /projects",
+    });
+    const r = await processApprovedProposals();
+    expect(r.started).toBe(0);
+    expect(r.errors[0]).toMatch(/still waiting/i);
     expect(createWorktreeSession).not.toHaveBeenCalled();
   });
 

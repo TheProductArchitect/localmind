@@ -57,6 +57,7 @@
     "openai": "^4.71.0",
     "pdfjs-dist": "^4.7.76",
     "playwright": "^1.48.0",
+    "pptxgenjs": "^4.0.1",
     "qrcode": "^1.5.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

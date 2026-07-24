@@ -160,6 +160,9 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/coding/projects", methods: ["GET"], role: "authenticated" },
   { path: "/api/coding/projects", methods: ["POST"], role: "owner" },
   { path: "/api/coding/open-window", methods: ["POST"], role: "authenticated" },
+  { path: "/api/presentations", methods: ["GET", "POST"], role: "authenticated" },
+  { path: "/api/presentations/*", methods: ["GET", "PATCH", "POST"], role: "authenticated" },
+  { path: "/api/presentations/*/export", methods: ["POST"], role: "authenticated" },
 
   // --- User Context Graph (per-user; read-only in phase 1, §12) ---
   { path: "/api/context/graph", methods: ["GET"], role: "authenticated" },

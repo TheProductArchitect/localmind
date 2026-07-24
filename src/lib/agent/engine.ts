@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import { getProvider } from "../providers";
+import { getProviderByName } from "../providers";
 import type { ChatMessage } from "../providers/types";
 import { listAllTools } from "../tools";
 import type { Tool } from "../tools/types";
@@ -97,6 +97,8 @@ export async function* runAgent(
     allowedTools?: readonly string[];
     /** When set, use this model instead of the routed/default model. */
     modelPreference?: string | null;
+    /** When set, use this provider instead of the routed/default provider. */
+    providerPreference?: string | null;
     /** Image attachments for a multimodal user turn ({ name, mime, data(base64) }). */
     images?: { name?: string; mime: string; data: string }[];
     /** Bind tools to a coding session worktree for the whole turn. */
@@ -104,12 +106,25 @@ export async function* runAgent(
   }
 ): AsyncGenerator<SSEEvent> {
   const settings = getSettings();
+  const conv = getConversation(conversationId);
   const routed = resolveRoutedModel(
     userMessage,
     settings.active_model,
-    (opts?.processMetadata as { persona_id?: string } | undefined)?.persona_id
+    (opts?.processMetadata as { persona_id?: string } | undefined)?.persona_id,
+    settings.provider
   );
-  const activeModel = opts?.modelPreference || routed.model || settings.active_model;
+  // Precedence: opts → per-conversation override → routing/persona → settings
+  const activeProvider =
+    opts?.providerPreference ||
+    conv?.model_provider ||
+    routed.provider ||
+    settings.provider ||
+    "ollama";
+  const activeModel =
+    opts?.modelPreference ||
+    conv?.model_name ||
+    routed.model ||
+    settings.active_model;
   if (!activeModel) {
     yield { type: "error", message: "No AI model is selected. Pull a model from the Model Manager first.", code: "no_model" };
     return;
@@ -155,7 +170,7 @@ export async function* runAgent(
     ...buildConversationMessages(conversationId),
   ];
 
-  const provider = getProvider();
+  const provider = getProviderByName(activeProvider);
   const allTools = await listAllTools();
   // Subagents get a narrow tool surface. The `request_tool_access` tool is
   // always added to that surface so a stuck subagent can ask the parent for
@@ -207,6 +222,7 @@ export async function* runAgent(
       metadata: {
         conversation_id: conversationId,
         model: activeModel,
+        provider: activeProvider,
         ...(opts?.processMetadata ?? {}),
         ...(routed.matchedAgent ? { routed_agent: routed.matchedAgent, routing_rule_id: routed.ruleId } : {}),
       },

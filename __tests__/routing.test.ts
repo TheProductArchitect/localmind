@@ -12,8 +12,9 @@ vi.mock("../src/lib/db/routing-rules", () => ({
 }));
 vi.mock("../src/lib/db/personas", () => ({
   listPersonas: vi.fn(() => [
-    { persona_id: "agent-researcher", name: "Researcher", model_name: null },
-    { persona_id: "agent-coder", name: "Coder", model_name: "qwen2.5-coder:latest" },
+    { persona_id: "agent-researcher", name: "Researcher", model_name: null, provider: null },
+    { persona_id: "agent-coder", name: "Coder", model_name: "qwen2.5-coder:latest", provider: "ollama" },
+    { persona_id: "agent-claude", name: "ClaudeCoder", model_name: "claude-sonnet-4-6", provider: "anthropic" },
   ]),
 }));
 
@@ -80,7 +81,29 @@ describe("agent routing heuristics", () => {
       rule_id: "rule-3",
       target_agent_name: "llama3.2:latest",
     } as any);
-    const routed = resolveRoutedModel("hi", "other");
+    const routed = resolveRoutedModel("hi", "other", null, "ollama");
     expect(routed.model).toBe("llama3.2:latest");
+    expect(routed.provider).toBe("ollama");
+  });
+
+  it("returns persona provider+model pair", () => {
+    vi.mocked(evaluateRules).mockReturnValue({
+      rule_id: "rule-4",
+      target_agent_name: "ClaudeCoder",
+    } as any);
+    const routed = resolveRoutedModel("refactor auth", "llama3.2:latest", null, "ollama");
+    expect(routed.model).toBe("claude-sonnet-4-6");
+    expect(routed.provider).toBe("anthropic");
+    expect(routed.matchedAgent).toBe("ClaudeCoder");
+  });
+
+  it("parses provider/model target ids", () => {
+    vi.mocked(evaluateRules).mockReturnValue({
+      rule_id: "rule-5",
+      target_agent_name: "gemini/gemini-2.5-flash",
+    } as any);
+    const routed = resolveRoutedModel("quick question", "llama3.2:latest", null, "ollama");
+    expect(routed.provider).toBe("gemini");
+    expect(routed.model).toBe("gemini-2.5-flash");
   });
 });

@@ -13,6 +13,7 @@ import {
   createCodingSession,
   getCodingProject,
   getCodingSession,
+  listCodingSessions,
   updateCodingSession,
   type CodingSession,
 } from "../db/coding";
@@ -113,6 +114,8 @@ export function createWorktreeSession(args: {
   projectId: string;
   goal: string;
   ownerUserId?: string | null;
+  computePeerId?: string | null;
+  workspacePeerId?: string | null;
 }): CreateSessionResult {
   ensureDataDir();
   const project = getCodingProject(args.projectId);
@@ -180,6 +183,8 @@ export function createWorktreeSession(args: {
     worktree_path: worktreePath,
     goal: args.goal,
     process_id: processId,
+    compute_peer_id: args.computePeerId ?? null,
+    workspace_peer_id: args.workspacePeerId ?? null,
   });
 
   const finalPath = path.join(WORKSPACES_DIR, project.id, session.id);
@@ -218,6 +223,41 @@ export function createWorktreeSession(args: {
 
 export type DiscardResult = { ok: true } | { ok: false; error: string };
 
+/** Remove orphan directories under the project's workspaces folder that are not active sessions. */
+export function cleanOrphanWorktrees(projectId: string, keepSessionId?: string): void {
+  const root = path.join(WORKSPACES_DIR, projectId);
+  if (!fs.existsSync(root)) return;
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(root);
+  } catch {
+    return;
+  }
+  const active = new Set(
+    listActiveSessionPaths(projectId).filter((p) => keepSessionId == null || !p.includes(keepSessionId))
+  );
+  for (const name of entries) {
+    const full = path.join(root, name);
+    if (keepSessionId && name === keepSessionId) continue;
+    if (active.has(full)) continue;
+    // Only remove dirs that look like session/tmp worktrees
+    if (!name.startsWith("csess-") && !name.startsWith("tmp-")) continue;
+    try {
+      fs.rmSync(full, { recursive: true, force: true });
+    } catch { /* best-effort */ }
+  }
+}
+
+function listActiveSessionPaths(projectId: string): string[] {
+  try {
+    return listCodingSessions(projectId)
+      .filter((s) => s.status !== "discarded" && s.status !== "merged")
+      .map((s) => s.worktree_path);
+  } catch {
+    return [];
+  }
+}
+
 export function discardWorktreeSession(sessionId: string): DiscardResult {
   const session = getCodingSession(sessionId);
   if (!session) return { ok: false, error: "Unknown session." };
@@ -245,11 +285,24 @@ export function discardWorktreeSession(sessionId: string): DiscardResult {
     }
   }
 
+  // Ensure the worktree directory is gone even if git left it behind.
+  if (fs.existsSync(session.worktree_path)) {
+    try {
+      fs.rmSync(session.worktree_path, { recursive: true, force: true });
+    } catch { /* */ }
+  }
+
   if (!isProtectedBranch(session.branch)) {
     try {
       git(repoPath, ["branch", "-D", session.branch]);
     } catch { /* branch may already be gone */ }
   }
+
+  try {
+    git(repoPath, ["worktree", "prune"]);
+  } catch { /* */ }
+
+  cleanOrphanWorktrees(session.project_id, sessionId);
 
   updateCodingSession(sessionId, { status: "discarded" });
   if (session.process_id) {

@@ -185,7 +185,14 @@ export const codingProjectTool: Tool = {
       const goal = String(input.goal || "").trim();
       if (!projectId) return { ok: false, output: "project_id is required." };
       if (!goal) return { ok: false, output: "goal is required." };
-      const result = createWorktreeSession({ projectId, goal });
+      const { resolvePlacement } = await import("../fleet/placement-pins");
+      const placement = await resolvePlacement();
+      const result = createWorktreeSession({
+        projectId,
+        goal,
+        computePeerId: placement.compute.kind === "peer" ? placement.compute.peer_node_id : "local",
+        workspacePeerId: placement.workspace.kind === "peer" ? placement.workspace.peer_node_id : "local",
+      });
       if (!result.ok) return { ok: false, output: result.error };
       const s = result.session;
       const runSwe = input.run_swe !== false && input.run_swe !== "false";

@@ -3,7 +3,7 @@
  * when a coding project is registered (or LM_SELF_IMPROVE_PROJECT_ID is set).
  */
 
-import { listProposals, setProposalStatus, type ImprovementProposal } from "../db/proposals";
+import { listProposals, setProposalStatus, markProposalNeedsProject, type ImprovementProposal } from "../db/proposals";
 import { listCodingProjects } from "../db/coding";
 import { createWorktreeSession } from "./worktree";
 import { startSweLoop } from "./swe-graph";
@@ -37,8 +37,19 @@ export async function processApprovedProposals(): Promise<{ started: number; err
   const errors: string[] = [];
 
   for (const proposal of approved.slice(0, 3)) {
+    // Skip proposals already annotated as waiting for a project (until one exists).
+    if (
+      proposal.audit_ref?.startsWith("needs_project:") &&
+      listCodingProjects().length === 0 &&
+      !process.env.LM_SELF_IMPROVE_PROJECT_ID
+    ) {
+      errors.push(`${proposal.id}: still waiting for a coding project`);
+      continue;
+    }
+
     const projectId = resolveRepoProjectId(proposal);
     if (!projectId) {
+      markProposalNeedsProject(proposal.id);
       errors.push(
         `${proposal.id}: no coding project registered (set LM_SELF_IMPROVE_PROJECT_ID or register one on /projects)`
       );

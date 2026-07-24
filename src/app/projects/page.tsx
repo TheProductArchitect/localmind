@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { useConfirm } from "@/components/confirm-dialog";
 import { FolderGit2, Plus, Play, ExternalLink, RotateCcw } from "lucide-react";
 
 type Project = {
@@ -32,6 +33,7 @@ type Session = {
 };
 
 export default function ProjectsPage() {
+  const confirm = useConfirm();
   const searchParams = useSearchParams();
   const [projects, setProjects] = useState<Project[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -124,7 +126,13 @@ export default function ProjectsPage() {
   }
 
   async function discard(sessionId: string) {
-    if (!confirm("Discard this session? Worktree and branch will be deleted (undo).")) return;
+    const ok = await confirm({
+      title: "Discard this session?",
+      message: "Worktree and branch will be deleted (undo).",
+      confirmLabel: "Discard",
+      destructive: true,
+    });
+    if (!ok) return;
     setBusy(true);
     setError(null);
     try {

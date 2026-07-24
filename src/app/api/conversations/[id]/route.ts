@@ -56,10 +56,15 @@ export async function PATCH(req: NextRequest, { params: paramsPromise }: { param
     );
   }
   const patch: any = {};
-  for (const k of ["title", "starred", "tags", "deleted_at"]) {
+  for (const k of ["title", "starred", "tags", "deleted_at", "model_provider", "model_name", "compute_placement", "workspace_placement"]) {
     if (k in body) patch[k] = body[k];
+  }
+  // Clear per-chat model override (inherit global settings)
+  if (body.clear_model_override === true) {
+    patch.model_provider = null;
+    patch.model_name = null;
   }
   if ("deleted" in body) patch.deleted_at = body.deleted ? Date.now() : null;
   updateConversation(params.id, patch);
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, conversation: getConversation(params.id) });
 }

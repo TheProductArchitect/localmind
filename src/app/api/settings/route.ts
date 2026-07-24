@@ -23,6 +23,7 @@ export async function PATCH(req: NextRequest) {
     "approved_dirs", "onboarded", "chat_font_size", "auto_backup", "backup_dir",
     "context_window", "web_access_killed", "agent_mode",
     "web_search_provider", "idle_work_enabled", "idle_start_hour", "idle_end_hour",
+    "compute_placement", "workspace_placement",
   ];
   for (const k of allowed) {
     if (k in body) patch[k] = body[k];

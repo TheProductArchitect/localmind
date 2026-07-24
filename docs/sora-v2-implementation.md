@@ -6,6 +6,8 @@ cloud integrations are deferred.
 
 See also the live surface / code graph: [`architecture.md`](./architecture.md).
 
+**Next wave:** [`PRD-personal-assistant-v3.md`](./PRD-personal-assistant-v3.md) — coding polish, presentations, workflow automation, mesh compute/workspace pins, frontier models ([implementation tracker](./personal-assistant-v3-implementation.md)).
+
 ## Shipped
 
 | # | Feature | Status | Key files | Tests |
