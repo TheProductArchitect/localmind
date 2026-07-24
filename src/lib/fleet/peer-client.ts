@@ -139,6 +139,130 @@ export async function sendToPeer<Req, Res>(
 }
 
 /**
+ * Streaming peer RPC for chat-relay with stream_tokens. Expects NDJSON:
+ *   {"type":"token","text":"…"}
+ *   {"type":"result","envelope":{…signed…}}
+ */
+export async function sendToPeerNdjson<Req, Res>(
+  peerNodeId: string,
+  kind: EnvelopeKind,
+  payload: Req,
+  opts: SendOptions & { onToken?: (text: string) => void } = {}
+): Promise<PeerSendResult<Res>> {
+  const peer = getPeer(peerNodeId);
+  if (!peer) return { ok: false, status: 0, reason: `Unknown peer ${peerNodeId}` };
+
+  const pinnedCert = opts.unpinned ? null : pinnedCertOf(peer);
+  if (!pinnedCert && !opts.unpinned) {
+    return { ok: false, status: 0, reason: `No pinned cert for peer ${peerNodeId} — pair first` };
+  }
+
+  const envelope = sign(kind, peerNodeId, payload);
+  const body = Buffer.from(JSON.stringify(envelope), "utf8");
+  const { host, port } = peerEndpoint(peer, `/fleet/${kind}`);
+
+  const reqOpts: https.RequestOptions = {
+    host,
+    port,
+    path: `/fleet/${kind}`,
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "content-length": String(body.length),
+      "x-localmind-fleet-sender": getNodeIdentity().node_id,
+      accept: "application/x-ndjson",
+    },
+    ca: pinnedCert ? [pinnedCert] : undefined,
+    rejectUnauthorized: !opts.unpinned,
+    checkServerIdentity: () => undefined,
+    timeout: opts.timeoutMs ?? 120_000,
+  };
+
+  return new Promise<PeerSendResult<Res>>((resolve) => {
+    const req = https.request(reqOpts, (res) => {
+      const status = res.statusCode ?? 0;
+      const ct = String(res.headers["content-type"] || "");
+      // Fallback: peer doesn't speak NDJSON — buffer as classic JSON envelope.
+      if (!ct.includes("ndjson")) {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf8");
+          if (status < 200 || status >= 300) {
+            resolve({ ok: false, status, reason: text.slice(0, 400) });
+            return;
+          }
+          try {
+            const respEnvelope = JSON.parse(text) as SignedEnvelope<Res>;
+            const v = verify(respEnvelope, {
+              senderPubkeyPem: peer.pubkey_pem,
+              expectedRecipient: getNodeIdentity().node_id,
+            });
+            if (!v.ok) {
+              resolve({ ok: false, status, reason: `Response envelope verify failed: ${v.reason}` });
+              return;
+            }
+            resolve({ ok: true, envelope: v.envelope });
+          } catch {
+            resolve({ ok: false, status, reason: "Peer response was not JSON" });
+          }
+        });
+        return;
+      }
+
+      let buf = "";
+      let settled = false;
+      res.on("data", (c: Buffer) => {
+        buf += c.toString("utf8");
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const obj = JSON.parse(line) as {
+              type?: string;
+              text?: string;
+              envelope?: SignedEnvelope<Res>;
+            };
+            if (obj.type === "token" && typeof obj.text === "string") {
+              opts.onToken?.(obj.text);
+            } else if (obj.type === "result" && obj.envelope) {
+              const v = verify(obj.envelope, {
+                senderPubkeyPem: peer.pubkey_pem,
+                expectedRecipient: getNodeIdentity().node_id,
+              });
+              settled = true;
+              if (!v.ok) {
+                resolve({ ok: false, status, reason: `Response envelope verify failed: ${v.reason}` });
+              } else {
+                resolve({ ok: true, envelope: v.envelope });
+              }
+            }
+          } catch {
+            /* ignore partial/malformed line */
+          }
+        }
+      });
+      res.on("end", () => {
+        if (!settled) {
+          resolve({ ok: false, status, reason: "Stream ended without result envelope" });
+        }
+      });
+    });
+
+    req.on("timeout", () => {
+      req.destroy(new Error("timeout"));
+    });
+    req.on("error", (err) => {
+      resolve({ ok: false, status: 0, reason: err.message || String(err) });
+    });
+
+    req.write(body);
+    req.end();
+  });
+}
+
+/**
  * Variant for the pairing flow: no peer record yet, so we accept any cert
  * matching the fingerprint that came in via QR scan. Used by V6.2 — surfaced
  * here so the pinning code stays in one file.

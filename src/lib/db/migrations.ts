@@ -1394,6 +1394,17 @@ configMigrations.push({
   },
 });
 
+// v38: optional code-server embed in coding window (D4)
+configMigrations.push({
+  version: 38,
+  up: (db) => {
+    db.exec(`
+      ALTER TABLE settings ADD COLUMN code_server_enabled INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE settings ADD COLUMN code_server_url TEXT NOT NULL DEFAULT 'http://127.0.0.1:8080';
+    `);
+  },
+});
+
 const knowledgeMigrations: Migration[] = [
   {
     version: 1,

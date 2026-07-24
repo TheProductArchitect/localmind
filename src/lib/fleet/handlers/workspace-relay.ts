@@ -12,6 +12,7 @@ import { logStartFederated, logComplete } from "../../agent/audit-logger";
 import { parsePeerPolicy, getPeer } from "../../db/fleet";
 import { getBuiltinTool } from "../../tools";
 import type { SignedEnvelope } from "../envelope";
+import { runAsWorkspaceRelayInbound } from "../workspace-relay-context";
 
 export const WORKSPACE_RELAY_TOOLS = new Set(["git", "coding_project", "filesystem"]);
 
@@ -90,11 +91,13 @@ export async function handleWorkspaceRelay(args: {
   }
 
   try {
-    const result = await tool.execute(payload.input || {}, {
-      conversationId: payload.conversation_id || "workspace-relay",
-      approvedDirs: [],
-      codingSessionId: payload.coding_session_id || null,
-    });
+    const result = await runAsWorkspaceRelayInbound(() =>
+      tool.execute(payload.input || {}, {
+        conversationId: payload.conversation_id || "workspace-relay",
+        approvedDirs: [],
+        codingSessionId: payload.coding_session_id || null,
+      })
+    );
     logComplete(auditId, result.ok ? "allowed" : "denied", (result.summary || result.output || "").slice(0, 200));
     return {
       executor_audit_id: auditId,

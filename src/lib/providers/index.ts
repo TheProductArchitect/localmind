@@ -2,6 +2,7 @@ import { getSettings } from "../db/queries";
 import { ollamaProvider } from "./ollama";
 import { anthropicProvider } from "./anthropic";
 import { geminiProvider } from "./gemini";
+import { mindstudioProvider } from "./mindstudio";
 import { makeOpenAICompatibleProvider } from "./openai-compatible";
 import type { Provider } from "./types";
 
@@ -15,6 +16,7 @@ export const CHAT_PROVIDERS = [
   "openrouter",
   "lmstudio",
   "gemini",
+  "mindstudio",
 ] as const;
 
 export type ChatProviderName = (typeof CHAT_PROVIDERS)[number];
@@ -28,6 +30,9 @@ export function getProviderByName(name: string): Provider {
       break;
     case "gemini":
       p = geminiProvider;
+      break;
+    case "mindstudio":
+      p = mindstudioProvider;
       break;
     case "openai":
       p = makeOpenAICompatibleProvider("openai");
@@ -53,4 +58,4 @@ export function getProvider(): Provider {
   return getProviderByName(getSettings().provider);
 }
 
-export { ollamaProvider, anthropicProvider, geminiProvider };
+export { ollamaProvider, anthropicProvider, geminiProvider, mindstudioProvider };

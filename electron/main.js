@@ -263,16 +263,30 @@ async function boot() {
       const raw = JSON.parse(fs.readFileSync(signalPath, "utf8"));
       if (!raw?.at || raw.at <= lastSignalAt) return;
       lastSignalAt = raw.at;
-      const href = raw.path || "/projects";
+
+      const appBase = url.replace(/\/$/, "");
+      // Prefer absolute code-server URL from the signal when enabled; else /projects.
+      let loadTarget;
+      if (raw.code_server_enabled && typeof raw.code_server_url === "string" && /^https?:\/\//i.test(raw.code_server_url)) {
+        loadTarget = raw.code_server_url.replace(/\/$/, "");
+      } else if (typeof raw.path === "string" && /^https?:\/\//i.test(raw.path)) {
+        loadTarget = raw.path.replace(/\/$/, "");
+      } else {
+        const href = (typeof raw.path === "string" && raw.path) ? raw.path : "/projects";
+        loadTarget = `${appBase}${href.startsWith("/") ? href : `/${href}`}`;
+      }
+
       if (codingWin && !codingWin.isDestroyed()) {
         codingWin.focus();
-        codingWin.loadURL(`${url.replace(/\/$/, "")}${href}`);
+        codingWin.loadURL(loadTarget);
         return;
       }
       codingWin = new BrowserWindow({
         width: 1280,
         height: 860,
-        title: "LocalMind · Projects",
+        title: /^https?:\/\//i.test(loadTarget) && !loadTarget.startsWith(appBase)
+          ? "LocalMind · code-server"
+          : "LocalMind · Projects",
         webPreferences: {
           preload: path.join(__dirname, "preload.js"),
           contextIsolation: true,
@@ -281,7 +295,7 @@ async function boot() {
         },
       });
       codingWin.on("closed", () => { codingWin = null; });
-      codingWin.loadURL(`${url.replace(/\/$/, "")}${href}`);
+      codingWin.loadURL(loadTarget);
     } catch { /* ignore */ }
   }, 1500);
 

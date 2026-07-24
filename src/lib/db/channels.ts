@@ -1,7 +1,7 @@
 import { getConfigDb } from ".";
 import { encrypt, decrypt } from "../crypto";
 
-export type ChannelType = "telegram" | "twilio" | "whatsapp" | "email" | "webhook";
+export type ChannelType = "telegram" | "twilio" | "whatsapp" | "email" | "webhook" | "unipile";
 
 export type ChannelRow = {
   channel_type: string;

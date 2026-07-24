@@ -7,7 +7,7 @@ import { getApiKey } from "@/lib/db/apikeys";
 
 export const runtime = "nodejs";
 
-const CLOUD_PROVIDERS = new Set(["openai", "anthropic", "groq", "openrouter", "gemini"]);
+const CLOUD_PROVIDERS = new Set(["openai", "anthropic", "groq", "openrouter", "gemini", "mindstudio"]);
 
 /**
  * GET /api/models?provider=ollama|huggingface|lmstudio|openai|anthropic|…

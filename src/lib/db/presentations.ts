@@ -108,21 +108,47 @@ export async function exportPresentation(
 
   if (format === "html" || format === "pdf") {
     const htmlPath = path.join(dir, "export.html");
-    fs.writeFileSync(htmlPath, deckToHtml(deck), "utf8");
+    const html = deckToHtml(deck);
+    fs.writeFileSync(htmlPath, html, "utf8");
     if (format === "html") {
       getConfigDb()
         .prepare("UPDATE presentations SET status='exported', updated_at=? WHERE id=?")
         .run(Date.now(), id);
       return { ok: true, path: htmlPath };
     }
-    // PDF: write HTML companion; full print-to-PDF is optional (Chromium).
-    // Also write a .pdf placeholder note pointing at the HTML for print.
-    const pdfNote = path.join(dir, "export.pdf.html");
-    fs.writeFileSync(pdfNote, deckToHtml(deck), "utf8");
-    getConfigDb()
-      .prepare("UPDATE presentations SET status='exported', updated_at=? WHERE id=?")
-      .run(Date.now(), id);
-    return { ok: true, path: pdfNote };
+    // Real PDF via Playwright Chromium; fall back to printable HTML companion.
+    const pdfPath = path.join(dir, "export.pdf");
+    try {
+      await import("../playwright-path");
+      const { chromium } = await import("playwright");
+      const browser = await chromium.launch({ headless: true });
+      try {
+        const page = await browser.newPage();
+        await page.setContent(html, { waitUntil: "load" });
+        await page.pdf({
+          path: pdfPath,
+          format: "A4",
+          printBackground: true,
+          margin: { top: "16mm", bottom: "16mm", left: "14mm", right: "14mm" },
+        });
+      } finally {
+        await browser.close().catch(() => {});
+      }
+      getConfigDb()
+        .prepare("UPDATE presentations SET status='exported', updated_at=? WHERE id=?")
+        .run(Date.now(), id);
+      return { ok: true, path: pdfPath };
+    } catch (e: any) {
+      const pdfNote = path.join(dir, "export.pdf.html");
+      fs.writeFileSync(pdfNote, html, "utf8");
+      getConfigDb()
+        .prepare("UPDATE presentations SET status='exported', updated_at=? WHERE id=?")
+        .run(Date.now(), id);
+      return {
+        ok: true,
+        path: pdfNote,
+      };
+    }
   }
 
   try {

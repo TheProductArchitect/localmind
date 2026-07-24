@@ -227,8 +227,11 @@ materially with larger ones (8B+). Pull and select models under **Models**.
 ### Key paths
 
 - `docs/architecture.md` — surface map + agent/spawn/data code graphs (mermaid)
-- `docs/PRD-personal-assistant-v3.md` — next-wave PRD (coding polish, presentations, automation, mesh pins, frontier models)
+- `docs/PRD-personal-assistant-v3.md` — v3 PRD (coding polish, presentations, automation, mesh pins, frontier models) — shipped
 - `docs/personal-assistant-v3-implementation.md` — v3 feature → code status
+- `docs/PRD-mesh-depth-v4.md` — v4 PRD (workspace RPC, token stream, MindStudio/Unipile, PDF, code-server)
+- `docs/mesh-depth-v4-implementation.md` — v4 feature → code status
+- `docs/architecture.md` — surface map + fleet / migrations
 - `docs/sora-v2-implementation.md` — Sora v2 PRD feature → code status
 - `src/lib/agent/` — engine, routing, web-guard, confirmations, critic, system prompt,
   `context-broker.ts` (RAG), `pillar-classify.ts`, `idle.ts` / `idle-cycle.ts`,

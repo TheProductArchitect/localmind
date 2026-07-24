@@ -119,7 +119,7 @@ export function resolveRoutedModel(
     const slash = target.indexOf("/");
     if (slash > 0) {
       const maybeProvider = target.slice(0, slash).toLowerCase();
-      const known = ["ollama", "openai", "anthropic", "groq", "openrouter", "lmstudio", "gemini"];
+      const known = ["ollama", "openai", "anthropic", "groq", "openrouter", "lmstudio", "gemini", "mindstudio"];
       if (known.includes(maybeProvider)) {
         return {
           provider: maybeProvider,

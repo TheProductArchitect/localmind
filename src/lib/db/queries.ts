@@ -36,6 +36,10 @@ export type Settings = {
   compute_placement?: string;
   /** Repo/worktree host: local | peer_node_id */
   workspace_placement?: string;
+  /** When 1, coding window prefers code-server URL over /projects */
+  code_server_enabled?: number;
+  /** Local code-server base URL (default http://127.0.0.1:8080) */
+  code_server_url?: string;
 };
 
 export type WebSearchProvider = "auto" | "brave" | "you" | "duckduckgo";

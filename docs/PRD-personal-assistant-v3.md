@@ -480,12 +480,13 @@ Dependency-aware; implement in this sequence unless blocked:
 6. **F — Self-extension prompt/copy polish**  
    Can land anytime after A’s Gate-2 path is solid; trivial alone.
 
-**Explicit follow-ups (out of v3 scope):**
-- Embed code-server in the coding window
-- True cross-mesh token streaming
-- WAN mesh
-- Unipile / MindStudio
+**Explicit follow-ups (out of v3 scope — see [`PRD-mesh-depth-v4.md`](./PRD-mesh-depth-v4.md)):**
+- Embed code-server in the coding window → **v4 D4** (URL embed; no binary spawn)
+- True cross-mesh token streaming → **v4 M4** shipped
+- WAN mesh → still out of scope
+- Unipile / MindStudio → **v4 D2/D3** opt-in stubs shipped
 - Context Graph GraphQL phase / `user_context` tool (still Sora v2 follow-ups)
+- Remote confirmation propagation across mesh (**v4 M5** — still open)
 
 ---
 

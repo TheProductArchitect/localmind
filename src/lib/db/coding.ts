@@ -95,6 +95,7 @@ export function deleteCodingProject(id: string): boolean {
 }
 
 export function createCodingSession(args: {
+  id?: string;
   project_id: string;
   branch: string;
   worktree_path: string;
@@ -103,7 +104,7 @@ export function createCodingSession(args: {
   compute_peer_id?: string | null;
   workspace_peer_id?: string | null;
 }): CodingSession {
-  const id = `csess-${nanoid(10)}`;
+  const id = args.id || `csess-${nanoid(10)}`;
   const now = Date.now();
   // Prefer columns from v37 when present; fall back if migration not yet applied.
   try {

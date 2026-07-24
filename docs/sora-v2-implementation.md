@@ -6,7 +6,9 @@ cloud integrations are deferred.
 
 See also the live surface / code graph: [`architecture.md`](./architecture.md).
 
-**Next wave:** [`PRD-personal-assistant-v3.md`](./PRD-personal-assistant-v3.md) — coding polish, presentations, workflow automation, mesh compute/workspace pins, frontier models ([implementation tracker](./personal-assistant-v3-implementation.md)).
+**Next wave:** [`PRD-mesh-depth-v4.md`](./PRD-mesh-depth-v4.md) — close workspace-relay loop, token streaming, deferred cloud/PDF/code-server ([implementation tracker](./mesh-depth-v4-implementation.md)).
+
+Prior wave: [`PRD-personal-assistant-v3.md`](./PRD-personal-assistant-v3.md) — coding polish, presentations, workflow automation, mesh compute/workspace pins, frontier models ([implementation tracker](./personal-assistant-v3-implementation.md)).
 
 ## Shipped
 
@@ -49,22 +51,25 @@ tests**. Typecheck clean.
   merge only; force-push still confirmation-gated.
 - **H** is Phase 1 (read-only viz + REST ingestion). The GraphQL layer and
   confirm/edit/delete of inferred nodes are the documented later phase.
-- **Fleet** — remote chat is progressive-status SSE over a single relay reply
-  (not token-streaming across the mesh yet). Attachment sync caps at 256 KiB
-  of validated `image/*` JSON per conversation pack.
+- **Fleet** — remote chat streams tokens over fleet NDJSON → initiator SSE
+  (`token` events). Attachment sync caps at 256 KiB of validated `image/*`
+  JSON per conversation pack. Workspace RPC + compute/workspace pins: see
+  [`PRD-mesh-depth-v4.md`](./PRD-mesh-depth-v4.md). Remote `ask` confirmations
+  still fail-closed (M5).
 - **Spawn** — prefer `spawn_agents`; legacy triad remains for back-compat.
 - **Coding** — agents push feature branches + open PRs only; never main. Discard
   session = full undo. `coding_session_id` binds `pi_code` / `filesystem` / `git`
-  to the worktree for the whole turn (engine + SWE graph). Optional later: embed
-  code-server in the coding window.
+  to the worktree for the whole turn (engine + SWE graph). Optional code-server
+  URL embed: Settings → `code_server_enabled` (does not spawn the binary).
 
-## Deferred — paid cloud (await owner decision)
+## Paid cloud (opt-in; shipped in v4)
 
-Both send data to paid third-party services, so they are parked per the
-local-first / free-first priority:
+Both send data to paid third-party services — **disabled by default**, clearly
+labeled cloud:
 
-- **C4 — Unipile** (messaging/email/LinkedIn relay).
-- **C5 — MindStudio** (hosted model router; adds an npm dependency).
+- **C4 — Unipile** — Settings → Channels; webhook HMAC best-effort until scheme confirmed.
+- **C5 — MindStudio** — Models / Settings provider; OpenAI-compatible HTTP via
+  `MINDSTUDIO_BASE_URL` (real app-run API may need a follow-up adapter).
 
-Each is buildable as an opt-in, disabled-by-default, keyed integration and would
-be unit-tested against mocked HTTP.
+Tracker: [`mesh-depth-v4-implementation.md`](./mesh-depth-v4-implementation.md).
+

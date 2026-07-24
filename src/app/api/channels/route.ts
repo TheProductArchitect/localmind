@@ -4,7 +4,7 @@ import { startTelegramPolling, telegramPollOnce } from "@/lib/channels/telegram"
 
 export const runtime = "nodejs";
 
-const TYPES: ChannelType[] = ["telegram", "twilio", "whatsapp", "email", "webhook"];
+const TYPES: ChannelType[] = ["telegram", "twilio", "whatsapp", "email", "webhook", "unipile"];
 
 export async function GET(req: NextRequest) {
   const type = req.nextUrl.searchParams.get("type") as ChannelType | null;
@@ -29,6 +29,16 @@ export async function POST(req: NextRequest) {
   for (const [k, v] of Object.entries(config || {})) {
     if (typeof v === "string" && v.includes("••••")) continue;
     merged[k] = v;
+  }
+  // Unipile webhook is a public route — require a secret before enabling.
+  if (type === "unipile" && enabled) {
+    const secret = String(merged.webhookSecret || "").trim();
+    if (!secret) {
+      return NextResponse.json(
+        { error: "Webhook secret is required to enable Unipile (inbound route is public)." },
+        { status: 400 }
+      );
+    }
   }
   setChannel(type, !!enabled, merged);
   if (type === "telegram" && enabled) {

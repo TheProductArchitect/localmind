@@ -24,18 +24,21 @@ Predecessor status: [`sora-v2-implementation.md`](./sora-v2-implementation.md). 
 5. **B** — Presentations ✅  
 6. **F** — Self-extension polish ✅  
 
-## Deferred (explicitly out of v3)
+## Deferred (explicitly out of v3 — see v4 wave)
 
-- Unipile / MindStudio (paid cloud)
-- WAN mesh / NAT
-- True cross-mesh token streaming
-- code-server embed in coding window
-- Sora v2 Context Graph GraphQL / `user_context` tool
-- Full Chromium print-to-PDF for decks (HTML export ships; print is optional)
+Items below moved to [`PRD-mesh-depth-v4.md`](./PRD-mesh-depth-v4.md) / [`mesh-depth-v4-implementation.md`](./mesh-depth-v4-implementation.md):
+
+- Unipile / MindStudio (paid cloud) — opt-in stubs in v4
+- WAN mesh / NAT — still out of scope
+- True cross-mesh token streaming — shipped in v4 (NDJSON)
+- code-server embed in coding window — settings + Electron path in v4
+- Full Chromium print-to-PDF for decks — shipped in v4
+- Sora v2 Context Graph GraphQL / `user_context` tool — still later
 
 ## Notes
 
-- Config schema after this slice: **v37** (placements + coding session peer ids; presentations at v35).
+- Config schema after v3 slice: **v37** (placements + coding session peer cols; presentations at v35). **v38** adds code-server settings (v4).
 - Conversations schema: **v7** (`compute_placement` / `workspace_placement`).
 - Coding / fleet / automations / multi-provider bases from Sora v2 are extended in place — no forked engines.
 - Security: web-guard, audit hash chain, and confirm floors unchanged; workspace-relay is allowlisted (`git` / `coding_project` / `filesystem`) and peer-policy gated.
+- **v4:** workspace-relay initiator + tool routing close the compute/workspace pin loop; token streaming + opt-in Unipile/MindStudio/PDF/code-server path — see [`mesh-depth-v4-implementation.md`](./mesh-depth-v4-implementation.md).

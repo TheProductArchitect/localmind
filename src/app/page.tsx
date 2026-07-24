@@ -206,6 +206,13 @@ function ChatInner() {
           setProvider(j.settings?.provider || "ollama");
           setDefaultProvider(j.settings?.provider || "ollama");
           setAgentMode((j.settings?.agent_mode as "auto" | "plan" | "ask") || "auto");
+          const cp = j.settings?.compute_placement;
+          if (cp === "local") setRunOnPeer(null);
+          else if (cp && cp !== "auto") setRunOnPeer(cp);
+          else if (cp === "auto") setRunOnPeer("__auto__");
+          const wp = j.settings?.workspace_placement;
+          if (wp && wp !== "local" && wp !== "auto") setWorkspacePeer(wp);
+          else setWorkspacePeer("");
           const fs = Number(j.settings?.chat_font_size);
           if (fs >= 12 && fs <= 28) {
             document.documentElement.style.setProperty("--lm-root-fs", `${fs}px`);
@@ -349,6 +356,13 @@ function ChatInner() {
       setModel(defaultModel);
       setProvider(defaultProvider);
     }
+    const cp = conv?.compute_placement;
+    if (cp === "local") setRunOnPeer(null);
+    else if (cp && cp !== "auto") setRunOnPeer(cp);
+    else if (cp === "auto") setRunOnPeer("__auto__");
+    const wp = conv?.workspace_placement;
+    if (wp && wp !== "local" && wp !== "auto") setWorkspacePeer(wp);
+    else if (wp === "local" || wp === "") setWorkspacePeer("");
     const items: ThreadItem[] = [];
     for (const m of j.messages || []) {
       const origin = m.origin_label || null;
@@ -569,7 +583,9 @@ function ChatInner() {
     setExecutorHint(null);
     if (peerTarget === "__auto__") {
       try {
-        const place = await fetch("/api/fleet/chat-placement").then((r) => r.json());
+        const place = await fetch(
+          `/api/fleet/chat-placement${convId ? `?conversation_id=${encodeURIComponent(convId)}` : ""}`
+        ).then((r) => r.json());
         if (place?.kind === "peer" && place.peer_node_id) {
           peerTarget = place.peer_node_id;
           setExecutorHint(`Auto → ${place.label || place.peer_node_id.slice(0, 12)}`);
@@ -625,6 +641,23 @@ function ChatInner() {
                   if (ev.peer_label) label = ev.peer_label;
                   if (ev.phase === "relay_started") setExecutorHint(`Waiting on ${label}…`);
                   if (ev.phase === "receiving") setExecutorHint(`Receiving from ${label}…`);
+                } else if (ev.type === "token" && typeof ev.text === "string") {
+                  setExecutorHint(`Receiving from ${label}…`);
+                  setThread((t) => {
+                    const out = [...t];
+                    for (let i = out.length - 1; i >= 0; i--) {
+                      if (out[i].kind === "assistant") {
+                        const prev = out[i] as { kind: "assistant"; content: string; originLabel?: string };
+                        out[i] = {
+                          kind: "assistant",
+                          content: (prev.content || "") + ev.text,
+                          originLabel: label,
+                        };
+                        break;
+                      }
+                    }
+                    return out;
+                  });
                 } else if (ev.type === "done") {
                   reply = ev.reply ?? "";
                   if (ev.peer_label) label = ev.peer_label;
@@ -1026,7 +1059,25 @@ function ChatInner() {
               <span className="lm-micro" style={{ color: "hsl(0 0% 100% / 0.4)" }}>Run on</span>
               <select
                 value={runOnPeer ?? ""}
-                onChange={(e) => setRunOnPeer(e.target.value || null)}
+                onChange={async (e) => {
+                  const v = e.target.value || null;
+                  setRunOnPeer(v);
+                  const compute_placement =
+                    !v ? "local" : v === "__auto__" ? "auto" : v;
+                  if (activeId) {
+                    await fetch(`/api/conversations/${activeId}`, {
+                      method: "PATCH",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ compute_placement }),
+                    });
+                  } else {
+                    await fetch("/api/settings", {
+                      method: "PATCH",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ compute_placement }),
+                    });
+                  }
+                }}
                 className="lm-peer-select"
                 aria-label="Choose which machine runs this turn"
               >

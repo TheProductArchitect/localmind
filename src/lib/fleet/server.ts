@@ -169,6 +169,36 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse): Pr
   // Pairing handlers manage their own verification (they have the peer pubkey
   // from the QR payload). They still get a parsed envelope.
   try {
+    // Streaming chat-relay: NDJSON token lines then a final signed result envelope.
+    const wantsStream =
+      kind === "chat-relay" &&
+      envelope.payload &&
+      typeof envelope.payload === "object" &&
+      (envelope.payload as { stream_tokens?: boolean }).stream_tokens === true;
+
+    if (wantsStream) {
+      res.writeHead(200, {
+        "content-type": "application/x-ndjson; charset=utf-8",
+        "transfer-encoding": "chunked",
+        "cache-control": "no-cache",
+      });
+      const writeLine = (obj: unknown) => {
+        res.write(Buffer.from(JSON.stringify(obj) + "\n", "utf8"));
+      };
+      const { handleChatRelay } = await import("./handlers/chat-relay");
+      const payload = await handleChatRelay({
+        envelope: envelope as SignedEnvelope<import("./handlers/chat-relay").ChatRelayRequest>,
+        senderNodeId: envelope.sender,
+        onToken: (text) => {
+          writeLine({ type: "token", text });
+        },
+      });
+      const resultEnv = sign(`${kind}-result` as EnvelopeKind, envelope.sender, payload);
+      writeLine({ type: "result", envelope: resultEnv });
+      res.end();
+      return;
+    }
+
     const payload = await handler({ envelope, senderNodeId: envelope.sender });
     writeEnvelopeResponse(res, envelope.sender, `${kind}-result` as EnvelopeKind, payload);
   } catch (e) {

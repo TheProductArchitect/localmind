@@ -24,7 +24,8 @@ type Provider =
   | "anthropic"
   | "groq"
   | "openrouter"
-  | "gemini";
+  | "gemini"
+  | "mindstudio";
 
 const LOCAL_TABS: { id: Provider; label: string; blurb: string }[] = [
   { id: "ollama", label: "Ollama", blurb: "Native Ollama models, downloaded and run by the Ollama daemon." },
@@ -38,6 +39,11 @@ const CLOUD_TABS: { id: Provider; label: string; blurb: string }[] = [
   { id: "gemini", label: "Gemini", blurb: "Google Gemini models via a Google AI Studio API key." },
   { id: "groq", label: "Groq", blurb: "Fast inference via Groq." },
   { id: "openrouter", label: "OpenRouter", blurb: "Many frontier labs through one OpenRouter key." },
+  {
+    id: "mindstudio",
+    label: "Cloud — MindStudio",
+    blurb: "Opt-in cloud router. Never the default. Requires an API key; set MINDSTUDIO_BASE_URL if your gateway differs from the documented placeholder.",
+  },
 ];
 
 const PROVIDER_TABS = [...LOCAL_TABS, ...CLOUD_TABS];

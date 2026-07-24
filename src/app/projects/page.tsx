@@ -44,6 +44,7 @@ export default function ProjectsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [codeServer, setCodeServer] = useState<{ enabled: boolean; url: string } | null>(null);
 
   const load = useCallback(async () => {
     const r = await fetch("/api/coding/projects");
@@ -58,6 +59,19 @@ export default function ProjectsPage() {
     const t = setInterval(load, 4000);
     return () => clearInterval(t);
   }, [load]);
+
+  useEffect(() => {
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((j) => {
+        const s = j.settings || {};
+        setCodeServer({
+          enabled: !!s.code_server_enabled,
+          url: s.code_server_url || "http://127.0.0.1:8080",
+        });
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const pid = searchParams.get("project");
@@ -154,12 +168,17 @@ export default function ProjectsPage() {
 
   async function openCodingWindow(projectId: string) {
     try {
-      await fetch("/api/coding/open-window", {
+      const r = await fetch("/api/coding/open-window", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ project_id: projectId }),
       });
-      // Electron listens via IPC; in browser, open a focused tab
+      const j = await r.json().catch(() => ({}));
+      // Electron listens via signal file; in browser, prefer code-server when enabled.
+      if (j.code_server_enabled && j.code_server_url) {
+        window.open(j.code_server_url, "localmind-coding", "noopener,width=1200,height=800");
+        return;
+      }
       window.open(`/projects?project=${projectId}&focus=1`, "localmind-coding", "noopener,width=1200,height=800");
     } catch {
       window.open(`/projects?project=${projectId}`, "_blank");
@@ -182,6 +201,15 @@ export default function ProjectsPage() {
           worktree — discard undoes everything. Agents plan, implement, test, and open a PR on a
           feature branch (never main).
         </p>
+        {codeServer?.enabled && (
+          <p className="text-sm opacity-70 max-w-2xl border px-3 py-2" style={{ borderColor: "hsl(0 0% 100% / 0.12)" }}>
+            code-server is enabled — the Electron coding window opens{" "}
+            <a href={codeServer.url} target="_blank" rel="noreferrer" className="underline">
+              {codeServer.url}
+            </a>{" "}
+            instead of this page. Toggle under Settings → General.
+          </p>
+        )}
       </header>
 
       {(error || msg) && (
