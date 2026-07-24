@@ -1,11 +1,9 @@
 /**
  * time — current date / time / timezone / platform.
  *
- * Replaces the static `date_context` block in the system prompt. Sora calls
- * this on demand instead of having "today is YYYY-MM-DD" baked into every
- * turn's prompt — which goes stale across long conversations and bloats the
- * context. Calling a tool is one extra round-trip; getting the right answer
- * is worth it.
+ * A compact clock also lives in the `date_context` system-prompt block.
+ * Prefer that for ordinary turns; use this tool when the ask actually
+ * depends on a fresh timestamp (explicit clock questions, scheduling).
  *
  * Always allowed (read-shaped action type).
  */
@@ -24,7 +22,7 @@ export const timeTool: Tool = {
   definition: {
     name: "time",
     description:
-      "Get current date, time, timezone, and platform. Use ONLY when the user asks what time/day it is, or when scheduling depends on it. Do NOT call this for greetings, small talk, or ordinary conversation.",
+      "Current date, time, timezone, and platform. Contract: use when the user's ask depends on a precise/fresh clock (e.g. \"what time is it?\", scheduling). When a Context block already has local time and the ask does not need the clock, prefer answering without this tool. Example good: \"remind me in 20 minutes\". Example unnecessary: a greeting where time is already in context.",
     parameters: {
       type: "object",
       properties: {},

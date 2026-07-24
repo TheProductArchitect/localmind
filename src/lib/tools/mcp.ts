@@ -115,8 +115,10 @@ export async function getMcpTools(): Promise<Tool[]> {
   for (const server of servers) {
     let serverTools = toolRows.filter((t) => t.server_id === server.id);
     if (serverTools.length === 0) {
-      await refreshServerTools(server);
-      serverTools = listMcpTools(server.id);
+      // Never block the chat hot path on MCP cold-connect. Refresh in the
+      // background so tools appear on a later turn.
+      void refreshServerTools(server).catch(() => {});
+      continue;
     }
     for (const mt of serverTools) {
       tools.push({

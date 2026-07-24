@@ -269,6 +269,10 @@ function useSettings() {
       toast(j.message || j.error || "Save failed", "error");
       return;
     }
+    if (typeof patch?.assistant_name === "string") {
+      const { notifyAssistantName } = await import("@/components/branding-sync");
+      notifyAssistantName(patch.assistant_name);
+    }
     toast("Saved", "success");
     load();
   };
@@ -341,7 +345,14 @@ function GeneralSection() {
       </Card>
       <Card className="p-4 space-y-3">
         <label className="block text-sm">Assistant name
-          <Input defaultValue={s.assistant_name} onBlur={(e) => save({ assistant_name: e.target.value })} className="mt-1" />
+          <Input
+            defaultValue={s.assistant_name}
+            onBlur={(e) => save({ assistant_name: e.target.value })}
+            className="mt-1"
+          />
+          <p className="text-xs text-white/40 mt-1">
+            This becomes the app name and window title. The dock icon is the same orb you see in chat — it follows what your assistant is doing.
+          </p>
         </label>
         <label className="block text-sm">Personality
           <select defaultValue={s.personality} onChange={(e) => save({ personality: e.target.value })}

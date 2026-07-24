@@ -64,6 +64,8 @@ export const ollamaProvider: Provider = {
     if (contextWindow && contextWindow > 0) {
       body.options = { num_ctx: contextWindow };
     }
+    // Top-level keep_alive avoids multi-second cold reloads between turns.
+    body.keep_alive = "30m";
 
     const r = await fetch(`${HOST}/api/chat`, {
       method: "POST",

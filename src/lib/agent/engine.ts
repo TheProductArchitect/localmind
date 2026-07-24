@@ -17,9 +17,11 @@ import { classifyPillar } from "./pillar-classify";
 import { parseTextToolCalls } from "./text-tool-calls";
 import { splitHistory, recentWindowSize } from "./history-context";
 import { ensureConversationSummary } from "./history-summary";
+import { getConversationSummary } from "../db/conversation-summary";
 import { buildConversationMessages } from "./conversation-messages";
 import { unregisterProcess } from "./process-registry";
 import { resolveRoutedModel } from "./routing";
+import { isTrivialUserTurn } from "./trivial-turn";
 
 // Best-effort orchestration hooks — orchestration writes must never crash the agent loop.
 function safeProcessHook(fn: () => void): void {
@@ -27,6 +29,7 @@ function safeProcessHook(fn: () => void): void {
 }
 
 export type SSEEvent =
+  | { type: "status"; phase: string; detail?: string }
   | { type: "text_chunk"; delta: string }
   | { type: "tool_call_start"; toolCallId: string; toolName: string; status: string; input: any }
   | { type: "tool_call_result"; toolCallId: string; status: string; output: string; summary?: string }
@@ -105,8 +108,12 @@ export async function* runAgent(
     codingSessionId?: string | null;
   }
 ): AsyncGenerator<SSEEvent> {
+  // First yield before any I/O so the UI can leave "blank" immediately.
+  yield { type: "status", phase: "preparing", detail: "Starting…" };
+
   const settings = getSettings();
   const conv = getConversation(conversationId);
+  const trivial = !opts?.allowedTools && !opts?.regenerate && isTrivialUserTurn(userMessage);
   const routed = resolveRoutedModel(
     userMessage,
     settings.active_model,
@@ -171,7 +178,15 @@ export async function* runAgent(
   ];
 
   const provider = getProviderByName(activeProvider);
-  const allTools = await listAllTools();
+  let allTools: Tool[] = [];
+  if (trivial) {
+    // Greetings/acks: skip the tool registry entirely so the model cannot
+    // invent a `time` / web call and double the round-trip.
+    yield { type: "status", phase: "thinking", detail: "Replying…" };
+  } else {
+    yield { type: "status", phase: "preparing", detail: "Loading tools…" };
+    allTools = await listAllTools();
+  }
   // Subagents get a narrow tool surface. The `request_tool_access` tool is
   // always added to that surface so a stuck subagent can ask the parent for
   // more — see src/lib/tools/request-tool-access.ts. The main Sora chat
@@ -184,9 +199,11 @@ export async function* runAgent(
   // request_tool_access is the subagent escape hatch. Main chat already has
   // the full registry — leaving it visible causes small models to "ask
   // permission" instead of answering or calling the real tools.
-  const visibleTools = allowedSet
-    ? allTools.filter((t) => allowedSet.has(t.definition.name))
-    : allTools.filter((t) => t.definition.name !== "request_tool_access");
+  const visibleTools = trivial
+    ? []
+    : allowedSet
+      ? allTools.filter((t) => allowedSet.has(t.definition.name))
+      : allTools.filter((t) => t.definition.name !== "request_tool_access");
   const toolMap = new Map<string, Tool>(visibleTools.map((t) => [t.definition.name, t]));
   const toolDefs = visibleTools.map((t) => t.definition);
   let totalTokens = 0;
@@ -229,10 +246,9 @@ export async function* runAgent(
     });
   });
 
-  // Intelligent history (§ "don't dump the whole conversation"): keep the most
-  // recent turns verbatim, fold everything older into a maintained rolling
-  // summary, and leave the raw older messages retrievable via the `recall`
-  // tool. Short conversations are untouched.
+  // Intelligent history: use the last stored summary immediately (never block
+  // the first token on a full LLM summarize). Refresh the summary in the
+  // background when the covered window is behind.
   const ctxWindow = resolveContextWindow(settings.context_window, activeModel);
   try {
     const RECENT = recentWindowSize();
@@ -240,46 +256,48 @@ export async function* runAgent(
     if (nonSystem.length > RECENT) {
       const { older, recent } = splitHistory(nonSystem, RECENT);
       if (older.length > 0) {
-        const summary = await ensureConversationSummary(conversationId, older, {
-          model: activeModel,
-          signal,
-          contextWindow: ctxWindow,
-        });
-        if (summary) {
-          // Fold the summary into the system message — provider-safe (no extra
-          // message roles / ordering concerns) — and drop the raw older turns.
+        const stored = getConversationSummary(conversationId);
+        if (stored?.summary) {
           const sys = messages[0];
           const merged: ChatMessage = {
             ...sys,
             content:
               (sys.content || "") +
               "\n\n## Earlier conversation (summarized)\n" +
-              summary +
+              stored.summary +
               "\n(Older messages aren't shown verbatim — call the `recall` tool to fetch specific past messages if you need a detail from earlier.)",
           };
           messages.length = 0;
           messages.push(merged, ...recent);
           contextCompressed = true;
         }
-        // If no summary could be produced, fall through with full history.
+        if (!stored || (stored.covered_count ?? 0) < older.length) {
+          void ensureConversationSummary(conversationId, older, {
+            model: activeModel,
+            signal,
+            contextWindow: ctxWindow,
+          }).catch(() => {});
+        }
       }
     }
   } catch {
     /* history budgeting is best-effort — proceed with full history if it fails */
   }
 
-  // Context Broker (§7.3): retrieve only the *relevant* slice of memory / brain
-  // / knowledge for this turn and fold a cited brief (within a token budget)
-  // into the system prompt — "only what's needed", not a full dump. Main chat
-  // only; retrieval is local (Ollama embeddings) and best-effort. Nothing is
-  // injected when nothing relevant is found, so it adds no noise on empty KBs.
-  if (!opts?.allowedTools && userMessage && userMessage.trim()) {
+  // Context Broker: skip on trivial turns; otherwise race retrieval against a
+  // short deadline so a slow Ollama embed never stalls first-token latency.
+  if (!trivial && !opts?.allowedTools && userMessage && userMessage.trim()) {
     try {
+      yield { type: "status", phase: "preparing", detail: "Gathering context…" };
       const { retrieveContext } = await import("./context-broker");
-      const res = await retrieveContext({ query: userMessage, userId: convOwner });
-      if (res.items.length > 0) {
+      type BrokerRes = Awaited<ReturnType<typeof retrieveContext>>;
+      const res = await Promise.race([
+        retrieveContext({ query: userMessage, userId: convOwner }),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 180)),
+      ]);
+      if (res && (res as BrokerRes).items?.length > 0) {
         const sys = messages[0];
-        messages[0] = { ...sys, content: (sys.content || "") + "\n\n" + res.brief };
+        messages[0] = { ...sys, content: (sys.content || "") + "\n\n" + (res as BrokerRes).brief };
       }
     } catch {
       /* retrieval is best-effort — proceed without injected context */
@@ -289,6 +307,7 @@ export async function* runAgent(
   let processOutcome: "completed" | "failed" | "cancelled" = "completed";
 
   try {
+    yield { type: "status", phase: "thinking" };
     if (contextCompressed) yield { type: "context_compressed" };
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
       if (signal.aborted) { processOutcome = "cancelled"; return; }
@@ -353,6 +372,20 @@ export async function* runAgent(
           return;
         }
         toolCallCount++;
+        // Defense in depth: greetings must never pay for a tool round-trip
+        // (especially `time`, which small models invent after "hello").
+        if (isTrivialUserTurn(userMessage)) {
+          const msg =
+            `Skipped "${call.name}" — greetings and short acknowledgements do not need tools. Reply in plain text.`;
+          messages.push({
+            role: "tool",
+            content: msg,
+            tool_call_id: call.id,
+            name: call.name,
+          });
+          yield { type: "tool_call_result", toolCallId: call.id, status: "denied", output: msg };
+          continue;
+        }
         const tool = toolMap.get(call.name);
         if (!tool) {
           messages.push({

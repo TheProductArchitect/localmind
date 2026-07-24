@@ -103,6 +103,7 @@ function ChatInner() {
   const [thread, setThread] = useState<ThreadItem[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [streamPhase, setStreamPhase] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [model, setModel] = useState<string | null>(null);
@@ -459,6 +460,7 @@ function ChatInner() {
   // === Streaming ===
   async function streamChat(convId: string, body: any) {
     setStreaming(true);
+    setStreamPhase("preparing");
     setError(null);
     setActiveTools({});
     let lastEventId = 0;
@@ -521,6 +523,7 @@ function ChatInner() {
       if (gotDone) setError(null);
     } finally {
       setStreaming(false);
+      setStreamPhase(null);
       setActiveTools({});
       loadConversations();
       // Conversation-mode handoff: once streaming has stopped, hand the
@@ -548,28 +551,37 @@ function ChatInner() {
   async function sendUtterance(text: string) {
     const cleaned = text.trim();
     if (!cleaned || streaming) return;
+    setStreaming(true);
+    setStreamPhase("preparing");
     setInput("");
+    setThread((t) => [...t, { kind: "user", content: cleaned }, { kind: "assistant", content: "" }]);
     let convId = activeId;
     if (!convId) {
-      const r = await fetch("/api/conversations", { method: "POST" });
-      convId = (await r.json()).conversation.id;
-      setActiveId(convId);
+      try {
+        const r = await fetch("/api/conversations", { method: "POST" });
+        convId = (await r.json()).conversation.id;
+        setActiveId(convId!);
+      } catch (e) {
+        setStreaming(false);
+        setStreamPhase(null);
+        setError((e as Error).message || "Could not start conversation");
+        return;
+      }
     }
-    setThread((t) => [...t, { kind: "user", content: cleaned }, { kind: "assistant", content: "" }]);
     streamChat(convId!, { message: cleaned, persona });
   }
 
   async function send() {
     const text = input.trim();
     if ((!text && attachments.length === 0) || streaming) return;
-    let convId = activeId;
-    if (!convId) {
-      const r = await fetch("/api/conversations", { method: "POST" });
-      convId = (await r.json()).conversation.id;
-      setActiveId(convId);
-    }
     const outgoing = attachments;
     const images = outgoing.map((a) => ({ name: a.name, mime: a.mime, data: a.data }));
+
+    // Paint the turn + typing state BEFORE any network — the previous path
+    // awaited conversation create / fleet placement with a blank thread.
+    setStreaming(true);
+    setStreamPhase("preparing");
+    setError(null);
     setInput("");
     setAttachments([]);
     setThread((t) => [
@@ -577,6 +589,20 @@ function ChatInner() {
       { kind: "user", content: text, images: outgoing.length ? outgoing.map((a) => a.url) : undefined },
       { kind: "assistant", content: "" },
     ]);
+
+    let convId = activeId;
+    if (!convId) {
+      try {
+        const r = await fetch("/api/conversations", { method: "POST" });
+        convId = (await r.json()).conversation.id;
+        setActiveId(convId!);
+      } catch (e) {
+        setStreaming(false);
+        setStreamPhase(null);
+        setError((e as Error).message || "Could not start conversation");
+        return;
+      }
+    }
 
     // Fleet chat relay: explicit peer, or Auto (least-loaded across the mesh).
     let peerTarget = runOnPeer;
@@ -599,10 +625,10 @@ function ChatInner() {
     }
     if (peerTarget) {
       try {
-        setStreaming(true);
         const peerLabel =
           peers.find((p) => p.peer_node_id === peerTarget)?.label || peerTarget.slice(0, 12);
         setExecutorHint(`Waiting on ${peerLabel}…`);
+        setStreamPhase("preparing");
         const res = await fetch(`/api/fleet/peers/${peerTarget}/chat`, {
           method: "POST",
           headers: { "content-type": "application/json", Accept: "text/event-stream" },
@@ -642,6 +668,7 @@ function ChatInner() {
                   if (ev.phase === "relay_started") setExecutorHint(`Waiting on ${label}…`);
                   if (ev.phase === "receiving") setExecutorHint(`Receiving from ${label}…`);
                 } else if (ev.type === "token" && typeof ev.text === "string") {
+                  setStreamPhase("streaming");
                   setExecutorHint(`Receiving from ${label}…`);
                   setThread((t) => {
                     const out = [...t];
@@ -716,6 +743,7 @@ function ChatInner() {
         setError((e as Error).message);
       } finally {
         setStreaming(false);
+        setStreamPhase(null);
         loadConversations();
       }
       return;
@@ -736,8 +764,17 @@ function ChatInner() {
   }
 
   function handleEvent(ev: any) {
+    if (ev.type === "status") {
+      setStreamPhase(ev.phase || "thinking");
+      if (ev.phase === "thinking" || ev.phase === "receiving") setStreamPhase(ev.phase);
+      return;
+    }
+    if (ev.type === "text_chunk") {
+      setStreamPhase("streaming");
+    }
     if (ev.type === "tool_call_start") {
       setActiveTools((m) => ({ ...m, [ev.toolCallId]: ev.toolName }));
+      setStreamPhase("tool");
     } else if (ev.type === "tool_call_result") {
       setActiveTools((m) => { const n = { ...m }; delete n[ev.toolCallId]; return n; });
     } else if (ev.type === "loop_suspended") {
@@ -1016,29 +1053,56 @@ function ChatInner() {
                     </div>
                   </div>
                 );
-              if (item.kind === "assistant")
-                return item.content ? (
+              if (item.kind === "assistant") {
+                const isLive = streaming && i === thread.length - 1;
+                if (!item.content) {
+                  if (!isLive) return null;
+                  return (
+                    <div key={i} className="lm-turn lm-turn--assistant">
+                      <div className="lm-typing" aria-live="polite" aria-label="Sora is responding">
+                        <span />
+                        <span />
+                        <span />
+                      </div>
+                      {streamPhase && streamPhase !== "streaming" && (
+                        <p className="lm-micro mt-2" style={{ color: "hsl(0 0% 100% / 0.35)", textTransform: "none", letterSpacing: 0 }}>
+                          {streamPhase === "preparing" ? "Preparing…" :
+                           streamPhase === "tool" ? "Using a tool…" :
+                           streamPhase === "thinking" ? "Thinking…" : "Working…"}
+                        </p>
+                      )}
+                    </div>
+                  );
+                }
+                return (
                   <div key={i} className="lm-turn lm-turn--assistant group">
                     {item.originLabel && (
                       <p className="lm-micro mb-1" style={{ color: "hsl(0 0% 100% / 0.35)", textTransform: "none", letterSpacing: 0 }}>
                         via {item.originLabel}
                       </p>
                     )}
-                    <div className="markdown">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.content}</ReactMarkdown>
-                    </div>
-                    <div className="lm-turn__actions">
-                      <button
-                        onClick={() => { navigator.clipboard.writeText(item.content); toast("Copied"); }}
-                        className="lm-turn__action"
-                        data-pulse="true"
-                      >
-                        <Copy className="h-3 w-3" /> Copy
-                      </button>
-                      <SpeakerButton text={item.content} />
-                    </div>
+                    {isLive ? (
+                      <div className="lm-stream-plain" style={{ whiteSpace: "pre-wrap" }}>{item.content}</div>
+                    ) : (
+                      <div className="markdown">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.content}</ReactMarkdown>
+                      </div>
+                    )}
+                    {!isLive && (
+                      <div className="lm-turn__actions">
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(item.content); toast("Copied"); }}
+                          className="lm-turn__action"
+                          data-pulse="true"
+                        >
+                          <Copy className="h-3 w-3" /> Copy
+                        </button>
+                        <SpeakerButton text={item.content} />
+                      </div>
+                    )}
                   </div>
-                ) : null;
+                );
+              }
               if (item.kind === "tool") return <div key={i} className="lm-turn"><ToolCallCard tc={item.tc} /></div>;
               if (item.kind === "confirmation")
                 return <div key={i} className="lm-turn"><ConfirmationCard c={item.c} onDecide={(d, p) => decide(item.c.toolCallId, d, p)} /></div>;
@@ -1444,6 +1508,33 @@ function ChatInner() {
         .lm-turn--assistant :global(.markdown) {
           font-size: inherit;
           line-height: inherit;
+        }
+        .lm-stream-plain {
+          font-size: inherit;
+          line-height: inherit;
+          color: hsl(0 0% 100% / 0.92);
+        }
+        .lm-typing {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          padding: 10px 4px;
+        }
+        .lm-typing span {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: hsl(0 0% 100% / 0.55);
+          animation: lm-typing-bounce 1.1s ease-in-out infinite;
+        }
+        .lm-typing span:nth-child(2) { animation-delay: 0.15s; }
+        .lm-typing span:nth-child(3) { animation-delay: 0.3s; }
+        @keyframes lm-typing-bounce {
+          0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+          40% { opacity: 1; transform: translateY(-3px); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .lm-typing span { animation: none; opacity: 0.6; }
         }
         .lm-turn__actions {
           display: flex; align-items: center; gap: 10px;

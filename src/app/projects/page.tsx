@@ -4,7 +4,7 @@
  * /projects — coding projects + undoable worktree sessions.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useConfirm } from "@/components/confirm-dialog";
 import { FolderGit2, Plus, Play, ExternalLink, RotateCcw } from "lucide-react";
@@ -33,6 +33,14 @@ type Session = {
 };
 
 export default function ProjectsPage() {
+  return (
+    <Suspense fallback={<div className="p-10 lm-body" style={{ color: "hsl(0 0% 100% / 0.5)" }}>Loading…</div>}>
+      <ProjectsPageInner />
+    </Suspense>
+  );
+}
+
+function ProjectsPageInner() {
   const confirm = useConfirm();
   const searchParams = useSearchParams();
   const [projects, setProjects] = useState<Project[]>([]);

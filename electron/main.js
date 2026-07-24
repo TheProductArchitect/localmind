@@ -27,10 +27,17 @@ const { spawn } = require("node:child_process");
 const path = require("node:path");
 const http = require("node:http");
 const fs = require("node:fs");
+const { initBranding, updateBranding, getBranding, readAssistantNameFromDb } = require("./branding");
 
 const ROOT = path.join(__dirname, "..");
 const PORT = Number(process.env.LM_APP_PORT || 3000);
 const SMOKE = process.argv.includes("--smoke");
+
+// Prefer assistant name for menus / getName() as early as possible.
+try {
+  const early = readAssistantNameFromDb();
+  if (early) app.setName(early);
+} catch { /* ignore */ }
 
 // Agent bridge (phase 3): the LocalMind server drives GRANTED tabs via
 // Playwright connectOverCDP on this loopback-only port. On by default —
@@ -229,6 +236,9 @@ function wireIpc() {
       }
     }
   });
+
+  ipcMain.handle("branding:get", () => getBranding());
+  ipcMain.handle("branding:set", (_e, patch) => updateBranding(patch || {}));
 }
 
 // ------------------------------------------------------------------- boot ---
@@ -240,7 +250,7 @@ async function boot() {
   win = new BrowserWindow({
     width: 1440,
     height: 900,
-    title: "LocalMind",
+    title: readAssistantNameFromDb() || "Assistant",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -250,6 +260,11 @@ async function boot() {
   });
   win.on("resize", layout);
   win.on("closed", () => { win = null; });
+
+  await initBranding({
+    mainWindow: win,
+    getCodingWindow: () => codingWin,
+  });
 
   await win.loadURL(url);
 
@@ -285,8 +300,8 @@ async function boot() {
         width: 1280,
         height: 860,
         title: /^https?:\/\//i.test(loadTarget) && !loadTarget.startsWith(appBase)
-          ? "LocalMind · code-server"
-          : "LocalMind · Projects",
+          ? `${getBranding().name} · code-server`
+          : `${getBranding().name} · Projects`,
         webPreferences: {
           preload: path.join(__dirname, "preload.js"),
           contextIsolation: true,

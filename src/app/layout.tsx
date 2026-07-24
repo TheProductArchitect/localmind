@@ -9,6 +9,7 @@ import { DiskBanner } from "@/components/disk-banner";
 import { SettingsSidebar } from "@/components/settings-sidebar";
 import { FontScale } from "@/components/font-scale";
 import { ConfirmProvider } from "@/components/confirm-dialog";
+import { BrandingSync } from "@/components/branding-sync";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -17,8 +18,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "LocalMind",
-  description: "A local-first AI control panel",
+  // Overridden at runtime by <BrandingSync/> to the assistant's name.
+  title: { default: "Assistant", template: "%s" },
+  description: "Your local-first personal assistant",
 };
 
 export const viewport = {
@@ -35,6 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body className="font-sans">
         <ConfirmProvider>
+          <BrandingSync />
           <div className="flex flex-col h-screen overflow-hidden relative z-10">
             <DiskBanner />
             <div className="flex flex-1 overflow-hidden">

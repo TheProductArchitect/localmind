@@ -50,6 +50,8 @@ export default function Onboarding() {
 
   async function finish() {
     await patch({ assistant_name: name, personality, onboarded: 1, ...(pin.length >= 4 ? { pin } : {}) });
+    const { notifyAssistantName } = await import("@/components/branding-sync");
+    notifyAssistantName(name);
     // Create the owner account (V2 multi-user). PIN required; default to a derived one if skipped.
     await fetch("/api/auth/bootstrap", {
       method: "POST",
