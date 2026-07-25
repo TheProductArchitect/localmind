@@ -147,7 +147,11 @@ export async function sendToPeerNdjson<Req, Res>(
   peerNodeId: string,
   kind: EnvelopeKind,
   payload: Req,
-  opts: SendOptions & { onToken?: (text: string) => void } = {}
+  opts: SendOptions & {
+    onToken?: (text: string) => void;
+    /** Control frames other than tokens/result (e.g. remote confirmation gates). */
+    onControl?: (frame: { type: string; [k: string]: unknown }) => void;
+  } = {}
 ): Promise<PeerSendResult<Res>> {
   const peer = getPeer(peerNodeId);
   if (!peer) return { ok: false, status: 0, reason: `Unknown peer ${peerNodeId}` };
@@ -223,9 +227,12 @@ export async function sendToPeerNdjson<Req, Res>(
               type?: string;
               text?: string;
               envelope?: SignedEnvelope<Res>;
+              [k: string]: unknown;
             };
             if (obj.type === "token" && typeof obj.text === "string") {
               opts.onToken?.(obj.text);
+            } else if (obj.type && obj.type !== "result" && obj.type !== "token") {
+              opts.onControl?.(obj as { type: string; [k: string]: unknown });
             } else if (obj.type === "result" && obj.envelope) {
               const v = verify(obj.envelope, {
                 senderPubkeyPem: peer.pubkey_pem,

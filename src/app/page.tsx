@@ -183,6 +183,10 @@ function ChatInner() {
   // null = this machine; "__auto__" = least-loaded across mesh; else peer id
   const [runOnPeer, setRunOnPeer] = useState<string | null>(null);
   const [workspacePeer, setWorkspacePeer] = useState<string>("");
+  // Where personal-assistant tools run when compute is on a peer. Default to
+  // "this device" so a hub (e.g. DGX) does the thinking while files / calendar
+  // / mail / browser actions happen on the user's own machine.
+  const [toolHome, setToolHome] = useState<"initiator" | "executor">("initiator");
   const [executorHint, setExecutorHint] = useState<string | null>(null);
 
   // Conversation-mode handshake with <ConversationButton/>. When streaming
@@ -261,6 +265,9 @@ function ChatInner() {
 
   const threadRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // Maps a pending confirmation's toolCallId → the peer that raised it, so
+  // decide() can route the answer back over the fleet (M5 remote confirms).
+  const remoteConfirmRef = useRef<Map<string, string>>(new Map());
 
   // Auto-grow the composer to fit its content (up to a cap) so large pastes are
   // visible instead of stuck on one line. Runs on every input change and on
@@ -574,6 +581,23 @@ function ChatInner() {
     // Keep the confirmation card until the server accepts — a wrong PIN must
     // leave the card in place so the user can retry (otherwise the agent hangs
     // until the confirmation timeout with no UI left).
+    const remotePeer = remoteConfirmRef.current.get(toolCallId);
+    if (remotePeer) {
+      // Confirmation was raised by a compute peer — relay the answer back.
+      const rr = await fetch(`/api/fleet/peers/${remotePeer}/confirm`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tool_call_id: toolCallId, decision, pin }),
+      });
+      if (!rr.ok) {
+        const j = await rr.json().catch(() => ({}));
+        toast(j.error || "Remote confirmation failed", "error");
+        return;
+      }
+      remoteConfirmRef.current.delete(toolCallId);
+      setThread((t) => t.filter((i) => !(i.kind === "confirmation" && i.c.toolCallId === toolCallId)));
+      return;
+    }
     const r = await fetch("/api/chat/confirm", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -768,7 +792,7 @@ function ChatInner() {
         const res = await fetch(`/api/fleet/peers/${peerTarget}/chat`, {
           method: "POST",
           headers: { "content-type": "application/json", Accept: "text/event-stream" },
-          body: JSON.stringify({ conversation_id: convId, message: text, persona_id: persona }),
+          body: JSON.stringify({ conversation_id: convId, message: text, persona_id: persona, tool_home: toolHome }),
         });
         const ct = res.headers.get("content-type") || "";
         if (!res.ok && !ct.includes("text/event-stream")) {
@@ -821,6 +845,28 @@ function ChatInner() {
                     }
                     return out;
                   });
+                } else if (ev.type === "confirm" && ev.tool_call_id) {
+                  // Executor raised an ask/pin gate; surface it locally and
+                  // remember the peer so decide() relays the answer back.
+                  remoteConfirmRef.current.set(ev.tool_call_id, peerTarget as string);
+                  setThread((t) => [
+                    ...t,
+                    {
+                      kind: "confirmation",
+                      c: {
+                        toolCallId: ev.tool_call_id,
+                        actionType: ev.action_type || "action",
+                        preview: ev.preview || "",
+                        timeoutSeconds: ev.timeout_seconds ?? 60,
+                        requiresPin: !!ev.requires_pin,
+                      },
+                    },
+                  ]);
+                } else if (ev.type === "confirm_timeout" && ev.tool_call_id) {
+                  remoteConfirmRef.current.delete(ev.tool_call_id);
+                  setThread((t) =>
+                    t.filter((i) => !(i.kind === "confirmation" && i.c.toolCallId === ev.tool_call_id))
+                  );
                 } else if (ev.type === "done") {
                   reply = ev.reply ?? "";
                   if (ev.peer_label) label = ev.peer_label;
@@ -1360,6 +1406,21 @@ function ChatInner() {
                     </option>
                   ))}
               </select>
+              {runOnPeer && (
+                <>
+                  <span className="lm-micro" style={{ color: "hsl(0 0% 100% / 0.4)" }}>Tools</span>
+                  <select
+                    value={toolHome}
+                    onChange={(e) => setToolHome(e.target.value as "initiator" | "executor")}
+                    className="lm-peer-select"
+                    aria-label="Choose which machine runs personal-assistant tools"
+                    title="When compute runs on a peer, choose whether files / calendar / mail / browser actions happen on this device or on the compute peer. Requires 'Accept tool relay' on the target device."
+                  >
+                    <option value="initiator">On this device</option>
+                    <option value="executor">On compute peer</option>
+                  </select>
+                </>
+              )}
               {executorHint && (
                 <span className="lm-micro" style={{ color: "hsl(160 40% 70%)", textTransform: "none", letterSpacing: 0 }}>
                   {executorHint}

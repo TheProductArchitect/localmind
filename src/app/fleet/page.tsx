@@ -38,6 +38,7 @@ type Peer = {
     advertise_capabilities: boolean;
     accept_chat_relay?: boolean;
     accept_workspace_relay?: boolean;
+    accept_tool_relay?: boolean;
     sync_conversations?: boolean;
   };
   capabilities: PeerCapabilities;
@@ -390,6 +391,14 @@ export default function FleetPage() {
                           type="checkbox"
                           checked={!!p.policy.accept_workspace_relay}
                           onChange={(e) => togglePolicy(p, "accept_workspace_relay", e.target.checked)}
+                        />
+                      </label>
+                      <label className="lm-toggle">
+                        <span>Accept tool relay (this peer&apos;s model can run files / calendar / mail / browser actions on this machine)</span>
+                        <input
+                          type="checkbox"
+                          checked={!!p.policy.accept_tool_relay}
+                          onChange={(e) => togglePolicy(p, "accept_tool_relay", e.target.checked)}
                         />
                       </label>
                     </div>

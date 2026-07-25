@@ -42,7 +42,11 @@ export async function relayChatToPeer(args: {
   timeout_ms?: number;
   /** Forward live token deltas from the executor (NDJSON fleet stream). */
   onToken?: (text: string) => void;
+  /** Forward remote confirmation gates raised by the executor (M5). */
+  onControl?: (frame: { type: string; [k: string]: unknown }) => void;
   stream_tokens?: boolean;
+  /** Where PA tools run: "initiator" relays them back to this device. */
+  tool_home?: "initiator" | "executor";
 }): Promise<RelayChatResult> {
   const localAuditId = logStart({
     actionType: "chat_relay_sent",
@@ -67,6 +71,7 @@ export async function relayChatToPeer(args: {
       message: args.message,
       persona_id: args.persona_id,
       stream_tokens: stream || undefined,
+      tool_home: args.tool_home,
     };
 
     const result = stream
@@ -74,7 +79,7 @@ export async function relayChatToPeer(args: {
           args.peer_node_id,
           "chat-relay",
           payload,
-          { timeoutMs: args.timeout_ms ?? 120_000, onToken: args.onToken }
+          { timeoutMs: args.timeout_ms ?? 120_000, onToken: args.onToken, onControl: args.onControl }
         )
       : await sendToPeer<ChatRelayRequest, ChatRelayResponse>(
           args.peer_node_id,

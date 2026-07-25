@@ -19,4 +19,9 @@ describe("route-map HIGH fixes", () => {
     expect(roleSatisfies("guest", "member")).toBe(false);
     expect(roleSatisfies("guest", "owner")).toBe(false);
   });
+
+  it("requires authenticated for fleet chat relay and remote confirm decisions", () => {
+    expect(requiredRoleFor("/api/fleet/peers/node-1/chat", "POST")).toBe("authenticated");
+    expect(requiredRoleFor("/api/fleet/peers/node-1/confirm", "POST")).toBe("authenticated");
+  });
 });

@@ -31,7 +31,7 @@ import { setTimeout as delay } from "timers/promises";
 import { getTlsMaterial, opensslAvailable } from "./tls";
 import { getNodeIdentity } from "./identity";
 import { verify, sign, type SignedEnvelope, type EnvelopeKind } from "./envelope";
-import { getPeer, pairPeer, recordCapabilities, markPeerSeen, parsePeerPolicy } from "../db/fleet";
+import { getPeer, pairPeer, recordCapabilities, markPeerSeen, parsePeerPolicy, updatePeerPrimaryAddr } from "../db/fleet";
 import { snapshotCapability } from "./capabilities";
 import { consumeToken } from "./pairing";
 import { parsePeerPublicKey, fingerprintOfPubkey } from "./identity";
@@ -192,6 +192,22 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse): Pr
         onToken: (text) => {
           writeLine({ type: "token", text });
         },
+        onEvent: (evt) => {
+          // Forward confirmation gates over the stream so the initiator can
+          // approve/deny; keys mirror the local engine event shape.
+          if (evt.type === "confirmation_required") {
+            writeLine({
+              type: "confirm",
+              tool_call_id: evt.toolCallId,
+              action_type: evt.actionType,
+              preview: evt.preview,
+              timeout_seconds: evt.timeoutSeconds,
+              requires_pin: evt.requiresPin,
+            });
+          } else if (evt.type === "confirmation_timeout") {
+            writeLine({ type: "confirm_timeout", tool_call_id: evt.toolCallId });
+          }
+        },
       });
       const resultEnv = sign(`${kind}-result` as EnvelopeKind, envelope.sender, payload);
       writeLine({ type: "result", envelope: resultEnv });
@@ -292,6 +308,9 @@ function registerBuiltinHandlers(): void {
           // Receive but don't store — the peer opted out of cap exchange.
         } else {
           recordCapabilities(senderNodeId, envelope.payload);
+          // Keep the reachable address fresh across DHCP renumbers.
+          const addr = (envelope.payload as { primary_addr?: string })?.primary_addr;
+          if (addr) updatePeerPrimaryAddr(senderNodeId, addr);
         }
       }
       return { ack: true, node_id: getNodeIdentity().node_id };
@@ -470,5 +489,27 @@ function registerBuiltinHandlers(): void {
   >("workspace-relay", async ({ envelope, senderNodeId }) => {
     const { handleWorkspaceRelay } = await import("./handlers/workspace-relay");
     return handleWorkspaceRelay({ envelope, senderNodeId });
+  });
+
+  // tool-relay — a peer running the model elsewhere (e.g. DGX hub) asks us to
+  // run an allowlisted personal-assistant tool on our own device (tool home =
+  // initiator). Capability gated (accept_tool_relay), allowlisted, audited.
+  registerHandler<
+    import("./handlers/tool-relay").ToolRelayRequest,
+    import("./handlers/tool-relay").ToolRelayResponse
+  >("tool-relay", async ({ envelope, senderNodeId }) => {
+    const { handleToolRelay } = await import("./handlers/tool-relay");
+    return handleToolRelay({ envelope, senderNodeId });
+  });
+
+  // confirm-decision — initiator answers an ask/pin confirmation the executor
+  // raised mid chat-relay (M5 remote confirmations). Resolves the blocked
+  // awaitConfirmation on this node so the relayed turn can continue.
+  registerHandler<
+    import("./handlers/confirm-decision").ConfirmDecisionRequest,
+    import("./handlers/confirm-decision").ConfirmDecisionResponse
+  >("confirm-decision", async ({ envelope, senderNodeId }) => {
+    const { handleConfirmDecision } = await import("./handlers/confirm-decision");
+    return handleConfirmDecision({ envelope, senderNodeId });
   });
 }

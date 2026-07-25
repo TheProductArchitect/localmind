@@ -21,6 +21,7 @@ const Body = z.object({
   conversation_id: z.string().min(1),
   message: z.string().min(1).max(64 * 1024),
   persona_id: z.string().optional(),
+  tool_home: z.enum(["initiator", "executor"]).optional(),
 });
 
 export async function POST(
@@ -66,10 +67,28 @@ export async function POST(
           conversation_id: parsed.data.conversation_id,
           message: parsed.data.message,
           persona_id: parsed.data.persona_id,
+          tool_home: parsed.data.tool_home,
           stream_tokens: true,
           onToken: (text) => {
             write({ type: "status", phase: "receiving", peer_label: peerLabel });
             write({ type: "token", text });
+          },
+          onControl: (frame) => {
+            // Remote confirmation gate (M5): surface it to the browser so the
+            // user can approve/deny; the decision is POSTed to …/confirm.
+            if (frame.type === "confirm") {
+              write({
+                type: "confirm",
+                tool_call_id: frame.tool_call_id,
+                action_type: frame.action_type,
+                preview: frame.preview,
+                timeout_seconds: frame.timeout_seconds,
+                requires_pin: frame.requires_pin,
+                peer_label: peerLabel,
+              });
+            } else if (frame.type === "confirm_timeout") {
+              write({ type: "confirm_timeout", tool_call_id: frame.tool_call_id });
+            }
           },
         });
         if (!result.ok) {

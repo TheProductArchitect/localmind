@@ -239,6 +239,8 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   // this node should be able to drive their own peer chats; the peer's
   // accept_chat_relay flag is the trust gate, not user role on this side.
   { path: "/api/fleet/peers/*/chat", methods: ["POST"], role: "authenticated" },
+  // Remote confirmation decisions ride the same per-user trust model as chat.
+  { path: "/api/fleet/peers/*/confirm", methods: ["POST"], role: "authenticated" },
 ];
 
 // User roles include `guest` (not a RouteRole); guest satisfies `authenticated`.

@@ -60,6 +60,12 @@ export type ChatRelayRequest = {
   persona_id?: string;
   /** When true, executor may emit token chunks via onToken (fleet NDJSON stream). */
   stream_tokens?: boolean;
+  /**
+   * Where allowlisted personal-assistant tools should run. "initiator" makes
+   * the executor relay device/account tools back to the initiator's machine
+   * (tool home = initiator); anything else keeps them on the executor.
+   */
+  tool_home?: "initiator" | "executor";
 };
 
 export type ChatRelayResponse = {
@@ -192,6 +198,12 @@ export async function handleChatRelay(args: {
   senderNodeId: string;
   /** When set, text deltas are forwarded as they arrive (fleet NDJSON stream). */
   onToken?: (text: string) => void | Promise<void>;
+  /**
+   * When set, non-text engine events (confirmation gates, etc.) are forwarded
+   * to the initiator so it can surface a remote-approval UI (M5). The user's
+   * answer comes back out-of-band via the confirm-decision RPC.
+   */
+  onEvent?: (evt: { type: string; [k: string]: unknown }) => void | Promise<void>;
 }): Promise<ChatRelayResponse> {
   const peerNodeId = args.senderNodeId;
   const peer = getPeer(peerNodeId);
@@ -316,39 +328,62 @@ export async function handleChatRelay(args: {
   //     are universally enforced, peers cannot bypass them.
   //     When onToken is provided (streaming fleet path), use runAgent and
   //     forward text deltas so the initiator can render live tokens.
+  // Tool home = initiator: route allowlisted PA tools back to the initiator's
+  // device for the whole turn. The initiator must have granted us
+  // accept_tool_relay or each relayed call is refused on their side.
+  const { runWithToolHome } = await import("../tool-relay-context");
+  const withToolHome = <T>(fn: () => Promise<T>): Promise<T> =>
+    payload.tool_home === "initiator"
+      ? runWithToolHome(
+          { initiatorNodeId: peerNodeId, conversationId: payload.initiator_conversation_id },
+          fn
+        )
+      : fn();
+
   let reply = "";
   try {
     if (args.onToken) {
       const { runAgent } = await import("../../agent/engine");
       const controller = new AbortController();
-      for await (const ev of runAgent(convId, payload.message, controller.signal, {
-        processDisplayName: `Chat from peer ${peer.label || peerNodeId.slice(0, 8)}`,
-        processMetadata: {
-          kind: "chat_relay_inbound",
-          peer_node_id: peerNodeId,
-          initiator_conversation_id: payload.initiator_conversation_id,
-          initiator_audit_id: payload.initiator_audit_id,
-        },
-      })) {
-        if (ev.type === "text_chunk" && typeof (ev as { delta?: string }).delta === "string") {
-          const delta = (ev as { delta: string }).delta;
-          if (delta) {
-            reply += delta;
-            await args.onToken(delta);
+      reply = await withToolHome(async () => {
+        let acc = "";
+        for await (const ev of runAgent(convId, payload.message, controller.signal, {
+          processDisplayName: `Chat from peer ${peer.label || peerNodeId.slice(0, 8)}`,
+          processMetadata: {
+            kind: "chat_relay_inbound",
+            peer_node_id: peerNodeId,
+            initiator_conversation_id: payload.initiator_conversation_id,
+            initiator_audit_id: payload.initiator_audit_id,
+          },
+        })) {
+          if (ev.type === "text_chunk" && typeof (ev as { delta?: string }).delta === "string") {
+            const delta = (ev as { delta: string }).delta;
+            if (delta) {
+              acc += delta;
+              await args.onToken!(delta);
+            }
+          } else if (ev.type === "confirmation_required" || ev.type === "confirmation_timeout") {
+            // Forward ask/pin gates so the initiator can approve remotely; the
+            // engine is blocked on awaitConfirmation until confirm-decision
+            // arrives (M5 remote confirmations).
+            await args.onEvent?.(ev as unknown as { type: string; [k: string]: unknown });
           }
         }
-      }
+        return acc;
+      });
     } else {
       const { runAgentCollect } = await import("../../agent/engine");
-      reply = await runAgentCollect(convId, payload.message, {
-        processDisplayName: `Chat from peer ${peer.label || peerNodeId.slice(0, 8)}`,
-        processMetadata: {
-          kind: "chat_relay_inbound",
-          peer_node_id: peerNodeId,
-          initiator_conversation_id: payload.initiator_conversation_id,
-          initiator_audit_id: payload.initiator_audit_id,
-        },
-      });
+      reply = await withToolHome(() =>
+        runAgentCollect(convId, payload.message, {
+          processDisplayName: `Chat from peer ${peer.label || peerNodeId.slice(0, 8)}`,
+          processMetadata: {
+            kind: "chat_relay_inbound",
+            peer_node_id: peerNodeId,
+            initiator_conversation_id: payload.initiator_conversation_id,
+            initiator_audit_id: payload.initiator_audit_id,
+          },
+        })
+      );
     }
   } catch (e) {
     const msg = (e as Error).message ?? "engine threw";
