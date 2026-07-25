@@ -58,6 +58,8 @@ export type ChatRelayRequest = {
   message: string;
   /** Optional persona id to run as. Defaults to "persona-general". */
   persona_id?: string;
+  /** When true, executor may emit token chunks via onToken (fleet NDJSON stream). */
+  stream_tokens?: boolean;
 };
 
 export type ChatRelayResponse = {
@@ -188,6 +190,8 @@ function getOrCreateRelayedConversation(args: {
 export async function handleChatRelay(args: {
   envelope: SignedEnvelope<unknown>;
   senderNodeId: string;
+  /** When set, text deltas are forwarded as they arrive (fleet NDJSON stream). */
+  onToken?: (text: string) => void | Promise<void>;
 }): Promise<ChatRelayResponse> {
   const peerNodeId = args.senderNodeId;
   const peer = getPeer(peerNodeId);
@@ -310,18 +314,42 @@ export async function handleChatRelay(args: {
   //     module init. The engine uses runAgentCollect which honours the
   //     LOCAL permission profile + destructive floor + sanitizer — those
   //     are universally enforced, peers cannot bypass them.
+  //     When onToken is provided (streaming fleet path), use runAgent and
+  //     forward text deltas so the initiator can render live tokens.
   let reply = "";
   try {
-    const { runAgentCollect } = await import("../../agent/engine");
-    reply = await runAgentCollect(convId, payload.message, {
-      processDisplayName: `Chat from peer ${peer.label || peerNodeId.slice(0, 8)}`,
-      processMetadata: {
-        kind: "chat_relay_inbound",
-        peer_node_id: peerNodeId,
-        initiator_conversation_id: payload.initiator_conversation_id,
-        initiator_audit_id: payload.initiator_audit_id,
-      },
-    });
+    if (args.onToken) {
+      const { runAgent } = await import("../../agent/engine");
+      const controller = new AbortController();
+      for await (const ev of runAgent(convId, payload.message, controller.signal, {
+        processDisplayName: `Chat from peer ${peer.label || peerNodeId.slice(0, 8)}`,
+        processMetadata: {
+          kind: "chat_relay_inbound",
+          peer_node_id: peerNodeId,
+          initiator_conversation_id: payload.initiator_conversation_id,
+          initiator_audit_id: payload.initiator_audit_id,
+        },
+      })) {
+        if (ev.type === "text_chunk" && typeof (ev as { delta?: string }).delta === "string") {
+          const delta = (ev as { delta: string }).delta;
+          if (delta) {
+            reply += delta;
+            await args.onToken(delta);
+          }
+        }
+      }
+    } else {
+      const { runAgentCollect } = await import("../../agent/engine");
+      reply = await runAgentCollect(convId, payload.message, {
+        processDisplayName: `Chat from peer ${peer.label || peerNodeId.slice(0, 8)}`,
+        processMetadata: {
+          kind: "chat_relay_inbound",
+          peer_node_id: peerNodeId,
+          initiator_conversation_id: payload.initiator_conversation_id,
+          initiator_audit_id: payload.initiator_audit_id,
+        },
+      });
+    }
   } catch (e) {
     const msg = (e as Error).message ?? "engine threw";
     logComplete(auditId, "failed", msg);

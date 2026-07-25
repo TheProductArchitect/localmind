@@ -1,8 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Button, Card, Badge, EmptyState } from "@/components/ui";
+import { Button, Badge, EmptyState } from "@/components/ui";
+import { PageHeader, PageShell } from "@/components/page-header";
+import { useConfirm } from "@/components/confirm-dialog";
 import { CURATED_MODELS } from "@/lib/curated-models";
 import { Download, Trash2, Check, ExternalLink } from "lucide-react";
+import { toast } from "@/components/toast";
 
 type Model = { name: string; family?: string; size?: number; modified?: string; path?: string };
 type HfCatalogueEntry = {
@@ -13,26 +16,62 @@ type HfCatalogueEntry = {
   ram: string;
   size: string;
 };
-type Provider = "ollama" | "huggingface" | "lmstudio";
+type Provider =
+  | "ollama"
+  | "huggingface"
+  | "lmstudio"
+  | "openai"
+  | "anthropic"
+  | "groq"
+  | "openrouter"
+  | "gemini"
+  | "mindstudio";
 
-const PROVIDER_TABS: { id: Provider; label: string; blurb: string }[] = [
-  { id: "ollama",      label: "Ollama",        blurb: "Native Ollama models, downloaded and run by the Ollama daemon." },
-  { id: "huggingface", label: "Hugging Face",  blurb: "Download GGUF quant files directly from the Hub. Optionally auto-registers with Ollama so chat works without extra setup." },
-  { id: "lmstudio",    label: "LM Studio",     blurb: "Discover models loaded in a running LM Studio server. Downloads happen in the LM Studio app itself." },
+const LOCAL_TABS: { id: Provider; label: string; blurb: string }[] = [
+  { id: "ollama", label: "Ollama", blurb: "Native Ollama models, downloaded and run by the Ollama daemon." },
+  { id: "huggingface", label: "Hugging Face", blurb: "Download GGUF quant files from the Hub. Optionally auto-registers with Ollama." },
+  { id: "lmstudio", label: "LM Studio", blurb: "Discover models loaded in a running LM Studio server." },
 ];
+
+const CLOUD_TABS: { id: Provider; label: string; blurb: string }[] = [
+  { id: "anthropic", label: "Anthropic", blurb: "Claude models via your Anthropic API key (Settings → Providers)." },
+  { id: "openai", label: "OpenAI", blurb: "GPT models via your OpenAI API key." },
+  { id: "gemini", label: "Gemini", blurb: "Google Gemini models via a Google AI Studio API key." },
+  { id: "groq", label: "Groq", blurb: "Fast inference via Groq." },
+  { id: "openrouter", label: "OpenRouter", blurb: "Many frontier labs through one OpenRouter key." },
+  {
+    id: "mindstudio",
+    label: "Cloud — MindStudio",
+    blurb: "Opt-in cloud router. Never the default. Requires an API key; set MINDSTUDIO_BASE_URL if your gateway differs from the documented placeholder.",
+  },
+];
+
+const PROVIDER_TABS = [...LOCAL_TABS, ...CLOUD_TABS];
+const CLOUD_IDS = new Set(CLOUD_TABS.map((t) => t.id));
 
 function fmtSize(n?: number) {
   if (!n) return "—";
   return (n / 1e9).toFixed(1) + " GB";
 }
 
+/** Chat provider to set when activating a model from this tab. */
+function chatProviderForTab(tab: Provider): string | null {
+  if (tab === "huggingface") return "ollama";
+  if (tab === "ollama" || tab === "lmstudio") return tab;
+  if (CLOUD_IDS.has(tab)) return tab;
+  return null;
+}
+
 export default function ModelsPage() {
+  const confirm = useConfirm();
   const [provider, setProvider] = useState<Provider>("ollama");
   const [models, setModels] = useState<Model[]>([]);
   const [active, setActive] = useState<string | null>(null);
+  const [activeProvider, setActiveProvider] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [docsUrl, setDocsUrl] = useState<string | null>(null);
   const [catalogue, setCatalogue] = useState<HfCatalogueEntry[]>([]);
+  const [needsKey, setNeedsKey] = useState(false);
   const [pulling, setPulling] = useState<{ label: string; pct: number; status: string; bytes?: number; total?: number } | null>(null);
 
   async function load(p: Provider = provider) {
@@ -40,22 +79,23 @@ export default function ModelsPage() {
     const j = await r.json();
     setModels(j.models || []);
     setActive(j.active || null);
+    setActiveProvider(j.active_provider || null);
     setErr(j.error || null);
     setDocsUrl(j.docs_url || null);
     setCatalogue(j.catalogue || []);
+    setNeedsKey(!!j.needs_key);
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(provider); }, [provider]);
 
   async function setActiveModel(name: string) {
+    const chatProvider = chatProviderForTab(provider);
     const r = await fetch("/api/settings", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         active_model: name,
-        // Selecting a model from the LM Studio tab must also switch the chat provider.
-        ...(provider === "lmstudio" ? { provider: "lmstudio" } : {}),
-        ...(provider === "ollama" ? { provider: "ollama" } : {}),
+        ...(chatProvider ? { provider: chatProvider } : {}),
       }),
     });
     if (!r.ok) {
@@ -64,21 +104,34 @@ export default function ModelsPage() {
       return;
     }
     setActive(name);
+    if (chatProvider) setActiveProvider(chatProvider);
+  }
+
+  function isActive(name: string) {
+    const chatProvider = chatProviderForTab(provider);
+    if (chatProvider && activeProvider && chatProvider !== activeProvider) return false;
+    return active === name;
   }
 
   async function del(name: string) {
     if (provider !== "ollama") {
-      // HF files live on disk; LM Studio owns its own state. We'd want a
-      // dedicated delete API per provider; for now keep delete Ollama-only
-      // and tell the user where to manage the others.
-      alert(
+      toast(
         provider === "huggingface"
           ? "Delete Hugging Face files from ~/.localmind/models/huggingface for now."
-          : "Manage LM Studio models from the LM Studio app."
+          : CLOUD_IDS.has(provider)
+            ? "Cloud models are listed from the provider API — nothing to delete locally."
+            : "Manage LM Studio models from the LM Studio app.",
+        "info"
       );
       return;
     }
-    if (!confirm(`Delete ${name}? This frees ${fmtSize(models.find((m) => m.name === name)?.size)} of disk.`)) return;
+    const ok = await confirm({
+      title: `Delete ${name}?`,
+      message: `This frees ${fmtSize(models.find((m) => m.name === name)?.size)} of disk.`,
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!ok) return;
     const r = await fetch(`/api/models/${encodeURIComponent(name)}`, { method: "DELETE" });
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));
@@ -128,7 +181,7 @@ export default function ModelsPage() {
     }
   }
 
-  function pullOllama(name: string)        { streamPull(name, { provider: "ollama", name }); }
+  function pullOllama(name: string) { streamPull(name, { provider: "ollama", name }); }
   function pullHuggingface(c: HfCatalogueEntry) {
     streamPull(`${c.repo}/${c.file}`, {
       provider: "huggingface",
@@ -139,30 +192,62 @@ export default function ModelsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-10 py-14">
-      <div className="mb-8">
-        <p className="lm-micro mb-2">Models</p>
-        <h1 className="lm-display">Local minds</h1>
-      </div>
+    <PageShell width="wide">
+      <PageHeader
+        eyebrow="Models"
+        title="Models"
+        hint={
+          <>
+            Local runtimes and frontier labs. Activating a model sets provider and model together.
+            {active && activeProvider ? (
+              <> Current default: <code>{activeProvider}</code> / <code>{active}</code>.</>
+            ) : null}
+          </>
+        }
+      />
 
-      <div className="flex gap-2 mb-3">
-        {PROVIDER_TABS.map((t) => (
+      <p className="lm-micro mb-2">Local</p>
+      <div className="lm-tabs mb-4" role="tablist" aria-label="Local providers">
+        {LOCAL_TABS.map((t) => (
           <button
             key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={provider === t.id}
             onClick={() => setProvider(t.id)}
-            className={`rounded-full px-3 py-1 text-sm border ${provider === t.id ? "bg-primary text-primary-foreground" : "hover:bg-accent"}`}
+            className={`lm-tab ${provider === t.id ? "is-active" : ""}`}
+            data-pulse="true"
           >
             {t.label}
           </button>
         ))}
       </div>
-      <p className="text-xs text-muted-foreground mb-6">
+      <p className="lm-micro mb-2">Cloud / frontier</p>
+      <div className="lm-tabs mb-3" role="tablist" aria-label="Cloud providers">
+        {CLOUD_TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={provider === t.id}
+            onClick={() => setProvider(t.id)}
+            className={`lm-tab ${provider === t.id ? "is-active" : ""}`}
+            data-pulse="true"
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <p className="lm-body mb-6" style={{ color: "hsl(0 0% 100% / 0.5)", fontSize: "0.8125rem" }}>
         {PROVIDER_TABS.find((t) => t.id === provider)?.blurb}
       </p>
 
       {err && (
-        <div className="mb-4 rounded-md border border-destructive bg-destructive/10 px-3 py-2 text-sm text-destructive flex items-start gap-2">
-          <span className="flex-1">{err}</span>
+        <div className="lm-panel mb-4 flex items-start gap-2 text-sm" style={{ borderColor: "hsl(0 90% 64% / 0.35)" }}>
+          <span className="flex-1" style={{ color: "hsl(0 100% 78%)" }}>{err}</span>
+          {needsKey && (
+            <a className="underline shrink-0" href="/settings">Settings → Providers</a>
+          )}
           {docsUrl && (
             <a className="underline inline-flex items-center gap-1" href={docsUrl} target="_blank" rel="noreferrer">
               docs <ExternalLink className="h-3 w-3" />
@@ -172,90 +257,98 @@ export default function ModelsPage() {
       )}
 
       {pulling && (
-        <Card className="p-4 mb-4">
+        <div className="lm-panel mb-4">
           <p className="text-sm font-medium">Downloading {pulling.label}</p>
-          <div className="mt-2 h-2 rounded-full bg-muted overflow-hidden">
-            <div className="h-full bg-primary transition-all" style={{ width: `${pulling.pct}%` }} />
+          <div className="mt-2 h-1.5 rounded-full overflow-hidden" style={{ background: "hsl(0 0% 100% / 0.08)" }}>
+            <div className="h-full transition-all" style={{ width: `${pulling.pct}%`, background: "hsl(0 0% 100%)" }} />
           </div>
-          <p className="text-xs text-muted-foreground mt-1">
+          <p className="text-xs mt-1" style={{ color: "hsl(0 0% 100% / 0.45)" }}>
             {pulling.pct}% — {pulling.status}
             {pulling.bytes && pulling.total
               ? ` · ${(pulling.bytes / 1e9).toFixed(2)} / ${(pulling.total / 1e9).toFixed(2)} GB`
               : ""}
           </p>
-        </Card>
+        </div>
       )}
 
-      <h2 className="text-sm font-medium mb-2">Installed</h2>
+      <h2 className="lm-micro mb-2">
+        {CLOUD_IDS.has(provider) ? "Available" : "Installed"}
+      </h2>
       {models.length === 0 ? (
         <EmptyState
-          title="Nothing installed in this provider yet"
+          showOrb={needsKey || provider === "ollama"}
+          title={needsKey ? "API key required" : "Nothing available in this provider yet"}
           hint={
-            provider === "ollama"      ? "Pick a model from the catalogue below — llama3.2 is a good first choice." :
+            needsKey ? "Save a key under Settings → Providers, then refresh this tab." :
+            provider === "ollama" ? "Pick a model from the catalogue below — llama3.2 is a good first choice." :
             provider === "huggingface" ? "Download a GGUF from the curated list below; it'll auto-register with Ollama if you have it." :
-                                          "Open LM Studio and download a model from its Models tab, then refresh."
+            provider === "lmstudio" ? "Open LM Studio and download a model from its Models tab, then refresh." :
+            "Check your API key and network, then refresh."
           }
+          action={needsKey ? <a href="/settings" className="lm-action">Open Settings</a> : undefined}
         />
       ) : (
         <div className="space-y-2 mb-6">
           {models.map((m) => (
-            <Card key={m.name} className="p-3 flex items-center gap-3">
+            <div key={m.name} className="lm-panel flex items-center gap-3">
               <div className="flex-1">
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-sm">{m.name}</span>
-                  {active === m.name && <Badge variant="success">Active</Badge>}
+                  {isActive(m.name) && <Badge variant="success">Active</Badge>}
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs" style={{ color: "hsl(0 0% 100% / 0.45)" }}>
                   {m.family || "model"} · {fmtSize(m.size)}
                   {m.path ? <> · <code className="text-[10px]">{m.path}</code></> : null}
                 </p>
               </div>
-              {active !== m.name && (
+              {!isActive(m.name) && (
                 <Button size="sm" variant="outline" onClick={() => setActiveModel(m.name)}>
                   <Check className="h-3.5 w-3.5" /> Set active
                 </Button>
               )}
-              <Button size="sm" variant="ghost" onClick={() => del(m.name)}>
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            </Card>
+              {!CLOUD_IDS.has(provider) && (
+                <Button size="sm" variant="ghost" onClick={() => del(m.name)}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
           ))}
         </div>
       )}
 
       {provider === "ollama" && (
         <>
-          <h2 className="text-sm font-medium mb-2">Pull a new Ollama model</h2>
+          <h2 className="lm-micro mb-2">Pull a new Ollama model</h2>
           <div className="flex gap-2 mb-3">
             <input
               id="custom-model"
               placeholder="Any Ollama model name, e.g. gemma2:9b"
-              className="flex h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+              className="lm-input flex-1"
             />
-            <Button size="sm" disabled={!!pulling} onClick={() => {
+            <button type="button" className="lm-action" disabled={!!pulling} data-pulse="true" onClick={() => {
               const v = (document.getElementById("custom-model") as HTMLInputElement)?.value.trim();
               if (v) pullOllama(v);
             }}>
               <Download className="h-3.5 w-3.5" /> Pull
-            </Button>
+            </button>
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             {CURATED_MODELS.map((m) => {
               const installed = models.some((x) => x.name === m.name);
               return (
-                <Card key={m.name} className="p-3">
-                  <div className="flex items-start justify-between">
+                <div key={m.name} className="lm-panel">
+                  <div className="flex items-start justify-between gap-2">
                     <div>
                       <p className="font-medium text-sm">{m.name}</p>
-                      <p className="text-xs text-muted-foreground">{m.description}</p>
-                      <p className="text-xs text-muted-foreground mt-1">Min RAM {m.ram} · {m.size}</p>
+                      <p className="text-xs" style={{ color: "hsl(0 0% 100% / 0.45)" }}>{m.description}</p>
+                      <p className="text-xs mt-1" style={{ color: "hsl(0 0% 100% / 0.45)" }}>Min RAM {m.ram} · {m.size}</p>
                     </div>
                     <Button size="sm" disabled={installed || !!pulling} onClick={() => pullOllama(m.name)}>
                       <Download className="h-3.5 w-3.5" />
                       {installed ? "Installed" : "Download"}
                     </Button>
                   </div>
-                </Card>
+                </div>
               );
             })}
           </div>
@@ -264,42 +357,39 @@ export default function ModelsPage() {
 
       {provider === "huggingface" && (
         <>
-          <h2 className="text-sm font-medium mb-2">Download from the Hub</h2>
-          <p className="text-xs text-muted-foreground mb-3">
-            Files are streamed to <code>~/.localmind/models/huggingface/</code>. If Ollama is installed, each download is registered under the suggested name so you can switch to it from the Active picker.
+          <h2 className="lm-micro mb-2">Download from the Hub</h2>
+          <p className="text-xs mb-3" style={{ color: "hsl(0 0% 100% / 0.45)" }}>
+            Files land in <code>~/.localmind/models/huggingface/</code>. If Ollama is installed, each download can register under the suggested name.
           </p>
           <div className="grid gap-2 sm:grid-cols-2">
             {catalogue.map((c) => {
               const installed = models.some((m) => m.name.endsWith(`/${c.file}`));
               return (
-                <Card key={`${c.repo}/${c.file}`} className="p-3">
+                <div key={`${c.repo}/${c.file}`} className="lm-panel">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="font-medium text-sm truncate">{c.repo}</p>
-                      <p className="text-[11px] text-muted-foreground truncate">{c.file}</p>
-                      <p className="text-xs text-muted-foreground mt-1">{c.description}</p>
-                      <p className="text-xs text-muted-foreground mt-1">Min RAM {c.ram} · {c.size} · Ollama name: <code>{c.ollamaName}</code></p>
+                      <p className="text-[11px] truncate" style={{ color: "hsl(0 0% 100% / 0.45)" }}>{c.file}</p>
+                      <p className="text-xs mt-1" style={{ color: "hsl(0 0% 100% / 0.45)" }}>{c.description}</p>
+                      <p className="text-xs mt-1" style={{ color: "hsl(0 0% 100% / 0.45)" }}>Min RAM {c.ram} · {c.size} · Ollama: <code>{c.ollamaName}</code></p>
                     </div>
                     <Button size="sm" disabled={installed || !!pulling} onClick={() => pullHuggingface(c)}>
                       <Download className="h-3.5 w-3.5" />
                       {installed ? "Downloaded" : "Download"}
                     </Button>
                   </div>
-                </Card>
+                </div>
               );
             })}
           </div>
-          <p className="text-[11px] text-muted-foreground mt-4">
-            Want a different repo? <a className="underline" href="https://huggingface.co/models?library=gguf" target="_blank" rel="noreferrer">Browse the GGUF library</a>, then add a curated entry under <code>HUGGINGFACE_CURATED</code> in <code>src/lib/providers/huggingface.ts</code>.
-          </p>
         </>
       )}
 
       {provider === "lmstudio" && (
         <>
-          <h2 className="text-sm font-medium mb-2">LM Studio</h2>
-          <p className="text-xs text-muted-foreground">
-            LM Studio manages its own downloads from inside the desktop app. Open LM Studio → Models → search for a model → Download. Once it's loaded and the local server is running, models show up in the Installed list above.
+          <h2 className="lm-micro mb-2">LM Studio</h2>
+          <p className="text-xs" style={{ color: "hsl(0 0% 100% / 0.45)" }}>
+            Downloads happen inside the LM Studio app. Once a model is loaded and the local server is running, it shows up above.
           </p>
           {docsUrl && (
             <a className="text-xs underline inline-flex items-center gap-1 mt-2" href={docsUrl} target="_blank" rel="noreferrer">
@@ -308,6 +398,6 @@ export default function ModelsPage() {
           )}
         </>
       )}
-    </div>
+    </PageShell>
   );
 }

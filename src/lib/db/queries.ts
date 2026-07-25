@@ -32,6 +32,14 @@ export type Settings = {
   idle_work_enabled: number;
   idle_start_hour: number;
   idle_end_hour: number;
+  /** Chat/SWE compute placement: local | auto | peer_node_id */
+  compute_placement?: string;
+  /** Repo/worktree host: local | peer_node_id */
+  workspace_placement?: string;
+  /** When 1, coding window prefers code-server URL over /projects */
+  code_server_enabled?: number;
+  /** Local code-server base URL (default http://127.0.0.1:8080) */
+  code_server_url?: string;
 };
 
 export type WebSearchProvider = "auto" | "brave" | "you" | "duckduckgo";
@@ -164,6 +172,14 @@ export type Conversation = {
   sync_id?: string | null;
   /** Node that first created this conversation. */
   origin_node_id?: string | null;
+  /** Per-chat provider override; NULL inherits settings.provider. */
+  model_provider?: string | null;
+  /** Per-chat model override; NULL inherits settings.active_model. */
+  model_name?: string | null;
+  /** Compute pin for this thread: local | auto | peer id */
+  compute_placement?: string | null;
+  /** Workspace/repo pin: local | peer id */
+  workspace_placement?: string | null;
 };
 
 export type Message = {

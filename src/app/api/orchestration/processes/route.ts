@@ -10,17 +10,21 @@ export const runtime = "nodejs";
 // to the Proposals lane (owner Approve/Reject); `ready_for_review` (a built
 // branch awaiting merge review) goes to Needs you.
 function proposalCard(p: ImprovementProposal, status: ProcessStatus): AgentProcess {
+  const needsProject = typeof p.audit_ref === "string" && p.audit_ref.startsWith("needs_project:");
+  const step = needsProject
+    ? p.audit_ref!.replace(/^needs_project:\s*/, "").slice(0, 200)
+    : p.rationale.slice(0, 160);
   return {
     process_id: `proposal-${p.id}`,
     process_type: "long_running_job",
-    display_name: p.title,
+    display_name: needsProject ? `${p.title} (needs project)` : p.title,
     owner_user_id: null,
     agent_name: "Self-improvement",
     persona_id: null,
     started_at: p.created_at,
     completed_at: null,
     status,
-    current_step: p.rationale.slice(0, 160),
+    current_step: step,
     priority: 0,
     metadata_json: JSON.stringify({
       kind: "proposal",
@@ -28,6 +32,8 @@ function proposalCard(p: ImprovementProposal, status: ProcessStatus): AgentProce
       proposal_status: p.status,
       branch: p.branch,
       pr_url: p.pr_url,
+      needs_project: needsProject || undefined,
+      audit_ref: p.audit_ref,
     }),
     pillar: "maintain",
     parent_process_id: null,
@@ -64,7 +70,11 @@ export async function GET(req: NextRequest) {
   if (params.get("board") === "1") {
     const proposals = listProposals("proposed").map((p) => proposalCard(p, "waiting_confirmation"));
     const built = listProposals("ready_for_review").map((p) => proposalCard(p, "waiting_confirmation"));
-    const board = getBoard(scope, [...approvalsAsCards(), ...built], proposals);
+    // Approved Gate-2 cards that cannot build until a coding project is registered.
+    const needsProject = listProposals("approved")
+      .filter((p) => typeof p.audit_ref === "string" && p.audit_ref.startsWith("needs_project:"))
+      .map((p) => proposalCard(p, "waiting_confirmation"));
+    const board = getBoard(scope, [...approvalsAsCards(), ...built, ...needsProject], proposals);
     return NextResponse.json(board);
   }
   const history = params.get("history") === "1";

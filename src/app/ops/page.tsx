@@ -8,9 +8,11 @@
  * them. Cards are sourced from `agent_processes` (+ folded-in workflow
  * approvals) via GET /api/orchestration/processes?board=1.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, Badge } from "@/components/ui";
 import { toast } from "@/components/toast";
+import { useConfirm } from "@/components/confirm-dialog";
+import { Orb, type OrbState } from "@/components/orb";
 import { Eye, Pause, Play, X, Check, RefreshCw, X as XIcon } from "lucide-react";
 import { pillarMeta, PILLAR_META } from "@/components/ops/pillars";
 
@@ -74,6 +76,7 @@ function metaOf(p: Proc): Record<string, unknown> {
 }
 
 export default function OpsPage() {
+  const confirm = useConfirm();
   const [board, setBoard] = useState<Board>(EMPTY);
   const [loaded, setLoaded] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -125,11 +128,26 @@ export default function OpsPage() {
   async function pauseProc(id: string) { await fetch(`/api/orchestration/processes/${id}/pause`, { method: "POST" }); refresh(); }
   async function resumeProc(id: string) { await fetch(`/api/orchestration/processes/${id}/resume`, { method: "POST" }); refresh(); }
   async function cancelProc(id: string) {
-    if (!confirm("Cancel this process? Any in-flight tool call will be aborted.")) return;
+    const ok = await confirm({
+      title: "Cancel this process?",
+      message: "Any in-flight tool call will be aborted.",
+      confirmLabel: "Cancel process",
+      destructive: true,
+    });
+    if (!ok) return;
     const r = await fetch(`/api/orchestration/processes/${id}`, { method: "DELETE" });
     if (!r.ok) toast("Could not cancel", "error");
     refresh();
   }
+
+  const orbState: OrbState = useMemo(() => {
+    if ((board.counts.needs_you || 0) > 0) return "suspended";
+    if ((board.counts.running || 0) > 0) return "spawn";
+    if ((board.counts.failed || 0) > 0) return "error";
+    return "idle";
+  }, [board.counts]);
+
+  const runningN = board.counts.running || 0;
 
   async function resolveApproval(p: Proc, approved: boolean) {
     const meta = metaOf(p);
@@ -192,6 +210,9 @@ export default function OpsPage() {
     const active = !p.completed_at;
     const kind = metaOf(p).kind;
     const isApproval = kind === "workflow_approval" || kind === "proposal";
+    const isCoding = kind === "coding_session";
+    const codingSessionId = metaOf(p).session_id as string | undefined;
+    const prUrl = metaOf(p).pr_url as string | undefined;
     return (
       <Card key={p.process_id} className="p-3 space-y-2">
         <div className="flex items-start gap-2">
@@ -212,12 +233,58 @@ export default function OpsPage() {
         <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
           <span>{formatDuration((p.completed_at || now) - p.started_at)}</span>
           {model && <Badge variant="outline">{model}</Badge>}
+          {isCoding && <Badge variant="outline">coding</Badge>}
         </div>
         <div className="flex flex-wrap gap-1">
           {!isApproval && (
             <Button size="sm" variant="outline" onClick={() => openTrace(p)}>
               <Eye className="h-3 w-3" /> View
             </Button>
+          )}
+          {isCoding && (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  window.location.href = `/projects?project=${metaOf(p).project_id || ""}&focus=1`;
+                }}
+              >
+                Projects
+              </Button>
+              {prUrl && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => window.open(prUrl, "_blank", "noopener")}
+                >
+                  PR
+                </Button>
+              )}
+              {codingSessionId && active && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={async () => {
+                    const ok = await confirm({
+                      title: "Discard coding session?",
+                      message: "Worktree and branch will be deleted (full undo).",
+                      confirmLabel: "Discard",
+                      destructive: true,
+                    });
+                    if (!ok) return;
+                    await fetch("/api/coding/projects", {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ action: "discard", session_id: codingSessionId }),
+                    });
+                    refresh();
+                  }}
+                >
+                  <X className="h-3 w-3" /> Discard
+                </Button>
+              )}
+            </>
           )}
           {isApproval ? (
             <>
@@ -229,7 +296,7 @@ export default function OpsPage() {
                 <X className="h-3 w-3" /> Deny
               </Button>
             </>
-          ) : active ? (
+          ) : active && !isCoding ? (
             <>
               {p.status !== "paused" ? (
                 <Button size="sm" variant="outline" onClick={() => pauseProc(p.process_id)}>
@@ -254,12 +321,17 @@ export default function OpsPage() {
     <div className="relative flex h-full">
       <div className="flex-1 overflow-hidden flex flex-col px-4 sm:px-8 py-6 sm:py-10 min-w-0">
         <div className="flex items-end justify-between gap-6 mb-4 shrink-0">
-          <div>
-            <p className="lm-micro mb-2">Ops</p>
-            <h1 className="lm-display">Agent Ops board</h1>
-            <p className="text-xs text-muted-foreground mt-1">
-              Tasks running outside the chat window — jobs, schedules, monitors, subagents, and proposals.
-            </p>
+          <div className="flex items-start gap-4 min-w-0">
+            <Orb state={orbState} size={44} satellites={Math.min(Math.max(runningN, 1), 4)} ariaLabel={`Ops status: ${orbState}`} />
+            <div>
+              <p className="lm-micro mb-2">Ops</p>
+              <h1 className="lm-display">Agent Ops board</h1>
+              <p className="lm-body mt-1" style={{ color: "hsl(0 0% 100% / 0.45)", fontSize: "0.75rem" }}>
+                {runningN > 0
+                  ? `${runningN} running · ${board.counts.needs_you || 0} need you`
+                  : "Jobs, schedules, monitors, subagents, and proposals — outside the chat window."}
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" variant={groupByPillar ? "outline" : "default"} onClick={() => setGrouping(false)}>Kanban</Button>
@@ -304,7 +376,12 @@ export default function OpsPage() {
                   </div>
                   <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
                     {items.length === 0 ? (
-                      <p className="text-xs text-muted-foreground px-1 py-4">Nothing here.</p>
+                      <p className="text-xs px-1 py-4" style={{ color: "hsl(0 0% 100% / 0.35)" }}>
+                        {key === "proposals" ? "No proposals waiting." :
+                         key === "needs_you" ? "Nothing needs you." :
+                         key === "running" ? "Quiet — nothing running." :
+                         "Empty."}
+                      </p>
                     ) : (
                       items.map(renderCard)
                     )}

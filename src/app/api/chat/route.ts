@@ -8,9 +8,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const SSE_HEADERS = {
-  "Content-Type": "text/event-stream",
+  "Content-Type": "text/event-stream; charset=utf-8",
   "Cache-Control": "no-cache, no-transform",
   Connection: "keep-alive",
+  // Disable proxy buffering so the first status/token reaches the UI immediately.
+  "X-Accel-Buffering": "no",
 };
 
 export async function POST(req: NextRequest) {
@@ -28,19 +30,18 @@ export async function POST(req: NextRequest) {
         .map((a: any) => ({ name: typeof a.name === "string" ? a.name.slice(0, 200) : undefined, mime: a.mime, data: a.data }))
     : undefined;
 
-  let browsePrefix: string | undefined;
-  if (typeof browseSessionId === "string" && browseSessionId.trim()) {
-    const { linkBrowseSession, buildBrowseContextPrefix } = await import("@/lib/browse/session");
-    linkBrowseSession(conversationId, browseSessionId.trim());
-    browsePrefix = await buildBrowseContextPrefix(browseSessionId.trim());
+  const browseId =
+    typeof browseSessionId === "string" && browseSessionId.trim() ? browseSessionId.trim() : null;
+  // Link/unlink sync — cheap. Heavy Playwright snapshot moves into the stream
+  // so we can return SSE headers immediately.
+  if (browseId) {
+    const { linkBrowseSession } = await import("@/lib/browse/session");
+    linkBrowseSession(conversationId, browseId);
   } else {
-    // No grant on this turn — clear any sticky link so tools can't act on a
-    // tab the user switched away from.
     const { unlinkBrowseSession } = await import("@/lib/browse/session");
     unlinkBrowseSession(conversationId);
   }
   const devpmPrefix = persona === "devpm" ? devpmSystemPrefix() : undefined;
-  const systemPrefix = [browsePrefix, devpmPrefix].filter(Boolean).join("\n\n") || undefined;
 
   const lastEventId = Number(req.headers.get("last-event-id") || "0");
   const existing = getSession(conversationId);
@@ -80,7 +81,8 @@ export async function POST(req: NextRequest) {
     return new Response(encoder.encode(body), { headers: SSE_HEADERS });
   }
 
-  // New message — start a session and run the agent.
+  // New message — start a session and run the agent. Return the Response
+  // immediately so the client sees SSE within milliseconds.
   const controller = new AbortController();
   req.signal.addEventListener("abort", () => controller.abort());
   const session = startSession(conversationId);
@@ -93,6 +95,29 @@ export async function POST(req: NextRequest) {
       };
       session.writers.add(writer);
       try {
+        // Flush padding so proxies / Electron don't buffer the first real event.
+        try {
+          ctrl.enqueue(encoder.encode(`: connected\n\n`));
+        } catch { /* ignore */ }
+        // First byte ASAP — UI shows "Preparing…" before any model work.
+        pushEvent(conversationId, "status", { type: "status", phase: "preparing" });
+
+        let browsePrefix: string | undefined;
+        if (browseId) {
+          pushEvent(conversationId, "status", {
+            type: "status",
+            phase: "preparing",
+            detail: "Reading browse tab…",
+          });
+          try {
+            const { buildBrowseContextPrefix } = await import("@/lib/browse/session");
+            browsePrefix = await buildBrowseContextPrefix(browseId);
+          } catch {
+            /* browse context is best-effort */
+          }
+        }
+        const systemPrefix = [browsePrefix, devpmPrefix].filter(Boolean).join("\n\n") || undefined;
+
         for await (const ev of runAgent(conversationId, message || "", controller.signal, {
           regenerate: !!regenerate,
           systemPrefix,

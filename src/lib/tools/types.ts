@@ -3,6 +3,8 @@ import type { ToolDefinition } from "../providers/types";
 export type ToolContext = {
   conversationId: string;
   approvedDirs: string[];
+  /** When set, git/filesystem/pi_code should prefer this session's worktree. */
+  codingSessionId?: string | null;
 };
 
 export type ToolResult = {

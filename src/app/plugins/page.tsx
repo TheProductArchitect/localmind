@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Card, Badge } from "@/components/ui";
 import { toast } from "@/components/toast";
+import { useConfirm } from "@/components/confirm-dialog";
 import { Package, Download, Trash2, RefreshCw, ShieldAlert, AlertTriangle } from "lucide-react";
 
 type RegistryPlugin = {
@@ -37,6 +38,7 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 export default function PluginsPage() {
+  const confirm = useConfirm();
   const [registry, setRegistry] = useState<{ plugins: RegistryPlugin[]; source: string; fetched_at: number } | null>(null);
   const [installed, setInstalled] = useState<Installed[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -89,7 +91,13 @@ export default function PluginsPage() {
   }
 
   async function uninstall(p: Installed) {
-    if (!confirm(`Uninstall ${p.name}? Any artefacts it created (workflows, personas) will be removed.`)) return;
+    const ok = await confirm({
+      title: `Uninstall ${p.name}?`,
+      message: "Any artefacts it created (workflows, personas) will be removed.",
+      confirmLabel: "Uninstall",
+      destructive: true,
+    });
+    if (!ok) return;
     setBusy(`uninstall:${p.plugin_id}`);
     try {
       const r = await fetch(`/api/plugins/${p.plugin_id}`, { method: "DELETE" });
@@ -156,7 +164,15 @@ export default function PluginsPage() {
       )}
 
       {/* Installed */}
-      {installed.length > 0 && (
+      {installed.length === 0 ? (
+        <section>
+          <h2 className="text-sm font-medium mb-2">Installed</h2>
+          <Card className="p-4 text-sm text-muted-foreground">
+            Nothing installed yet. Ask Sora to install an MCP (`install_mcp_server`), or pick a plugin below.
+            Prefer MCP/plugins before an Ops Gate-2 coding proposal.
+          </Card>
+        </section>
+      ) : (
         <section>
           <h2 className="text-sm font-medium mb-2">Installed ({installed.length})</h2>
           <div className="space-y-2">
@@ -179,13 +195,25 @@ export default function PluginsPage() {
         </section>
       )}
 
+      {installed.length === 0 && (!registry || (registry.plugins || []).length === 0) && (
+        <Card className="p-4 text-sm text-muted-foreground space-y-2">
+          <p>No plugins in the registry either.</p>
+          <p>
+            Ask Sora to install an MCP with <code className="text-xs">install_mcp_server</code>, or file an Ops
+            improvement proposal so a coding PR can add the capability.
+          </p>
+        </Card>
+      )}
+
       {/* Available */}
       <section>
         <h2 className="text-sm font-medium mb-2">Available</h2>
         {!registry ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : visible.length === 0 ? (
-          <Card className="p-4 text-sm text-muted-foreground">No plugins match your search.</Card>
+          <Card className="p-4 text-sm text-muted-foreground">
+            No plugins match your search. Ask Sora to install an MCP (`install_mcp_server`) or browse the registry — prefer plugins/MCP before filing an Ops self-improve proposal.
+          </Card>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2">
             {visible.map((p) => {

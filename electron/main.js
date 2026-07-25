@@ -27,10 +27,17 @@ const { spawn } = require("node:child_process");
 const path = require("node:path");
 const http = require("node:http");
 const fs = require("node:fs");
+const { initBranding, updateBranding, getBranding, readAssistantNameFromDb } = require("./branding");
 
 const ROOT = path.join(__dirname, "..");
 const PORT = Number(process.env.LM_APP_PORT || 3000);
 const SMOKE = process.argv.includes("--smoke");
+
+// Prefer assistant name for menus / getName() as early as possible.
+try {
+  const early = readAssistantNameFromDb();
+  if (early) app.setName(early);
+} catch { /* ignore */ }
 
 // Agent bridge (phase 3): the LocalMind server drives GRANTED tabs via
 // Playwright connectOverCDP on this loopback-only port. On by default —
@@ -42,7 +49,9 @@ if (process.env.LM_AGENT_BRIDGE !== "0") {
 }
 
 let win = null;
+let codingWin = null;
 let serverProc = null;
+let codingWatchTimer = null;
 
 // ---------------------------------------------------------------- server ---
 
@@ -227,6 +236,9 @@ function wireIpc() {
       }
     }
   });
+
+  ipcMain.handle("branding:get", () => getBranding());
+  ipcMain.handle("branding:set", (_e, patch) => updateBranding(patch || {}));
 }
 
 // ------------------------------------------------------------------- boot ---
@@ -238,7 +250,7 @@ async function boot() {
   win = new BrowserWindow({
     width: 1440,
     height: 900,
-    title: "LocalMind",
+    title: readAssistantNameFromDb() || "Assistant",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -249,7 +261,58 @@ async function boot() {
   win.on("resize", layout);
   win.on("closed", () => { win = null; });
 
+  await initBranding({
+    mainWindow: win,
+    getCodingWindow: () => codingWin,
+  });
+
   await win.loadURL(url);
+
+  // Secondary "coding browser" — opens when the app writes open-coding-window.json
+  const dataDir = process.env.LOCALMIND_DATA_DIR || path.join(require("os").homedir(), ".localmind");
+  const signalPath = path.join(dataDir, "open-coding-window.json");
+  let lastSignalAt = 0;
+  codingWatchTimer = setInterval(() => {
+    try {
+      if (!fs.existsSync(signalPath)) return;
+      const raw = JSON.parse(fs.readFileSync(signalPath, "utf8"));
+      if (!raw?.at || raw.at <= lastSignalAt) return;
+      lastSignalAt = raw.at;
+
+      const appBase = url.replace(/\/$/, "");
+      // Prefer absolute code-server URL from the signal when enabled; else /projects.
+      let loadTarget;
+      if (raw.code_server_enabled && typeof raw.code_server_url === "string" && /^https?:\/\//i.test(raw.code_server_url)) {
+        loadTarget = raw.code_server_url.replace(/\/$/, "");
+      } else if (typeof raw.path === "string" && /^https?:\/\//i.test(raw.path)) {
+        loadTarget = raw.path.replace(/\/$/, "");
+      } else {
+        const href = (typeof raw.path === "string" && raw.path) ? raw.path : "/projects";
+        loadTarget = `${appBase}${href.startsWith("/") ? href : `/${href}`}`;
+      }
+
+      if (codingWin && !codingWin.isDestroyed()) {
+        codingWin.focus();
+        codingWin.loadURL(loadTarget);
+        return;
+      }
+      codingWin = new BrowserWindow({
+        width: 1280,
+        height: 860,
+        title: /^https?:\/\//i.test(loadTarget) && !loadTarget.startsWith(appBase)
+          ? `${getBranding().name} · code-server`
+          : `${getBranding().name} · Projects`,
+        webPreferences: {
+          preload: path.join(__dirname, "preload.js"),
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: false,
+        },
+      });
+      codingWin.on("closed", () => { codingWin = null; });
+      codingWin.loadURL(loadTarget);
+    } catch { /* ignore */ }
+  }, 1500);
 
   if (SMOKE) {
     // CI/agent smoke: prove the shell boots, a tab loads, and the CDP bridge
@@ -282,5 +345,6 @@ app.whenReady().then(boot).catch((e) => {
 
 app.on("window-all-closed", () => app.quit());
 app.on("quit", () => {
+  if (codingWatchTimer) clearInterval(codingWatchTimer);
   if (serverProc && !serverProc.killed) serverProc.kill();
 });

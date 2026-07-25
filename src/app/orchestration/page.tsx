@@ -3,6 +3,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button, Card, Badge, Input, Textarea } from "@/components/ui";
 import { toast } from "@/components/toast";
+import { useConfirm } from "@/components/confirm-dialog";
 import { Network, Eye, Pause, Play, X, Clock, RefreshCw, Plus, Zap, Send, BookOpen, ChevronDown } from "lucide-react";
 import Link from "next/link";
 
@@ -74,6 +75,7 @@ export default function OrchestrationPage() {
 }
 
 function OrchestrationPageInner() {
+  const confirm = useConfirm();
   const searchParams = useSearchParams();
   const deepProcessId = searchParams.get("process");
   const deepJobId = searchParams.get("job");
@@ -140,7 +142,13 @@ function OrchestrationPageInner() {
   }
 
   async function cancelJob(jobId: string) {
-    if (!confirm("Cancel this job? Any in-flight iteration will finish, then the job stops.")) return;
+    const ok = await confirm({
+      title: "Cancel this job?",
+      message: "Any in-flight iteration will finish, then the job stops.",
+      confirmLabel: "Cancel job",
+      destructive: true,
+    });
+    if (!ok) return;
     await fetch(`/api/jobs/${jobId}`, { method: "DELETE" });
     refresh();
   }
@@ -178,7 +186,13 @@ function OrchestrationPageInner() {
     refresh();
   }
   async function cancelProc(id: string) {
-    if (!confirm("Cancel this process? Any in-flight tool call will be aborted.")) return;
+    const ok = await confirm({
+      title: "Cancel this process?",
+      message: "Any in-flight tool call will be aborted.",
+      confirmLabel: "Cancel process",
+      destructive: true,
+    });
+    if (!ok) return;
     const r = await fetch(`/api/orchestration/processes/${id}`, { method: "DELETE" });
     if (!r.ok) toast("Could not cancel", "error");
     refresh();

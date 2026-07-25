@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Card, Input, Badge } from "@/components/ui";
 import { toast } from "@/components/toast";
+import { useConfirm } from "@/components/confirm-dialog";
 import { Route, Plus, Trash2, GripVertical, Zap } from "lucide-react";
 
 type Rule = {
@@ -33,6 +34,7 @@ const CONDITION_TYPES: Rule["condition_type"][] = [
 ];
 
 export default function RoutingPage() {
+  const confirm = useConfirm();
   const [rules, setRules] = useState<Rule[]>([]);
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
@@ -94,7 +96,13 @@ export default function RoutingPage() {
   }
 
   async function removeRule(id: string) {
-    if (!confirm("Delete this routing rule?")) return;
+    const ok = await confirm({
+      title: "Delete this routing rule?",
+      message: "The rule will be removed from the evaluation order.",
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!ok) return;
     await fetch(`/api/agent/routing-rules/${id}`, { method: "DELETE" });
     load();
   }

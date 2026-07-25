@@ -96,6 +96,8 @@ Built-ins that matter for web work:
 | `spawn_subagent` | Single specialist child (chain when B needs A's output) |
 | `spawn_subagents_sequential` | Batch, one child at a time (legacy / explicit) |
 | `spawn_subagents_parallel` | Batch with governor-capped concurrency |
+| `coding_project` | Register git repos; start/discard undoable worktree sessions |
+| `git` | Session-scoped status/diff/commit/push/open_pr (never pushes main) |
 
 Chat shows spawn work as a high-level agent card; expand **Show what this agent did**
 to drill into child tool Input/Output. Small models that narrate tool JSON as text
@@ -115,6 +117,9 @@ other destructive floors still confirm). Toggle Auto / Plan / Ask in chat or Set
   (paired LAN devices sync chats + small image attachments with per-device attribution;
   **Run on → Auto** is the default when peers are paired and places turns on the least-loaded
   peer that accepts chat relay; task graphs use the same placement runner)
+- **Projects** — autonomous coding on registered git repos via worktree sessions (`/projects`);
+  SWE loop (plan → implement → test → review → PR); **Discard** undoes the session;
+  Ops board shows coding cards with PR / discard links
 - **Pillars** — every unit of work is tagged `ideate · research · execute · coordinate · communicate · maintain`
   so the Ops board can filter and group it; the **Strategist** persona runs divergent→convergent ideation
 - **Channels** — Telegram, SMS/voice (Twilio); reply YES/NO to approve gated actions
@@ -166,11 +171,10 @@ tools (with permission tiers), the channels it messages on, its web access
 When enabled (**off by default**) and the machine is idle within a nightly
 window, a worker cycle runs the test suite (read-only w.r.t. app code, recorded
 to `self_checks`) and — only when `LM_SELF_IMPROVE=propose` — turns failing checks into
-**improvement proposal cards** on the Ops board (Gate 1). Turning a proposal into code is
-strictly two-gate: **Gate 1** Sora only proposes; **Gate 2** the owner approves
-the card, which authorizes a branch/PR build. Sora never merges, hot-patches, or
-restarts the running app — final merge is always human. There is no auto-build
-or auto-merge mode.
+**improvement proposal cards** on the Ops board (Gate 1). After the owner Approves,
+Gate 2 starts a **coding session** (worktree) + SWE loop when a project is registered
+on `/projects` (or `LM_SELF_IMPROVE_PROJECT_ID`). Sora never merges to main — final
+merge is always human.
 
 ### Web access model
 
@@ -223,7 +227,12 @@ materially with larger ones (8B+). Pull and select models under **Models**.
 ### Key paths
 
 - `docs/architecture.md` — surface map + agent/spawn/data code graphs (mermaid)
-- `docs/sora-v2-implementation.md` — PRD feature → code status
+- `docs/PRD-personal-assistant-v3.md` — v3 PRD (coding polish, presentations, automation, mesh pins, frontier models) — shipped
+- `docs/personal-assistant-v3-implementation.md` — v3 feature → code status
+- `docs/PRD-mesh-depth-v4.md` — v4 PRD (workspace RPC, token stream, MindStudio/Unipile, PDF, code-server)
+- `docs/mesh-depth-v4-implementation.md` — v4 feature → code status
+- `docs/architecture.md` — surface map + fleet / migrations
+- `docs/sora-v2-implementation.md` — Sora v2 PRD feature → code status
 - `src/lib/agent/` — engine, routing, web-guard, confirmations, critic, system prompt,
   `context-broker.ts` (RAG), `pillar-classify.ts`, `idle.ts` / `idle-cycle.ts`,
   `text-tool-calls.ts` (narrated-JSON recovery)

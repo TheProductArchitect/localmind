@@ -78,8 +78,12 @@ export const filesystemTool: Tool = {
       type: "object",
       properties: {
         operation: { type: "string", enum: ["read", "write", "list", "delete"] },
-        path: { type: "string", description: "Absolute path within an approved directory" },
+        path: { type: "string", description: "Absolute path within an approved directory or coding session worktree" },
         content: { type: "string", description: "Content to write (write only)" },
+        coding_session_id: {
+          type: "string",
+          description: "Active coding session — scopes all paths to that worktree.",
+        },
       },
       required: ["operation", "path"],
     },
@@ -95,7 +99,9 @@ export const filesystemTool: Tool = {
         summary: "rejected http(s) path — use read_secure_webpage",
       };
     }
-    const safe = await resolveSafe(rawPath, ctx.approvedDirs);
+    const { resolveCodingSession } = await import("./coding-session-ctx");
+    const { approvedDirs } = resolveCodingSession(input, ctx);
+    const safe = await resolveSafe(rawPath, approvedDirs);
     if (!safe) {
       return { ok: false, output: "Path is not within an approved directory.", summary: "denied: path out of scope" };
     }

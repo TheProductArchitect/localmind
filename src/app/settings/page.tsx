@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button, Card, Input, Badge } from "@/components/ui";
 import { toast } from "@/components/toast";
+import { useConfirm } from "@/components/confirm-dialog";
 import {
   RefreshCw, ExternalLink, CheckCircle2, AlertCircle, Wrench, MessagesSquare, Globe, Boxes,
 } from "lucide-react";
@@ -268,6 +269,10 @@ function useSettings() {
       toast(j.message || j.error || "Save failed", "error");
       return;
     }
+    if (typeof patch?.assistant_name === "string") {
+      const { notifyAssistantName } = await import("@/components/branding-sync");
+      notifyAssistantName(patch.assistant_name);
+    }
     toast("Saved", "success");
     load();
   };
@@ -340,7 +345,14 @@ function GeneralSection() {
       </Card>
       <Card className="p-4 space-y-3">
         <label className="block text-sm">Assistant name
-          <Input defaultValue={s.assistant_name} onBlur={(e) => save({ assistant_name: e.target.value })} className="mt-1" />
+          <Input
+            defaultValue={s.assistant_name}
+            onBlur={(e) => save({ assistant_name: e.target.value })}
+            className="mt-1"
+          />
+          <p className="text-xs text-white/40 mt-1">
+            This becomes the app name and window title. The dock icon is the same orb you see in chat — it follows what your assistant is doing.
+          </p>
         </label>
         <label className="block text-sm">Personality
           <select defaultValue={s.personality} onChange={(e) => save({ personality: e.target.value })}
@@ -393,6 +405,29 @@ function GeneralSection() {
           <option value={65536}>64K tokens</option>
           <option value={131072}>128K tokens</option>
         </select>
+      </Card>
+
+      <Card className="p-4 space-y-2">
+        <div className="flex items-center gap-2">
+          <p className="font-medium text-sm flex-1">code-server coding window</p>
+          <input
+            type="checkbox"
+            checked={!!s.code_server_enabled}
+            onChange={(e) => save({ code_server_enabled: e.target.checked ? 1 : 0 })}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          When enabled, the Electron coding window loads your local code-server URL instead of
+          /projects. Off by default. Start code-server yourself (e.g. on port 8080).
+        </p>
+        <Input
+          defaultValue={s.code_server_url || "http://127.0.0.1:8080"}
+          placeholder="http://127.0.0.1:8080"
+          onBlur={(e) => {
+            const v = e.target.value.trim() || "http://127.0.0.1:8080";
+            save({ code_server_url: v });
+          }}
+        />
       </Card>
 
       <Card className="p-4 space-y-2">
@@ -610,10 +645,23 @@ function ProvidersSection() {
         <Card key={p.name} className="p-4 space-y-2">
           <div className="flex items-center gap-2">
             <span className="font-medium text-sm capitalize">{p.name}</span>
+            {p.name === "mindstudio" && <Badge variant="warning">Cloud — opt-in</Badge>}
             {p.connected && <Badge variant="success">Connected</Badge>}
           </div>
           {p.name === "ollama" ? (
             <p className="text-xs text-muted-foreground">Local runtime — no API key needed.</p>
+          ) : p.name === "mindstudio" ? (
+            <>
+              <p className="text-xs text-muted-foreground">
+                Cloud — MindStudio. Chat messages leave this machine when active. Never the default provider.
+              </p>
+              <div className="flex gap-2">
+                <Input type="password" placeholder="API key"
+                  onChange={(e) => setKeys((k) => ({ ...k, [p.name]: e.target.value }))} />
+                <Button size="sm" onClick={() => action(p.name, "save")}>Save</Button>
+                <Button size="sm" variant="outline" onClick={() => action(p.name, "test")}>Test</Button>
+              </div>
+            </>
           ) : (
             <div className="flex gap-2">
               <Input type="password" placeholder="API key"
@@ -970,6 +1018,7 @@ function CommsSection() {
   const [telegram, setTelegram] = useState({ enabled: false, botToken: "", defaultChatId: "" });
   const [twilio, setTwilio] = useState({ enabled: false, accountSid: "", authToken: "", authorisedNumber: "", publicUrl: "" });
   const [whatsapp, setWhatsapp] = useState({ enabled: false, fromNumber: "", authorisedNumber: "" });
+  const [unipile, setUnipile] = useState({ enabled: false, dsn: "", apiKey: "", webhookSecret: "" });
   const [apiToken, setApiToken] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -980,8 +1029,9 @@ function CommsSection() {
       readApi<{ enabled?: boolean; config?: Record<string, string> }>("/api/channels?type=telegram"),
       readApi<{ enabled?: boolean; config?: Record<string, string> }>("/api/channels?type=twilio"),
       readApi<{ enabled?: boolean; config?: Record<string, string> }>("/api/channels?type=whatsapp"),
-    ]).then(([tg, tw, wa]) => {
-      const denied = [tg, tw, wa].find((r) => !r.ok && (r.status === 401 || r.status === 403));
+      readApi<{ enabled?: boolean; config?: Record<string, string> }>("/api/channels?type=unipile"),
+    ]).then(([tg, tw, wa, up]) => {
+      const denied = [tg, tw, wa, up].find((r) => !r.ok && (r.status === 401 || r.status === 403));
       if (denied && !denied.ok) {
         setAuthError(denied.error);
         return;
@@ -1008,6 +1058,14 @@ function CommsSection() {
           enabled: !!wa.data.enabled,
           fromNumber: wa.data.config?.fromNumber || "",
           authorisedNumber: wa.data.config?.authorisedNumber || "",
+        });
+      }
+      if (up.ok) {
+        setUnipile({
+          enabled: !!up.data.enabled,
+          dsn: up.data.config?.dsn || "",
+          apiKey: up.data.config?.apiKey || "",
+          webhookSecret: up.data.config?.webhookSecret || "",
         });
       }
     }).finally(() => setLoading(false));
@@ -1110,6 +1168,62 @@ function CommsSection() {
       </Card>
 
       <Card className="p-4 space-y-2">
+        <div className="flex items-center gap-2">
+          <p className="font-medium text-sm flex-1">Unipile</p>
+          <Badge variant="warning">Cloud — opt-in</Badge>
+          <input type="checkbox" checked={unipile.enabled}
+            onChange={(e) => setUnipile({ ...unipile, enabled: e.target.checked })} />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Cloud service — messages transit Unipile (LinkedIn, WhatsApp, email, and more). Off by default.
+          Enabling sends message content through Unipile&apos;s servers. LinkedIn automation can risk
+          your account — only enable with explicit consent.
+        </p>
+        <Input
+          placeholder="DSN (from Unipile dashboard, e.g. api1.unipile.com:13111)"
+          value={unipile.dsn}
+          onChange={(e) => setUnipile({ ...unipile, dsn: e.target.value })}
+        />
+        <Input
+          type="password"
+          placeholder="API key (X-API-KEY)"
+          value={unipile.apiKey}
+          onChange={(e) => setUnipile({ ...unipile, apiKey: e.target.value })}
+        />
+        <Input
+          type="password"
+          placeholder="Webhook secret (required to enable — HMAC)"
+          value={unipile.webhookSecret}
+          onChange={(e) => setUnipile({ ...unipile, webhookSecret: e.target.value })}
+        />
+        <Button
+          size="sm"
+          onClick={() => {
+            if (unipile.enabled && !unipile.webhookSecret.trim()) {
+              toast("Webhook secret is required to enable Unipile", "error");
+              return;
+            }
+            saveChannel("unipile", unipile.enabled, {
+              dsn: unipile.dsn,
+              apiKey: unipile.apiKey,
+              webhookSecret: unipile.webhookSecret,
+            });
+          }}
+        >
+          Save Unipile
+        </Button>
+        {unipile.enabled && (
+          <p className="text-xs text-muted-foreground">
+            Inbound webhook: <code>/api/channels/unipile/webhook</code>
+            {" · "}
+            Status: <code>/api/channels/unipile/status</code>
+            {" · "}
+            Unsigned requests are rejected.
+          </p>
+        )}
+      </Card>
+
+      <Card className="p-4 space-y-2">
         <p className="font-medium text-sm">Local API &amp; webhook token</p>
         <p className="text-xs text-muted-foreground">
           Use for the REST API (<code>/api/v1</code>) and inbound webhooks (<code>/api/webhooks/&lt;token&gt;</code>).
@@ -1128,6 +1242,7 @@ function CommsSection() {
 }
 
 function DataSection() {
+  const confirmDlg = useConfirm();
   const [pin, setPin] = useState("");
   const [confirm, setConfirm] = useState("");
 
@@ -1161,7 +1276,15 @@ function DataSection() {
         <Input type="password" placeholder="PIN (if set)" value={pin} onChange={(e) => setPin(e.target.value)} className="w-48" />
         <p className="font-medium text-sm">Delete all conversations</p>
         <Button size="sm" variant="destructive"
-          onClick={() => confirm2("Delete all conversations permanently?") && post("delete-conversations")}>
+          onClick={async () => {
+            const ok = await confirmDlg({
+              title: "Delete all conversations?",
+              message: "This permanently removes every chat. This cannot be undone.",
+              confirmLabel: "Delete all",
+              destructive: true,
+            });
+            if (ok) post("delete-conversations");
+          }}>
           Delete all conversations
         </Button>
         <p className="font-medium text-sm pt-2">Factory reset</p>
@@ -1173,10 +1296,6 @@ function DataSection() {
       </Card>
     </div>
   );
-}
-
-function confirm2(msg: string) {
-  return typeof window !== "undefined" && window.confirm(msg);
 }
 
 // Web access controls — ported from Nova's three-layer browser access model.
@@ -1282,13 +1401,20 @@ function WebAccessCard() {
 }
 
 function BackupSection() {
+  const confirm = useConfirm();
   const [snapshots, setSnapshots] = useState<any[]>([]);
   const [restoring, setRestoring] = useState(false);
   const load = () => fetch("/api/backup").then((r) => r.json()).then((j) => setSnapshots(j.snapshots || []));
   useEffect(() => { load(); }, []);
 
   async function restore(name: string) {
-    if (!confirm(`Restore "${name}"? Current data is snapshotted first, then the app restarts.`)) return;
+    const ok = await confirm({
+      title: `Restore "${name}"?`,
+      message: "Current data is snapshotted first, then the app restarts.",
+      confirmLabel: "Restore",
+      destructive: true,
+    });
+    if (!ok) return;
     setRestoring(true);
     await fetch("/api/backup/restore", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ snapshot: name }),

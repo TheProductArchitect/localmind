@@ -7,6 +7,11 @@ export const runtime = "nodejs";
 export async function GET() {
   const s = getSettings();
   const { pin_hash, ...rest } = s;
+  // Keep Electron branding mirror fresh even if the user never re-saves.
+  try {
+    const { writeBrandingMirror } = await import("@/lib/branding-mirror");
+    writeBrandingMirror();
+  } catch { /* ignore */ }
   return NextResponse.json({ settings: { ...rest, pin_set: !!pin_hash } });
 }
 
@@ -23,6 +28,8 @@ export async function PATCH(req: NextRequest) {
     "approved_dirs", "onboarded", "chat_font_size", "auto_backup", "backup_dir",
     "context_window", "web_access_killed", "agent_mode",
     "web_search_provider", "idle_work_enabled", "idle_start_hour", "idle_end_hour",
+    "compute_placement", "workspace_placement",
+    "code_server_enabled", "code_server_url",
   ];
   for (const k of allowed) {
     if (k in body) patch[k] = body[k];
@@ -33,5 +40,12 @@ export async function PATCH(req: NextRequest) {
   if (body.pin === null) patch.pin_hash = null;
   if (Array.isArray(body.approved_dirs)) patch.approved_dirs = JSON.stringify(body.approved_dirs);
   updateSettings(patch);
+  // Mirror for Electron shell branding (app name / dock) — no auth needed to read.
+  try {
+    const { writeBrandingMirror } = await import("@/lib/branding-mirror");
+    writeBrandingMirror();
+  } catch {
+    /* ignore */
+  }
   return NextResponse.json({ ok: true });
 }

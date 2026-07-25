@@ -59,4 +59,12 @@ describe("PATCH /api/settings allow-list (CRITICAL)", () => {
     await PATCH(patchReq({ agent_mode: "plan", not_a_real_setting: "x" }));
     expect(updateSettings).toHaveBeenCalledWith({ agent_mode: "plan" });
   });
+
+  it("persists compute_placement / workspace_placement", async () => {
+    await PATCH(patchReq({ compute_placement: "local", workspace_placement: "peer-xyz" }));
+    expect(updateSettings).toHaveBeenCalledWith({
+      compute_placement: "local",
+      workspace_placement: "peer-xyz",
+    });
+  });
 });

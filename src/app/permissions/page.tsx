@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Button, Card, Badge } from "@/components/ui";
+import { useConfirm } from "@/components/confirm-dialog";
 
 type Tier = "allow" | "ask" | "pin";
 type Profile = { id: string; name: string; tiers: Record<string, Tier>; builtin: number };
@@ -27,6 +28,7 @@ const TIERS: { id: Tier; label: string }[] = [
 ];
 
 export default function PermissionsPage() {
+  const confirm = useConfirm();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [active, setActive] = useState<string>("");
 
@@ -57,7 +59,13 @@ export default function PermissionsPage() {
   async function setTier(action: string, tier: Tier) {
     if (!profile) return;
     if (tier === "allow" && (action === "send_email" || action === "delete_files")) {
-      if (!confirm(`Set "${LABELS[action]}" to Always Allow? The AI will perform this without asking you.`)) return;
+      const ok = await confirm({
+        title: `Set "${LABELS[action]}" to Always Allow?`,
+        message: "The AI will perform this without asking you.",
+        confirmLabel: "Always allow",
+        destructive: true,
+      });
+      if (!ok) return;
     }
     const tiers = { ...profile.tiers, [action]: tier };
     setProfiles((ps) => ps.map((p) => (p.id === profile.id ? { ...p, tiers } : p)));

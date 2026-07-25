@@ -103,9 +103,18 @@ function ChatInner() {
   const [thread, setThread] = useState<ThreadItem[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [streamPhase, setStreamPhase] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [model, setModel] = useState<string | null>(null);
+  const [provider, setProvider] = useState<string>("ollama");
+  const [defaultModel, setDefaultModel] = useState<string | null>(null);
+  const [defaultProvider, setDefaultProvider] = useState<string>("ollama");
+  const [convModelOverride, setConvModelOverride] = useState(false);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [pickerProviders, setPickerProviders] = useState<{ name: string; connected: boolean }[]>([]);
+  const [pickerModels, setPickerModels] = useState<{ name: string }[]>([]);
+  const [pickerProvider, setPickerProvider] = useState<string>("ollama");
   const [autoRead, setAutoRead] = useState(false);
   // Sora is now the only "lead" persona for chat. Sub-agents (Writer, Coder,
   // Researcher, etc.) are summoned by Sora via spawn_subagent. The legacy
@@ -124,10 +133,13 @@ function ChatInner() {
     paired_at: number;
     last_seen_at: number | null;
     trusted: number;
+    policy?: { accept_workspace_relay?: boolean; accept_chat_relay?: boolean };
+    capabilities?: { accepts_workspace_relay?: boolean; accepts_chat_relay?: boolean };
   };
   const [peers, setPeers] = useState<FleetPeer[]>([]);
   // null = this machine; "__auto__" = least-loaded across mesh; else peer id
   const [runOnPeer, setRunOnPeer] = useState<string | null>(null);
+  const [workspacePeer, setWorkspacePeer] = useState<string>("");
   const [executorHint, setExecutorHint] = useState<string | null>(null);
 
   // Conversation-mode handshake with <ConversationButton/>. When streaming
@@ -191,7 +203,17 @@ function ChatInner() {
         if (j.settings && !j.settings.onboarded) window.location.href = "/onboarding";
         else {
           setModel(j.settings?.active_model || null);
+          setDefaultModel(j.settings?.active_model || null);
+          setProvider(j.settings?.provider || "ollama");
+          setDefaultProvider(j.settings?.provider || "ollama");
           setAgentMode((j.settings?.agent_mode as "auto" | "plan" | "ask") || "auto");
+          const cp = j.settings?.compute_placement;
+          if (cp === "local") setRunOnPeer(null);
+          else if (cp && cp !== "auto") setRunOnPeer(cp);
+          else if (cp === "auto") setRunOnPeer("__auto__");
+          const wp = j.settings?.workspace_placement;
+          if (wp && wp !== "local" && wp !== "auto") setWorkspacePeer(wp);
+          else setWorkspacePeer("");
           const fs = Number(j.settings?.chat_font_size);
           if (fs >= 12 && fs <= 28) {
             document.documentElement.style.setProperty("--lm-root-fs", `${fs}px`);
@@ -230,6 +252,69 @@ function ChatInner() {
     toast(`Mode → ${next}`, "success");
   }
 
+  async function openModelPicker() {
+    setModelPickerOpen(true);
+    setPickerProvider(provider || defaultProvider || "ollama");
+    const [provRes, modRes] = await Promise.all([
+      fetch("/api/providers"),
+      fetch(`/api/models?provider=${encodeURIComponent(provider || defaultProvider || "ollama")}`),
+    ]);
+    const pj = await provRes.json().catch(() => ({ providers: [] }));
+    const mj = await modRes.json().catch(() => ({ models: [] }));
+    setPickerProviders(pj.providers || []);
+    setPickerModels(mj.models || []);
+  }
+
+  async function loadPickerModels(p: string) {
+    setPickerProvider(p);
+    const r = await fetch(`/api/models?provider=${encodeURIComponent(p)}`);
+    const j = await r.json().catch(() => ({ models: [] }));
+    setPickerModels(j.models || []);
+  }
+
+  async function applyChatModel(nextProvider: string, nextModel: string) {
+    if (!activeId) {
+      // No conversation yet — set global default
+      await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: nextProvider, active_model: nextModel }),
+      });
+      setDefaultProvider(nextProvider);
+      setDefaultModel(nextModel);
+      setProvider(nextProvider);
+      setModel(nextModel);
+      setConvModelOverride(false);
+      setModelPickerOpen(false);
+      toast(`Default → ${nextProvider} / ${nextModel}`, "success");
+      return;
+    }
+    await fetch(`/api/conversations/${activeId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model_provider: nextProvider, model_name: nextModel }),
+    });
+    setProvider(nextProvider);
+    setModel(nextModel);
+    setConvModelOverride(true);
+    setModelPickerOpen(false);
+    toast(`This chat → ${nextProvider} / ${nextModel}`, "success");
+  }
+
+  async function clearChatModelOverride() {
+    if (!activeId) return;
+    await fetch(`/api/conversations/${activeId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clear_model_override: true }),
+    });
+    setProvider(defaultProvider);
+    setModel(defaultModel);
+    setConvModelOverride(false);
+    setModelPickerOpen(false);
+    toast("Using default model", "success");
+  }
+
   useEffect(() => {
     if (searchParams.get("new") === "1") newConversation();
     // Prefill from other surfaces (e.g. Browse → "Ask Sora about this page").
@@ -262,6 +347,23 @@ function ChatInner() {
     if (req !== openReqRef.current) return; // stale — a newer open won
     const j = await r.json();
     if (req !== openReqRef.current) return;
+    const conv = j.conversation;
+    if (conv?.model_name || conv?.model_provider) {
+      setConvModelOverride(true);
+      setModel(conv.model_name || defaultModel);
+      setProvider(conv.model_provider || defaultProvider);
+    } else {
+      setConvModelOverride(false);
+      setModel(defaultModel);
+      setProvider(defaultProvider);
+    }
+    const cp = conv?.compute_placement;
+    if (cp === "local") setRunOnPeer(null);
+    else if (cp && cp !== "auto") setRunOnPeer(cp);
+    else if (cp === "auto") setRunOnPeer("__auto__");
+    const wp = conv?.workspace_placement;
+    if (wp && wp !== "local" && wp !== "auto") setWorkspacePeer(wp);
+    else if (wp === "local" || wp === "") setWorkspacePeer("");
     const items: ThreadItem[] = [];
     for (const m of j.messages || []) {
       const origin = m.origin_label || null;
@@ -358,6 +460,7 @@ function ChatInner() {
   // === Streaming ===
   async function streamChat(convId: string, body: any) {
     setStreaming(true);
+    setStreamPhase("preparing");
     setError(null);
     setActiveTools({});
     let lastEventId = 0;
@@ -420,6 +523,7 @@ function ChatInner() {
       if (gotDone) setError(null);
     } finally {
       setStreaming(false);
+      setStreamPhase(null);
       setActiveTools({});
       loadConversations();
       // Conversation-mode handoff: once streaming has stopped, hand the
@@ -447,28 +551,37 @@ function ChatInner() {
   async function sendUtterance(text: string) {
     const cleaned = text.trim();
     if (!cleaned || streaming) return;
+    setStreaming(true);
+    setStreamPhase("preparing");
     setInput("");
+    setThread((t) => [...t, { kind: "user", content: cleaned }, { kind: "assistant", content: "" }]);
     let convId = activeId;
     if (!convId) {
-      const r = await fetch("/api/conversations", { method: "POST" });
-      convId = (await r.json()).conversation.id;
-      setActiveId(convId);
+      try {
+        const r = await fetch("/api/conversations", { method: "POST" });
+        convId = (await r.json()).conversation.id;
+        setActiveId(convId!);
+      } catch (e) {
+        setStreaming(false);
+        setStreamPhase(null);
+        setError((e as Error).message || "Could not start conversation");
+        return;
+      }
     }
-    setThread((t) => [...t, { kind: "user", content: cleaned }, { kind: "assistant", content: "" }]);
     streamChat(convId!, { message: cleaned, persona });
   }
 
   async function send() {
     const text = input.trim();
     if ((!text && attachments.length === 0) || streaming) return;
-    let convId = activeId;
-    if (!convId) {
-      const r = await fetch("/api/conversations", { method: "POST" });
-      convId = (await r.json()).conversation.id;
-      setActiveId(convId);
-    }
     const outgoing = attachments;
     const images = outgoing.map((a) => ({ name: a.name, mime: a.mime, data: a.data }));
+
+    // Paint the turn + typing state BEFORE any network — the previous path
+    // awaited conversation create / fleet placement with a blank thread.
+    setStreaming(true);
+    setStreamPhase("preparing");
+    setError(null);
     setInput("");
     setAttachments([]);
     setThread((t) => [
@@ -477,12 +590,28 @@ function ChatInner() {
       { kind: "assistant", content: "" },
     ]);
 
+    let convId = activeId;
+    if (!convId) {
+      try {
+        const r = await fetch("/api/conversations", { method: "POST" });
+        convId = (await r.json()).conversation.id;
+        setActiveId(convId!);
+      } catch (e) {
+        setStreaming(false);
+        setStreamPhase(null);
+        setError((e as Error).message || "Could not start conversation");
+        return;
+      }
+    }
+
     // Fleet chat relay: explicit peer, or Auto (least-loaded across the mesh).
     let peerTarget = runOnPeer;
     setExecutorHint(null);
     if (peerTarget === "__auto__") {
       try {
-        const place = await fetch("/api/fleet/chat-placement").then((r) => r.json());
+        const place = await fetch(
+          `/api/fleet/chat-placement${convId ? `?conversation_id=${encodeURIComponent(convId)}` : ""}`
+        ).then((r) => r.json());
         if (place?.kind === "peer" && place.peer_node_id) {
           peerTarget = place.peer_node_id;
           setExecutorHint(`Auto → ${place.label || place.peer_node_id.slice(0, 12)}`);
@@ -496,10 +625,10 @@ function ChatInner() {
     }
     if (peerTarget) {
       try {
-        setStreaming(true);
         const peerLabel =
           peers.find((p) => p.peer_node_id === peerTarget)?.label || peerTarget.slice(0, 12);
         setExecutorHint(`Waiting on ${peerLabel}…`);
+        setStreamPhase("preparing");
         const res = await fetch(`/api/fleet/peers/${peerTarget}/chat`, {
           method: "POST",
           headers: { "content-type": "application/json", Accept: "text/event-stream" },
@@ -538,6 +667,24 @@ function ChatInner() {
                   if (ev.peer_label) label = ev.peer_label;
                   if (ev.phase === "relay_started") setExecutorHint(`Waiting on ${label}…`);
                   if (ev.phase === "receiving") setExecutorHint(`Receiving from ${label}…`);
+                } else if (ev.type === "token" && typeof ev.text === "string") {
+                  setStreamPhase("streaming");
+                  setExecutorHint(`Receiving from ${label}…`);
+                  setThread((t) => {
+                    const out = [...t];
+                    for (let i = out.length - 1; i >= 0; i--) {
+                      if (out[i].kind === "assistant") {
+                        const prev = out[i] as { kind: "assistant"; content: string; originLabel?: string };
+                        out[i] = {
+                          kind: "assistant",
+                          content: (prev.content || "") + ev.text,
+                          originLabel: label,
+                        };
+                        break;
+                      }
+                    }
+                    return out;
+                  });
                 } else if (ev.type === "done") {
                   reply = ev.reply ?? "";
                   if (ev.peer_label) label = ev.peer_label;
@@ -596,6 +743,7 @@ function ChatInner() {
         setError((e as Error).message);
       } finally {
         setStreaming(false);
+        setStreamPhase(null);
         loadConversations();
       }
       return;
@@ -616,8 +764,17 @@ function ChatInner() {
   }
 
   function handleEvent(ev: any) {
+    if (ev.type === "status") {
+      setStreamPhase(ev.phase || "thinking");
+      if (ev.phase === "thinking" || ev.phase === "receiving") setStreamPhase(ev.phase);
+      return;
+    }
+    if (ev.type === "text_chunk") {
+      setStreamPhase("streaming");
+    }
     if (ev.type === "tool_call_start") {
       setActiveTools((m) => ({ ...m, [ev.toolCallId]: ev.toolName }));
+      setStreamPhase("tool");
     } else if (ev.type === "tool_call_result") {
       setActiveTools((m) => { const n = { ...m }; delete n[ev.toolCallId]; return n; });
     } else if (ev.type === "loop_suspended") {
@@ -740,9 +897,65 @@ function ChatInner() {
       {/* Thread column */}
       <section className="lm-thread">
         <header className="lm-thread__head">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <span className="lm-micro">Model</span>
-            <span className="lm-body" style={{ color: "hsl(0 0% 100% / 0.92)" }}>{model || "—"}</span>
+            <button
+              type="button"
+              onClick={() => (modelPickerOpen ? setModelPickerOpen(false) : openModelPicker())}
+              className="lm-body"
+              style={{ color: "hsl(0 0% 100% / 0.92)", textDecoration: "underline", textUnderlineOffset: 3 }}
+              data-pulse="true"
+              title="Pick provider and model for this chat"
+            >
+              {provider ? `${provider}/` : ""}{model || "—"}
+              {convModelOverride ? " · chat" : ""}
+            </button>
+            {modelPickerOpen && (
+              <div
+                className="absolute z-40 mt-10 left-4 right-4 max-w-md rounded-lg border bg-background p-3 shadow-lg"
+                style={{ top: "var(--lm-thread-head-top, 3rem)" }}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium">Provider & model</span>
+                  <button type="button" className="text-xs text-muted-foreground" onClick={() => setModelPickerOpen(false)}>Close</button>
+                </div>
+                <select
+                  className="w-full mb-2 h-8 rounded border bg-background px-2 text-sm"
+                  value={pickerProvider}
+                  onChange={(e) => loadPickerModels(e.target.value)}
+                >
+                  {(pickerProviders.length ? pickerProviders : [{ name: pickerProvider, connected: true }]).map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name}{p.connected === false ? " (no key)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <div className="max-h-40 overflow-y-auto space-y-1 mb-2">
+                  {pickerModels.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No models listed. Add a key in Settings or pull a local model.</p>
+                  ) : (
+                    pickerModels.map((m) => (
+                      <button
+                        key={m.name}
+                        type="button"
+                        className="block w-full text-left text-sm px-2 py-1 rounded hover:bg-accent"
+                        onClick={() => applyChatModel(pickerProvider, m.name)}
+                      >
+                        {m.name}
+                      </button>
+                    ))
+                  )}
+                </div>
+                {convModelOverride && (
+                  <button type="button" className="text-xs underline" onClick={clearChatModelOverride}>
+                    Clear chat override (use default)
+                  </button>
+                )}
+                <p className="text-[10px] text-muted-foreground mt-2">
+                  Default: {defaultProvider}/{defaultModel || "—"} · <a href="/models" className="underline">Models</a>
+                </p>
+              </div>
+            )}
             <span className="lm-thread__sep" />
             <span className="lm-micro">Lead</span>
             <span className="lm-body" style={{ color: "hsl(0 0% 100% / 0.92)" }}>Sora</span>
@@ -840,29 +1053,56 @@ function ChatInner() {
                     </div>
                   </div>
                 );
-              if (item.kind === "assistant")
-                return item.content ? (
+              if (item.kind === "assistant") {
+                const isLive = streaming && i === thread.length - 1;
+                if (!item.content) {
+                  if (!isLive) return null;
+                  return (
+                    <div key={i} className="lm-turn lm-turn--assistant">
+                      <div className="lm-typing" aria-live="polite" aria-label="Sora is responding">
+                        <span />
+                        <span />
+                        <span />
+                      </div>
+                      {streamPhase && streamPhase !== "streaming" && (
+                        <p className="lm-micro mt-2" style={{ color: "hsl(0 0% 100% / 0.35)", textTransform: "none", letterSpacing: 0 }}>
+                          {streamPhase === "preparing" ? "Preparing…" :
+                           streamPhase === "tool" ? "Using a tool…" :
+                           streamPhase === "thinking" ? "Thinking…" : "Working…"}
+                        </p>
+                      )}
+                    </div>
+                  );
+                }
+                return (
                   <div key={i} className="lm-turn lm-turn--assistant group">
                     {item.originLabel && (
                       <p className="lm-micro mb-1" style={{ color: "hsl(0 0% 100% / 0.35)", textTransform: "none", letterSpacing: 0 }}>
                         via {item.originLabel}
                       </p>
                     )}
-                    <div className="markdown">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.content}</ReactMarkdown>
-                    </div>
-                    <div className="lm-turn__actions">
-                      <button
-                        onClick={() => { navigator.clipboard.writeText(item.content); toast("Copied"); }}
-                        className="lm-turn__action"
-                        data-pulse="true"
-                      >
-                        <Copy className="h-3 w-3" /> Copy
-                      </button>
-                      <SpeakerButton text={item.content} />
-                    </div>
+                    {isLive ? (
+                      <div className="lm-stream-plain" style={{ whiteSpace: "pre-wrap" }}>{item.content}</div>
+                    ) : (
+                      <div className="markdown">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.content}</ReactMarkdown>
+                      </div>
+                    )}
+                    {!isLive && (
+                      <div className="lm-turn__actions">
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(item.content); toast("Copied"); }}
+                          className="lm-turn__action"
+                          data-pulse="true"
+                        >
+                          <Copy className="h-3 w-3" /> Copy
+                        </button>
+                        <SpeakerButton text={item.content} />
+                      </div>
+                    )}
                   </div>
-                ) : null;
+                );
+              }
               if (item.kind === "tool") return <div key={i} className="lm-turn"><ToolCallCard tc={item.tc} /></div>;
               if (item.kind === "confirmation")
                 return <div key={i} className="lm-turn"><ConfirmationCard c={item.c} onDecide={(d, p) => decide(item.c.toolCallId, d, p)} /></div>;
@@ -879,11 +1119,29 @@ function ChatInner() {
 
         <footer className="lm-composer">
           {peers.length > 0 && (
-            <div className="mx-auto flex items-center gap-2 mb-2" style={{ maxWidth: 720 }}>
+            <div className="mx-auto flex flex-wrap items-center gap-2 mb-2" style={{ maxWidth: 720 }}>
               <span className="lm-micro" style={{ color: "hsl(0 0% 100% / 0.4)" }}>Run on</span>
               <select
                 value={runOnPeer ?? ""}
-                onChange={(e) => setRunOnPeer(e.target.value || null)}
+                onChange={async (e) => {
+                  const v = e.target.value || null;
+                  setRunOnPeer(v);
+                  const compute_placement =
+                    !v ? "local" : v === "__auto__" ? "auto" : v;
+                  if (activeId) {
+                    await fetch(`/api/conversations/${activeId}`, {
+                      method: "PATCH",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ compute_placement }),
+                    });
+                  } else {
+                    await fetch("/api/settings", {
+                      method: "PATCH",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ compute_placement }),
+                    });
+                  }
+                }}
                 className="lm-peer-select"
                 aria-label="Choose which machine runs this turn"
               >
@@ -894,6 +1152,42 @@ function ChatInner() {
                     {p.label || p.peer_node_id.slice(0, 12)}
                   </option>
                 ))}
+              </select>
+              <span className="lm-micro" style={{ color: "hsl(0 0% 100% / 0.4)" }}>Workspace</span>
+              <select
+                value={workspacePeer}
+                onChange={async (e) => {
+                  const v = e.target.value;
+                  setWorkspacePeer(v);
+                  if (activeId) {
+                    await fetch(`/api/conversations/${activeId}`, {
+                      method: "PATCH",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ workspace_placement: v || "local" }),
+                    });
+                  } else {
+                    await fetch("/api/settings", {
+                      method: "PATCH",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ workspace_placement: v || "local" }),
+                    });
+                  }
+                }}
+                className="lm-peer-select"
+                aria-label="Choose which machine holds the git workspace"
+              >
+                <option value="">This machine</option>
+                {peers
+                  .filter(
+                    (p) =>
+                      p.capabilities?.accepts_workspace_relay === true ||
+                      p.policy?.accept_workspace_relay === true
+                  )
+                  .map((p) => (
+                    <option key={`ws-${p.peer_node_id}`} value={p.peer_node_id}>
+                      {p.label || p.peer_node_id.slice(0, 12)}
+                    </option>
+                  ))}
               </select>
               {executorHint && (
                 <span className="lm-micro" style={{ color: "hsl(160 40% 70%)", textTransform: "none", letterSpacing: 0 }}>
@@ -1214,6 +1508,33 @@ function ChatInner() {
         .lm-turn--assistant :global(.markdown) {
           font-size: inherit;
           line-height: inherit;
+        }
+        .lm-stream-plain {
+          font-size: inherit;
+          line-height: inherit;
+          color: hsl(0 0% 100% / 0.92);
+        }
+        .lm-typing {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          padding: 10px 4px;
+        }
+        .lm-typing span {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: hsl(0 0% 100% / 0.55);
+          animation: lm-typing-bounce 1.1s ease-in-out infinite;
+        }
+        .lm-typing span:nth-child(2) { animation-delay: 0.15s; }
+        .lm-typing span:nth-child(3) { animation-delay: 0.3s; }
+        @keyframes lm-typing-bounce {
+          0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+          40% { opacity: 1; transform: translateY(-3px); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .lm-typing span { animation: none; opacity: 0.6; }
         }
         .lm-turn__actions {
           display: flex; align-items: center; gap: 10px;

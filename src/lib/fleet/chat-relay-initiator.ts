@@ -5,7 +5,7 @@
  *   1. logStart an audit row on our side ("chat_relay_sent").
  *   2. markOutboundActive so an inbound chat-relay from the same peer in the
  *      same window will refuse — closes the obvious A→B→A loop.
- *   3. sendToPeer the chat-relay envelope.
+ *   3. sendToPeer the chat-relay envelope (or NDJSON stream when streaming).
  *   4. Verify the response, record the cross-reference, complete the audit
  *      row, and surface the assistant text to the caller (the REST endpoint).
  *
@@ -14,7 +14,7 @@
  * orchestration: it doesn't decide what the peer is allowed to do.
  */
 
-import { sendToPeer } from "./peer-client";
+import { sendToPeer, sendToPeerNdjson } from "./peer-client";
 import { logStart, logComplete, linkAuditToPeer } from "../agent/audit-logger";
 import { markOutboundActive, clearOutboundActive } from "./handlers/chat-relay";
 import type { ChatRelayRequest, ChatRelayResponse } from "./handlers/chat-relay";
@@ -40,6 +40,9 @@ export async function relayChatToPeer(args: {
   message: string;
   persona_id?: string;
   timeout_ms?: number;
+  /** Forward live token deltas from the executor (NDJSON fleet stream). */
+  onToken?: (text: string) => void;
+  stream_tokens?: boolean;
 }): Promise<RelayChatResult> {
   const localAuditId = logStart({
     actionType: "chat_relay_sent",
@@ -48,6 +51,7 @@ export async function relayChatToPeer(args: {
       peer: args.peer_node_id,
       conversation_id: args.conversation_id,
       message_preview: args.message.slice(0, 200),
+      stream_tokens: !!args.stream_tokens || !!args.onToken,
     },
     conversationId: args.conversation_id,
     approvedBy: "rule",
@@ -56,19 +60,28 @@ export async function relayChatToPeer(args: {
   markOutboundActive(args.peer_node_id);
 
   try {
+    const stream = !!(args.stream_tokens || args.onToken);
     const payload: ChatRelayRequest = {
       initiator_audit_id: localAuditId,
       initiator_conversation_id: args.conversation_id,
       message: args.message,
       persona_id: args.persona_id,
+      stream_tokens: stream || undefined,
     };
 
-    const result = await sendToPeer<ChatRelayRequest, ChatRelayResponse>(
-      args.peer_node_id,
-      "chat-relay",
-      payload,
-      { timeoutMs: args.timeout_ms ?? 120_000 }
-    );
+    const result = stream
+      ? await sendToPeerNdjson<ChatRelayRequest, ChatRelayResponse>(
+          args.peer_node_id,
+          "chat-relay",
+          payload,
+          { timeoutMs: args.timeout_ms ?? 120_000, onToken: args.onToken }
+        )
+      : await sendToPeer<ChatRelayRequest, ChatRelayResponse>(
+          args.peer_node_id,
+          "chat-relay",
+          payload,
+          { timeoutMs: args.timeout_ms ?? 120_000 }
+        );
 
     if (!result.ok) {
       logComplete(localAuditId, "failed", `chat-relay RPC failed: ${result.reason}`);

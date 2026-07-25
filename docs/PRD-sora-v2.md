@@ -361,11 +361,12 @@ The owner wants Sora to improve itself, **but approval must come first**: Sora w
 **Goal:** stop dumping whole files (memory.md, brain, history) into the model. Retrieve only the top-relevant slices, locally.
 
 **Design — a single module `src/lib/agent/context-broker.ts`:**
-- On each turn (and for each subagent), before building the prompt, the broker:
+- On each **main-chat** turn, before building the prompt, the broker:
   1. Embeds the user query locally (`embed()` in `embeddings.ts`, Ollama `nomic-embed-text` — already local, already there).
   2. Runs `semanticSearch()` across the Brain / knowledge / memory vec index (`src/lib/db/vec.ts`), returning top-k chunks above the 0.5 score threshold.
   3. Applies a **token budget** (e.g. ≤ N% of the model's context window from `settings.context_window`), packing highest-scoring chunks first, deduping near-duplicates by cosine similarity.
   4. Optionally **synthesizes** the retrieved chunks into a short, cited brief via a *small* local model, so the main model gets a dense summary + citations instead of raw chunks — and an explicit "not in memory" note when coverage is thin.
+- **Subagents do not re-run the broker.** The parent (Sora) decides what context a child needs and puts it in the spawn `goal` (and persona / tool surface). That keeps child windows focused and avoids double-retrieval.
 - The existing `memory` builtin block in `assemble-system-prompt.ts` changes from "inject all key/value memory" to "inject the broker's top-k retrieved memory for this turn." Small installs (few memories) still fit fully; large brains get retrieval. This directly implements the owner's "not everything needs a total dump."
 - `memory.md`: create a canonical human-readable memory doc at `~/.localmind/brain/memory.md` (git-tracked, Obsidian-visible) that the consolidation cycle keeps current. **It is the human-facing artifact, not the injection source** — the model reads *retrieved slices*, the human reads the whole file. The `agent_memory` tool and consolidation cycle write to it; the broker indexes it.
 
@@ -430,7 +431,7 @@ Use **Renovate** (preferred over Dependabot for grouping + auto-merge policies),
 4. **G.3 — Context Broker** (2d). Highest-leverage intelligence upgrade; unblocks efficient memory/brain use.
 5. **C.1 you.com** (1d) + **C.2 Obsidian vault/brain scaffolding + `brain_edges`** (2d).
 6. **F — Pillars tagging + Ideate persona** (1–2d, mostly config once A + broker exist).
-7. **G.1/G.2 — Idle cycle + test runner + self-improve proposals** (Gate 1 proposal cards from failing self-checks are wired; Gate 2 build-after-approve remains).
+7. **G.1/G.2 — Idle cycle + test runner + self-improve proposals** (Gate 1 cards + Gate 2 coding session/SWE loop when a project is registered).
 8. **C.4 Unipile** (3–4d) → enables the communicate pillar fully.
 9. **C.5 MindStudio provider** (1–2d) + **E Renovate/CI** (1d).
 

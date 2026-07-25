@@ -40,6 +40,8 @@ type LmBrowser = {
   getState: () => Promise<BrowserState>;
   getTargetId: (id: number) => Promise<string | null>;
   onState: (cb: (s: BrowserState) => void) => () => void;
+  setBranding?: (patch: { name?: string; orbState?: string }) => Promise<{ name: string; orbState: string }>;
+  getBranding?: () => Promise<{ name: string; orbState: string }>;
 };
 
 export function getLmBrowser(): LmBrowser | null {

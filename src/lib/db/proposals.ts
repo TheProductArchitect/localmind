@@ -103,3 +103,16 @@ export function setProposalStatus(
     );
   return getProposal(id);
 }
+
+/** Annotate an approved proposal that cannot build until a coding project exists. */
+export function markProposalNeedsProject(id: string, message?: string): ImprovementProposal | null {
+  const cur = getProposal(id);
+  if (!cur) return null;
+  const note =
+    message ||
+    "needs_project: Register a coding project on /projects (or set LM_SELF_IMPROVE_PROJECT_ID), then re-approve or wait for the next Gate 2 tick.";
+  getConfigDb()
+    .prepare("UPDATE improvement_proposals SET audit_ref=? WHERE id=?")
+    .run(note, id);
+  return getProposal(id);
+}

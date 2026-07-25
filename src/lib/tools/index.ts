@@ -12,6 +12,8 @@ import { spreadsheetTool } from "./spreadsheet";
 import { peerKnowledgeTool } from "./peer-knowledge";
 import { piCodeTool } from "./pi-code";
 import { spawnSubagentTool, spawnSubagentsParallelTool, spawnSubagentsSequentialTool, spawnAgentsTool } from "./subagent";
+import { codingProjectTool } from "./coding-project";
+import { gitTool } from "./git";
 import { checkResourcesTool } from "./check-resources";
 import { timeTool } from "./time";
 import { requestToolAccessTool } from "./request-tool-access";
@@ -24,6 +26,8 @@ import { recallTool } from "./recall";
 import { webResearchTool } from "./web-research";
 import { readSecureWebpageTool, SECURE_BROWSER_MCP_NAME } from "./read-secure-webpage";
 import { browseSessionTool } from "./browse-session";
+import { manageWorkflowTool } from "./manage-workflow";
+import { presentationTool } from "./presentation";
 import { getMcpTools } from "./mcp";
 import type { Tool } from "./types";
 
@@ -38,6 +42,8 @@ const BUILTIN: Tool[] = [
   remindersTool,
   contactsTool,
   scheduleTool,
+  manageWorkflowTool,
+  presentationTool,
   recallTool,
   webResearchTool,
   readSecureWebpageTool,
@@ -57,6 +63,8 @@ const BUILTIN: Tool[] = [
   spawnSubagentsSequentialTool,
   spawnSubagentsParallelTool,
   spawnAgentsTool,
+  codingProjectTool,
+  gitTool,
 ];
 
 export function listBuiltinTools(): Tool[] {

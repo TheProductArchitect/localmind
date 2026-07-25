@@ -1,12 +1,12 @@
 /**
  * POST /api/fleet/peers/[id]/chat
  *
- * Drive a chat session on a paired peer. Streams progressive status over SSE
- * so the UI can show "Waiting on …" while the signed relay runs; the peer
- * still returns one final reply (token streaming across fleet is Phase-2).
+ * Drive a chat session on a paired peer. Streams progressive status + live
+ * token deltas over SSE (fleet NDJSON under the hood when peers support it).
  *
  * Body: { conversation_id: string, message: string, persona_id?: string }
- * SSE events: { type: "status", phase }, { type: "done", reply, … }, { type: "error", message }
+ * SSE events: { type: "status", phase }, { type: "token", text },
+ *             { type: "done", reply, … }, { type: "error", message }
  */
 
 import { NextRequest } from "next/server";
@@ -66,6 +66,11 @@ export async function POST(
           conversation_id: parsed.data.conversation_id,
           message: parsed.data.message,
           persona_id: parsed.data.persona_id,
+          stream_tokens: true,
+          onToken: (text) => {
+            write({ type: "status", phase: "receiving", peer_label: peerLabel });
+            write({ type: "token", text });
+          },
         });
         if (!result.ok) {
           write({

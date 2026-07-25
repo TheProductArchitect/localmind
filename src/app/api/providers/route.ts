@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listConnectedProviders, setApiKey, deleteApiKey } from "@/lib/db/apikeys";
-import { getProviderByName } from "@/lib/providers";
+import { getProviderByName, CHAT_PROVIDERS } from "@/lib/providers";
 
 export const runtime = "nodejs";
 
-const PROVIDERS = ["ollama", "openai", "anthropic", "groq", "openrouter", "lmstudio"];
+const PROVIDERS = [...CHAT_PROVIDERS];
 
 export async function GET() {
   try {

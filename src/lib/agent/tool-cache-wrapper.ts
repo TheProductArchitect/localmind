@@ -25,6 +25,9 @@ import {
   store,
   computeToolInputHash,
 } from "../db/tool-call-cache";
+import { resolveWorkspaceRelayPeer } from "../fleet/workspace-route";
+import { relayWorkspaceToolToPeer } from "../fleet/workspace-relay-initiator";
+import { mirrorRemoteCodingSession } from "../fleet/workspace-session-mirror";
 
 const MAX_CACHE_OUTPUT_BYTES = 64 * 1024;
 const CACHE_HIT_PREFIX = "[cache-hit] ";
@@ -32,6 +35,7 @@ const CACHE_HIT_PREFIX = "[cache-hit] ";
 export type CachedToolResult = ToolResult & {
   cache_hit?: boolean;
   cache_age_ms?: number;
+  workspace_relay?: boolean;
 };
 
 export async function executeWithCache(
@@ -39,6 +43,57 @@ export async function executeWithCache(
   input: Record<string, unknown>,
   ctx: ToolContext
 ): Promise<CachedToolResult> {
+  const toolName = tool.definition.name;
+  const workspacePeer = resolveWorkspaceRelayPeer(toolName, input, ctx);
+  if (workspacePeer) {
+    // Force remote start_session without nested SWE on the workspace host —
+    // compute peer owns the SWE loop after mirroring.
+    const relayInput =
+      toolName === "coding_project" && input.operation === "start_session"
+        ? { ...input, run_swe: false }
+        : input;
+    const relayed = await relayWorkspaceToolToPeer({
+      peer_node_id: workspacePeer,
+      tool: toolName,
+      input: relayInput,
+      conversation_id: ctx.conversationId,
+      coding_session_id: ctx.codingSessionId || (typeof input.coding_session_id === "string" ? input.coding_session_id : null),
+    });
+    if (!relayed.ok) {
+      return {
+        ok: false,
+        output: relayed.reason || relayed.output || "Workspace relay failed.",
+        summary: "workspace-relay failed",
+        workspace_relay: true,
+      };
+    }
+    if (toolName === "coding_project" && input.operation === "start_session" && relayed.summary) {
+      await mirrorRemoteCodingSession({
+        peerNodeId: workspacePeer,
+        remoteSessionId: relayed.summary,
+        conversationId: ctx.conversationId,
+        goal: typeof input.goal === "string" ? input.goal : "",
+        projectId: typeof input.project_id === "string" ? input.project_id : "",
+        runSwe: input.run_swe !== false && input.run_swe !== "false",
+      }).catch(() => null);
+    }
+    if (toolName === "coding_project" && input.operation === "discard_session") {
+      const sid = typeof input.session_id === "string" ? input.session_id : "";
+      if (sid) {
+        try {
+          const { updateCodingSession } = await import("../db/coding");
+          updateCodingSession(sid, { status: "discarded" });
+        } catch { /* ignore */ }
+      }
+    }
+    return {
+      ok: true,
+      output: relayed.output,
+      summary: relayed.summary,
+      workspace_relay: true,
+    };
+  }
+
   const eligible = typeof tool.cacheable === "function" ? tool.cacheable(input) : false;
   if (!eligible) {
     return tool.execute(input, ctx);
@@ -46,7 +101,6 @@ export async function executeWithCache(
 
   const toolVersion = tool.version ?? "1";
   const inputHash = computeToolInputHash(input);
-  const toolName = tool.definition.name;
 
   const cached = lookup(toolName, toolVersion, inputHash);
   if (cached && cached.status === "ok") {

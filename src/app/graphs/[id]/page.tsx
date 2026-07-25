@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Card, Badge, Button } from "@/components/ui";
 import { toast } from "@/components/toast";
+import { useConfirm } from "@/components/confirm-dialog";
 import { Workflow, ArrowLeft, X, RefreshCw, Zap, Database, Server, AlertTriangle } from "lucide-react";
 
 type TaskGraph = {
@@ -84,6 +85,7 @@ function depthsByNode(nodes: TaskNode[]): Map<string, number> {
 }
 
 export default function GraphDetailPage() {
+  const confirm = useConfirm();
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const graphId = params.id;
@@ -153,7 +155,13 @@ export default function GraphDetailPage() {
 
   async function cancelGraph() {
     if (!graph) return;
-    if (!confirm("Cancel this graph? In-flight nodes will finish; pending nodes will be marked cancelled.")) return;
+    const ok = await confirm({
+      title: "Cancel this graph?",
+      message: "In-flight nodes will finish; pending nodes will be marked cancelled.",
+      confirmLabel: "Cancel graph",
+      destructive: true,
+    });
+    if (!ok) return;
     const r = await fetch(`/api/graphs/${graphId}`, { method: "DELETE" });
     if (r.ok) toast("Cancellation requested", "success");
   }

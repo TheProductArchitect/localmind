@@ -1265,6 +1265,146 @@ configMigrations.push({
   },
 });
 
+// v32: coding projects + sessions (autonomous SWE / worktree isolation)
+configMigrations.push({
+  version: 32,
+  up: (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS coding_projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        repo_path TEXT NOT NULL,
+        default_branch TEXT NOT NULL DEFAULT 'main',
+        remote_url TEXT,
+        github_owner TEXT,
+        github_repo TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS coding_sessions (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        branch TEXT NOT NULL,
+        worktree_path TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        goal TEXT NOT NULL DEFAULT '',
+        process_id TEXT,
+        pr_url TEXT,
+        graph_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES coding_projects(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_coding_sessions_project ON coding_sessions(project_id);
+      CREATE INDEX IF NOT EXISTS idx_coding_sessions_status ON coding_sessions(status);
+    `);
+    const tools = JSON.stringify([
+      "memory", "knowledge_base", "web_search", "time", "filesystem",
+      "calendar", "email", "browser", "browse_session", "peer_knowledge",
+      "datastore", "spreadsheet", "check_resources", "spawn_subagent",
+      "spawn_subagents_sequential", "spawn_subagents_parallel", "spawn_agents",
+      "schedule_task", "recall", "web_research", "read_secure_webpage",
+      "agent_memory", "install_mcp_server", "pi_code",
+      "coding_project", "git",
+    ]);
+    db.prepare(
+      "UPDATE personas SET enabled_tools=?, updated_at=? WHERE persona_id='persona-sora'"
+    ).run(tools, Date.now());
+  },
+});
+
+// v33: persona may pin a chat provider alongside model_name (Feature E)
+configMigrations.push({
+  version: 33,
+  up: (db) => {
+    db.exec("ALTER TABLE personas ADD COLUMN provider TEXT;");
+  },
+});
+
+// v34: grant manage_workflow to Sora (Feature C)
+configMigrations.push({
+  version: 34,
+  up: (db) => {
+    const tools = JSON.stringify([
+      "memory", "knowledge_base", "web_search", "time", "filesystem",
+      "calendar", "email", "browser", "browse_session", "peer_knowledge",
+      "datastore", "spreadsheet", "check_resources", "spawn_subagent",
+      "spawn_subagents_sequential", "spawn_subagents_parallel", "spawn_agents",
+      "schedule_task", "manage_workflow", "recall", "web_research", "read_secure_webpage",
+      "agent_memory", "install_mcp_server", "pi_code",
+      "coding_project", "git",
+    ]);
+    db.prepare(
+      "UPDATE personas SET enabled_tools=?, updated_at=? WHERE persona_id='persona-sora'"
+    ).run(tools, Date.now());
+  },
+});
+
+// v35: presentations artifacts + grant presentation tool (Feature B)
+configMigrations.push({
+  version: 35,
+  up: (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS presentations (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        owner_user_id TEXT,
+        status TEXT NOT NULL DEFAULT 'draft',
+        deck_path TEXT NOT NULL,
+        slide_count INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_presentations_updated ON presentations(updated_at DESC);
+    `);
+    const tools = JSON.stringify([
+      "memory", "knowledge_base", "web_search", "time", "filesystem",
+      "calendar", "email", "browser", "browse_session", "peer_knowledge",
+      "datastore", "spreadsheet", "check_resources", "spawn_subagent",
+      "spawn_subagents_sequential", "spawn_subagents_parallel", "spawn_agents",
+      "schedule_task", "manage_workflow", "presentation", "recall", "web_research", "read_secure_webpage",
+      "agent_memory", "install_mcp_server", "pi_code",
+      "coding_project", "git",
+    ]);
+    db.prepare(
+      "UPDATE personas SET enabled_tools=?, updated_at=? WHERE persona_id='persona-sora'"
+    ).run(tools, Date.now());
+  },
+});
+
+// v36: mesh compute / workspace placement defaults (Feature D)
+configMigrations.push({
+  version: 36,
+  up: (db) => {
+    db.exec(`
+      ALTER TABLE settings ADD COLUMN compute_placement TEXT NOT NULL DEFAULT 'auto';
+      ALTER TABLE settings ADD COLUMN workspace_placement TEXT NOT NULL DEFAULT 'local';
+    `);
+  },
+});
+
+// v37: coding session records compute + workspace peer pins (Feature D)
+configMigrations.push({
+  version: 37,
+  up: (db) => {
+    db.exec(`
+      ALTER TABLE coding_sessions ADD COLUMN compute_peer_id TEXT;
+      ALTER TABLE coding_sessions ADD COLUMN workspace_peer_id TEXT;
+    `);
+  },
+});
+
+// v38: optional code-server embed in coding window (D4)
+configMigrations.push({
+  version: 38,
+  up: (db) => {
+    db.exec(`
+      ALTER TABLE settings ADD COLUMN code_server_enabled INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE settings ADD COLUMN code_server_url TEXT NOT NULL DEFAULT 'http://127.0.0.1:8080';
+    `);
+  },
+});
+
 const knowledgeMigrations: Migration[] = [
   {
     version: 1,
@@ -1416,6 +1556,26 @@ const convMigrations: Migration[] = [
       `);
       // Backfill sync_id = id so existing threads are syncable immediately.
       db.exec("UPDATE conversations SET sync_id = id WHERE sync_id IS NULL;");
+    },
+  },
+  {
+    // v6: per-conversation model override (provider + model); NULL = inherit settings
+    version: 6,
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE conversations ADD COLUMN model_provider TEXT;
+        ALTER TABLE conversations ADD COLUMN model_name TEXT;
+      `);
+    },
+  },
+  {
+    // v7: per-conversation compute / workspace mesh pins
+    version: 7,
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE conversations ADD COLUMN compute_placement TEXT;
+        ALTER TABLE conversations ADD COLUMN workspace_placement TEXT;
+      `);
     },
   },
 ];

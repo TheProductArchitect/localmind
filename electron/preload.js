@@ -23,4 +23,7 @@ contextBridge.exposeInMainWorld("lmBrowser", {
     ipcRenderer.on("browser:state", handler);
     return () => ipcRenderer.removeListener("browser:state", handler);
   },
+  /** Hyper-personal shell: app name = assistant, dock icon = live orb. */
+  setBranding: (patch) => ipcRenderer.invoke("branding:set", patch),
+  getBranding: () => ipcRenderer.invoke("branding:get"),
 });

@@ -176,7 +176,7 @@ export const spawnSubagentTool: Tool = {
         goal: {
           type: "string",
           description:
-            "What the subagent should accomplish. Be specific — it only sees this goal, not your conversation.",
+            "What the subagent should accomplish. Be specific — it only sees this goal (plus its persona memory), not your full conversation or the Context Broker brief. Include any facts or constraints it needs.",
         },
         persona_id: {
           type: "string",
@@ -737,7 +737,7 @@ export const spawnAgentsTool: Tool = {
   definition: {
     name: "spawn_agents",
     description:
-      "Spawn one or more subagents. Prefer this single tool over spawn_subagent / sequential / parallel. Pass `goal` for one child, or `batch` for many. Omit `mode` unless the user asked for parallel or a dependency chain — the runtime defaults multi-unit work to sequential (one at a time) to spare RAM.",
+      "Spawn one or more subagents. Prefer this single tool over spawn_subagent / sequential / parallel. Pass `goal` for one child, or `batch` for many. Omit `mode` unless the user asked for parallel or a dependency chain — the runtime defaults multi-unit work to sequential (one at a time) to spare RAM. Put any needed context in each goal; children do not re-run the Context Broker.",
     parameters: {
       type: "object",
       properties: {

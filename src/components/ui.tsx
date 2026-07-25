@@ -1,6 +1,7 @@
 "use client";
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { Orb } from "@/components/orb";
 
 /**
  * UI primitives — v2 dark/mono.
@@ -121,11 +122,29 @@ export function Badge({
   );
 }
 
-export function EmptyState({ title, hint }: { title: string; hint: string }) {
+export function EmptyState({
+  title,
+  hint,
+  action,
+  showOrb = false,
+}: {
+  title: string;
+  hint: string;
+  /** Optional primary CTA under the hint */
+  action?: React.ReactNode;
+  /** Quiet idle Orb for first-run brand continuity (use sparingly) */
+  showOrb?: boolean;
+}) {
   return (
     <div className="flex flex-col items-center justify-center text-center py-16">
+      {showOrb && (
+        <div className="mb-6" aria-hidden>
+          <Orb state="idle" size={56} />
+        </div>
+      )}
       <p className="lm-display" style={{ fontSize: 22, lineHeight: "30px" }}>{title}</p>
       <p className="lm-body mt-2 max-w-md" style={{ color: "hsl(0 0% 100% / 0.5)" }}>{hint}</p>
+      {action && <div className="mt-5">{action}</div>}
     </div>
   );
 }
