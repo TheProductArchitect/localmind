@@ -23,6 +23,7 @@ import { unregisterProcess } from "./process-registry";
 import { resolveRoutedModel } from "./routing";
 import { isTrivialUserTurn } from "./trivial-turn";
 import { pickPreferredOllamaModel } from "../curated-models";
+import { spawnToolTimeoutMs } from "./spawn-intent";
 
 // Best-effort orchestration hooks — orchestration writes must never crash the agent loop.
 function safeProcessHook(fn: () => void): void {
@@ -49,6 +50,31 @@ const CONFIRM_TIMEOUT_MS = 60_000;
 const MAX_TOOL_CALLS = 25;
 const TOOL_TIMEOUT_MS = 30_000;
 const BROWSER_TOOL_TIMEOUT_MS = 60_000;
+const LONG_TOOL_TIMEOUT_MS = 120_000;
+const SPAWN_TOOLS = new Set([
+  "spawn_agents",
+  "spawn_subagent",
+  "spawn_subagents_sequential",
+  "spawn_subagents_parallel",
+]);
+const LONG_TOOLS = new Set([
+  "browser",
+  "browse_session",
+  "web_research",
+  "read_secure_webpage",
+  "pi_code",
+  "web_search",
+]);
+
+/** Per-tool wall budgets. Spawn tools derive theirs from batch timeouts. */
+function toolTimeoutMs(name: string, args: Record<string, unknown> | undefined): number {
+  if (SPAWN_TOOLS.has(name)) {
+    return spawnToolTimeoutMs(args || {});
+  }
+  if (name === "browser") return BROWSER_TOOL_TIMEOUT_MS;
+  if (LONG_TOOLS.has(name)) return LONG_TOOL_TIMEOUT_MS;
+  return TOOL_TIMEOUT_MS;
+}
 
 // Per-model context window sizes (token estimates). Used only as a fallback when
 // the user has not set an explicit context window (context_window = 0 / "auto").
@@ -550,7 +576,12 @@ export async function* runAgent(
             return;
           }
 
-          const timeoutMs = call.name === "browser" ? BROWSER_TOOL_TIMEOUT_MS : TOOL_TIMEOUT_MS;
+          const timeoutMs = toolTimeoutMs(
+            call.name,
+            (call.arguments && typeof call.arguments === "object"
+              ? call.arguments
+              : {}) as Record<string, unknown>
+          );
           // V6.7: route through the tool-call cache wrapper so idempotent
           // reads (web_search, knowledge.search, memory.read, filesystem.read,
           // etc.) return cached output when (tool_name, tool_version,

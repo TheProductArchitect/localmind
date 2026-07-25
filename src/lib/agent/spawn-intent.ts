@@ -38,6 +38,12 @@ export function wantsParallelProse(text: string): boolean {
   );
 }
 
+function topLevelTools(input: Record<string, unknown>): string[] | undefined {
+  if (!Array.isArray(input.allowed_tools)) return undefined;
+  const tools = (input.allowed_tools as unknown[]).filter((t): t is string => typeof t === "string");
+  return tools.length ? tools : undefined;
+}
+
 function coerceBatch(input: Record<string, unknown>): BatchSpec[] {
   let rawBatch: unknown = input.batch;
   if (typeof rawBatch === "string") {
@@ -47,16 +53,27 @@ function coerceBatch(input: Record<string, unknown>): BatchSpec[] {
       rawBatch = [];
     }
   }
+  // Top-level fields apply to every batch item that doesn't override them —
+  // small models often put timeout / tools / persona once on the parent call.
+  const inheritPersona =
+    typeof input.persona_id === "string" ? input.persona_id : undefined;
+  const inheritTools = topLevelTools(input);
+  const inheritTimeout =
+    typeof input.timeout_seconds === "number" ? input.timeout_seconds : undefined;
+
   if (Array.isArray(rawBatch) && rawBatch.length > 0) {
     return (rawBatch as Record<string, unknown>[])
       .map((spec) => ({
         goal: String(spec?.goal ?? "").trim(),
-        persona_id: typeof spec?.persona_id === "string" ? spec.persona_id : undefined,
+        persona_id:
+          typeof spec?.persona_id === "string" ? spec.persona_id : inheritPersona,
         allowed_tools: Array.isArray(spec?.allowed_tools)
           ? (spec.allowed_tools as string[]).filter((t) => typeof t === "string")
-          : undefined,
+          : inheritTools,
         timeout_seconds:
-          typeof spec?.timeout_seconds === "number" ? spec.timeout_seconds : undefined,
+          typeof spec?.timeout_seconds === "number"
+            ? spec.timeout_seconds
+            : inheritTimeout,
       }))
       .filter((s) => s.goal.length > 0)
       .slice(0, MAX_BATCH_SIZE);
@@ -66,12 +83,9 @@ function coerceBatch(input: Record<string, unknown>): BatchSpec[] {
     return [
       {
         goal,
-        persona_id: typeof input.persona_id === "string" ? input.persona_id : undefined,
-        allowed_tools: Array.isArray(input.allowed_tools)
-          ? (input.allowed_tools as string[]).filter((t) => typeof t === "string")
-          : undefined,
-        timeout_seconds:
-          typeof input.timeout_seconds === "number" ? input.timeout_seconds : undefined,
+        persona_id: inheritPersona,
+        allowed_tools: inheritTools,
+        timeout_seconds: inheritTimeout,
       },
     ];
   }
@@ -121,4 +135,40 @@ export function compileSpawnIntent(
     };
   }
   return { mode: "sequential", batch, reason: "default multi-unit sequential" };
+}
+
+const DEFAULT_CHILD_TIMEOUT_S = 180;
+const MAX_CHILD_TIMEOUT_S = 600;
+/** Hard ceiling on how long the parent tool may wait for a whole spawn. */
+const MAX_SPAWN_WALL_S = 20 * 60;
+
+/**
+ * Wall-clock budget for the outer `spawn_*` tool call. Sequential batches sum
+ * child timeouts; parallel batches take the max. Without this the agent engine
+ * would kill the spawn at the default 30s tool ceiling.
+ */
+export function spawnToolTimeoutMs(
+  input: Record<string, unknown>,
+  opts?: { userText?: string }
+): number {
+  const intent = compileSpawnIntent(input, opts);
+  if (intent.batch.length === 0) {
+    return (DEFAULT_CHILD_TIMEOUT_S + 30) * 1000;
+  }
+  const childSecs = intent.batch.map((spec) =>
+    Math.max(
+      5,
+      Math.min(
+        MAX_CHILD_TIMEOUT_S,
+        typeof spec.timeout_seconds === "number"
+          ? spec.timeout_seconds
+          : DEFAULT_CHILD_TIMEOUT_S
+      )
+    )
+  );
+  const workSecs =
+    intent.mode === "parallel" ? Math.max(...childSecs) : childSecs.reduce((a, b) => a + b, 0);
+  // Setup / teardown overhead between children.
+  const overhead = 30 + intent.batch.length * 5;
+  return Math.min(MAX_SPAWN_WALL_S, workSecs + overhead) * 1000;
 }
