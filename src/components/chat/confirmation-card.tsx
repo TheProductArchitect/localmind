@@ -8,6 +8,8 @@ export type ConfirmationState = {
   preview: string;
   timeoutSeconds: number;
   requiresPin?: boolean;
+  /** When set, this gate was raised by a remote compute peer (M5). */
+  peerLabel?: string;
 };
 
 /**
@@ -36,7 +38,9 @@ export function ConfirmationCard({
     <div className="lm-confirm" role="alertdialog" aria-labelledby={`confirm-${c.toolCallId}`}>
       <div className="lm-confirm__head">
         <span className="lm-micro" id={`confirm-${c.toolCallId}`}>
-          Needs you · {c.actionType}
+          {c.peerLabel
+            ? `Needs you · via ${c.peerLabel} · ${c.actionType}`
+            : `Needs you · ${c.actionType}`}
         </span>
         <span
           className="lm-confirm__timer"
@@ -47,10 +51,15 @@ export function ConfirmationCard({
           {remaining}s
         </span>
       </div>
+      {c.peerLabel && (
+        <p className="lm-confirm__pin-note">
+          This action is running on {c.peerLabel}. Your decision is sent back over the fleet.
+        </p>
+      )}
       {c.requiresPin && (
         <p className="lm-confirm__pin-note">
           <Lock className="h-3 w-3" aria-hidden />
-          Protected action — PIN required to allow.
+          Protected action — PIN required to allow{c.peerLabel ? ` (PIN on ${c.peerLabel})` : ""}.
         </p>
       )}
       <pre className="lm-confirm__preview">{c.preview}</pre>

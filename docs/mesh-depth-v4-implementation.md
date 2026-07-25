@@ -23,7 +23,7 @@ Predecessor: [`personal-assistant-v3-implementation.md`](./personal-assistant-v3
 
 ## Notes
 
-- Config schema: **v38** (`code_server_enabled`, `code_server_url`).
+- Config schema: **v39** (`tool_home_placement`; also v38 `code_server_enabled` / `code_server_url`).
 - Workspace relay never allowlists `shell`; inbound handler uses ALS to prevent A→B→A re-relay.
 - MindStudio uses OpenAI-compatible HTTP (`MINDSTUDIO_BASE_URL`); real MindStudio app-run API may need a follow-up adapter.
 - Unipile HMAC is required to enable the channel; unsigned webhooks are rejected (public route). Confirm scheme against Unipile’s live docs when wiring production.

@@ -229,10 +229,13 @@ export async function sendToPeerNdjson<Req, Res>(
               envelope?: SignedEnvelope<Res>;
               [k: string]: unknown;
             };
-            if (obj.type === "token" && typeof obj.text === "string") {
+            if (obj.type === "ping") {
+              // Long confirm/tool waits emit no tokens — refresh the idle
+              // socket timeout so the stream stays alive until the result.
+              req.setTimeout(opts.timeoutMs ?? 120_000);
+            } else if (obj.type === "token" && typeof obj.text === "string") {
               opts.onToken?.(obj.text);
-            } else if (obj.type && obj.type !== "result" && obj.type !== "token") {
-              opts.onControl?.(obj as { type: string; [k: string]: unknown });
+              req.setTimeout(opts.timeoutMs ?? 120_000);
             } else if (obj.type === "result" && obj.envelope) {
               const v = verify(obj.envelope, {
                 senderPubkeyPem: peer.pubkey_pem,
@@ -244,6 +247,9 @@ export async function sendToPeerNdjson<Req, Res>(
               } else {
                 resolve({ ok: true, envelope: v.envelope });
               }
+            } else if (obj.type && obj.type !== "result" && obj.type !== "token") {
+              opts.onControl?.(obj as { type: string; [k: string]: unknown });
+              req.setTimeout(opts.timeoutMs ?? 120_000);
             }
           } catch {
             /* ignore partial/malformed line */

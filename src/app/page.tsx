@@ -305,6 +305,8 @@ function ChatInner() {
           const wp = j.settings?.workspace_placement;
           if (wp && wp !== "local" && wp !== "auto") setWorkspacePeer(wp);
           else setWorkspacePeer("");
+          const th = j.settings?.tool_home_placement;
+          if (th === "executor" || th === "initiator") setToolHome(th);
           const fs = Number(j.settings?.chat_font_size);
           if (fs >= 12 && fs <= 28) {
             document.documentElement.style.setProperty("--lm-root-fs", `${fs}px`);
@@ -787,7 +789,11 @@ function ChatInner() {
       try {
         const peerLabel =
           peers.find((p) => p.peer_node_id === peerTarget)?.label || peerTarget.slice(0, 12);
-        setExecutorHint(`Waiting on ${peerLabel}…`);
+        setExecutorHint(
+          toolHome === "initiator"
+            ? `Waiting on ${peerLabel}… (tools on this device)`
+            : `Waiting on ${peerLabel}…`
+        );
         setStreamPhase("preparing");
         const res = await fetch(`/api/fleet/peers/${peerTarget}/chat`, {
           method: "POST",
@@ -855,6 +861,8 @@ function ChatInner() {
                   // Executor raised an ask/pin gate; surface it locally and
                   // remember the peer so decide() relays the answer back.
                   remoteConfirmRef.current.set(ev.tool_call_id, peerTarget as string);
+                  setExecutorHint(`Waiting for your approval (via ${label})…`);
+                  setStreamPhase("waiting_confirmation");
                   setThread((t) => [
                     ...t,
                     {
@@ -865,6 +873,7 @@ function ChatInner() {
                         preview: ev.preview || "",
                         timeoutSeconds: ev.timeout_seconds ?? 60,
                         requiresPin: !!ev.requires_pin,
+                        peerLabel: label,
                       },
                     },
                   ]);
@@ -873,6 +882,8 @@ function ChatInner() {
                   ev.tool_call_id
                 ) {
                   remoteConfirmRef.current.delete(ev.tool_call_id);
+                  setExecutorHint(`Receiving from ${label}…`);
+                  setStreamPhase("streaming");
                   setThread((t) =>
                     t.filter((i) => !(i.kind === "confirmation" && i.c.toolCallId === ev.tool_call_id))
                   );
@@ -1298,7 +1309,9 @@ function ChatInner() {
                         <p className="lm-micro mt-2" style={{ color: "hsl(0 0% 100% / 0.35)", textTransform: "none", letterSpacing: 0 }}>
                           {streamPhase === "preparing" ? "Preparing…" :
                            streamPhase === "tool" ? "Using a tool…" :
-                           streamPhase === "thinking" ? "Thinking…" : "Working…"}
+                           streamPhase === "thinking" ? "Thinking…" :
+                           streamPhase === "waiting_confirmation" ? "Waiting for your approval…" :
+                           "Working…"}
                         </p>
                       )}
                     </div>
@@ -1424,15 +1437,32 @@ function ChatInner() {
                   <span className="lm-micro" style={{ color: "hsl(0 0% 100% / 0.4)" }}>Tools</span>
                   <select
                     value={toolHome}
-                    onChange={(e) => setToolHome(e.target.value as "initiator" | "executor")}
+                    onChange={async (e) => {
+                      const v = e.target.value as "initiator" | "executor";
+                      setToolHome(v);
+                      await fetch("/api/settings", {
+                        method: "PATCH",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({ tool_home_placement: v }),
+                      }).catch(() => null);
+                    }}
                     className="lm-peer-select"
                     aria-label="Choose which machine runs personal-assistant tools"
-                    title="When compute runs on a peer, choose whether files / calendar / mail / browser actions happen on this device or on the compute peer. Requires 'Accept tool relay' on the target device."
+                    title="When compute runs on a peer, choose whether files / calendar / mail / browser actions happen on this device or on the compute peer. Requires 'Accept tool relay' on this device (Fleet → peer policy)."
                   >
                     <option value="initiator">On this device</option>
                     <option value="executor">On compute peer</option>
                   </select>
                 </>
+              )}
+              {runOnPeer && toolHome === "initiator" && (
+                <span
+                  className="lm-micro"
+                  style={{ color: "hsl(200 40% 70%)", textTransform: "none", letterSpacing: 0 }}
+                  title="The model thinks on the compute peer; files, calendar, mail, and browser actions run here."
+                >
+                  tools stay here
+                </span>
               )}
               {executorHint && (
                 <span className="lm-micro" style={{ color: "hsl(160 40% 70%)", textTransform: "none", letterSpacing: 0 }}>

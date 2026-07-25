@@ -1405,6 +1405,16 @@ configMigrations.push({
   },
 });
 
+// v39: default tool home when compute runs on a peer (DGX PA — tools on my PC)
+configMigrations.push({
+  version: 39,
+  up: (db) => {
+    db.exec(`
+      ALTER TABLE settings ADD COLUMN tool_home_placement TEXT NOT NULL DEFAULT 'initiator';
+    `);
+  },
+});
+
 const knowledgeMigrations: Migration[] = [
   {
     version: 1,

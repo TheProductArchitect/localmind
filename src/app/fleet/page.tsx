@@ -171,6 +171,12 @@ export default function FleetPage() {
             devices (you&apos;ll still see which machine each message came from), and
             compute can land where load is lightest.
           </p>
+          <p className="lm-body mt-3 max-w-xl" style={{ color: "hsl(0 0% 100% / 0.45)" }}>
+            Hub tip: put a powerful box (e.g. DGX) on the same Wi‑Fi, pair it, enable{" "}
+            <em>Accept chat relay</em> there and <em>Accept tool relay</em> on this PC.
+            In chat, set Run on to the hub (or Auto) and leave Tools on this device —
+            the model thinks on the hub while files / calendar / mail run here.
+          </p>
           <div className="lm-transport mt-5 max-w-xl" data-open={transportOpen}>
             <button
               onClick={() => setTransportOpen((o) => !o)}

@@ -29,6 +29,7 @@ export async function PATCH(req: NextRequest) {
     "context_window", "web_access_killed", "agent_mode",
     "web_search_provider", "idle_work_enabled", "idle_start_hour", "idle_end_hour",
     "compute_placement", "workspace_placement",
+    "tool_home_placement",
     "code_server_enabled", "code_server_url",
   ];
   for (const k of allowed) {

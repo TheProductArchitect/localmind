@@ -40,6 +40,8 @@ export type Settings = {
   code_server_enabled?: number;
   /** Local code-server base URL (default http://127.0.0.1:8080) */
   code_server_url?: string;
+  /** When compute is on a peer: initiator = tools on this device, executor = on peer */
+  tool_home_placement?: string;
 };
 
 export type WebSearchProvider = "auto" | "brave" | "you" | "duckduckgo";

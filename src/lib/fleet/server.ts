@@ -185,35 +185,51 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse): Pr
       const writeLine = (obj: unknown) => {
         res.write(Buffer.from(JSON.stringify(obj) + "\n", "utf8"));
       };
-      const { handleChatRelay } = await import("./handlers/chat-relay");
-      const payload = await handleChatRelay({
-        envelope: envelope as SignedEnvelope<import("./handlers/chat-relay").ChatRelayRequest>,
-        senderNodeId: envelope.sender,
-        onToken: (text) => {
-          writeLine({ type: "token", text });
-        },
-        onEvent: (evt) => {
-          // Forward confirmation gates over the stream so the initiator can
-          // approve/deny; keys mirror the local engine event shape.
-          if (evt.type === "confirmation_required") {
-            writeLine({
-              type: "confirm",
-              tool_call_id: evt.toolCallId,
-              action_type: evt.actionType,
-              preview: evt.preview,
-              timeout_seconds: evt.timeoutSeconds,
-              requires_pin: evt.requiresPin,
-            });
-          } else if (evt.type === "confirmation_timeout") {
-            writeLine({ type: "confirm_timeout", tool_call_id: evt.toolCallId });
-          } else if (evt.type === "confirmation_denied") {
-            writeLine({ type: "confirm_denied", tool_call_id: evt.toolCallId });
-          }
-        },
-      });
-      const resultEnv = sign(`${kind}-result` as EnvelopeKind, envelope.sender, payload);
-      writeLine({ type: "result", envelope: resultEnv });
-      res.end();
+      // Keep the initiator's idle socket timeout alive during long confirms /
+      // tool waits that emit no tokens.
+      const heartbeat = setInterval(() => {
+        try {
+          writeLine({ type: "ping", ts: Date.now() });
+        } catch {
+          /* socket already closed */
+        }
+      }, 15_000);
+      if (typeof (heartbeat as NodeJS.Timeout).unref === "function") {
+        (heartbeat as NodeJS.Timeout).unref();
+      }
+      try {
+        const { handleChatRelay } = await import("./handlers/chat-relay");
+        const payload = await handleChatRelay({
+          envelope: envelope as SignedEnvelope<import("./handlers/chat-relay").ChatRelayRequest>,
+          senderNodeId: envelope.sender,
+          onToken: (text) => {
+            writeLine({ type: "token", text });
+          },
+          onEvent: (evt) => {
+            // Forward confirmation gates over the stream so the initiator can
+            // approve/deny; keys mirror the local engine event shape.
+            if (evt.type === "confirmation_required") {
+              writeLine({
+                type: "confirm",
+                tool_call_id: evt.toolCallId,
+                action_type: evt.actionType,
+                preview: evt.preview,
+                timeout_seconds: evt.timeoutSeconds,
+                requires_pin: evt.requiresPin,
+              });
+            } else if (evt.type === "confirmation_timeout") {
+              writeLine({ type: "confirm_timeout", tool_call_id: evt.toolCallId });
+            } else if (evt.type === "confirmation_denied") {
+              writeLine({ type: "confirm_denied", tool_call_id: evt.toolCallId });
+            }
+          },
+        });
+        const resultEnv = sign(`${kind}-result` as EnvelopeKind, envelope.sender, payload);
+        writeLine({ type: "result", envelope: resultEnv });
+        res.end();
+      } finally {
+        clearInterval(heartbeat);
+      }
       return;
     }
 
