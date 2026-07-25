@@ -47,6 +47,7 @@ export async function relayChatToPeer(args: {
   stream_tokens?: boolean;
   /** Where PA tools run: "initiator" relays them back to this device. */
   tool_home?: "initiator" | "executor";
+  images?: { name?: string; mime: string; data: string }[];
 }): Promise<RelayChatResult> {
   const localAuditId = logStart({
     actionType: "chat_relay_sent",
@@ -56,6 +57,7 @@ export async function relayChatToPeer(args: {
       conversation_id: args.conversation_id,
       message_preview: args.message.slice(0, 200),
       stream_tokens: !!args.stream_tokens || !!args.onToken,
+      image_count: args.images?.length || 0,
     },
     conversationId: args.conversation_id,
     approvedBy: "rule",
@@ -72,6 +74,7 @@ export async function relayChatToPeer(args: {
       persona_id: args.persona_id,
       stream_tokens: stream || undefined,
       tool_home: args.tool_home,
+      images: args.images,
     };
 
     const result = stream

@@ -16,6 +16,10 @@ vi.mock("../src/lib/db/queries", () => ({
   getSettings: () => settings,
 }));
 
+vi.mock("../src/lib/db/jobs", () => ({
+  logSecurityEvent: vi.fn(),
+}));
+
 vi.mock("../src/lib/fleet/peer-client", () => ({
   sendToPeer: vi.fn(),
 }));
@@ -131,6 +135,15 @@ describe("handleConfirmDecision", () => {
     });
     expect(r.ok).toBe(true);
     await expect(promise).resolves.toBe("deny");
+  });
+
+  it("fails closed when the pending confirmation already expired", async () => {
+    const r = await handleConfirmDecision({
+      envelope: envelope({ tool_call_id: "already-gone", decision: "allow" }),
+      senderNodeId: "peer-a",
+    });
+    expect(r.ok).toBe(false);
+    expect(r.matched).toBe(false);
   });
 });
 

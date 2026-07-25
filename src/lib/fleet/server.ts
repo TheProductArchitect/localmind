@@ -206,6 +206,8 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse): Pr
             });
           } else if (evt.type === "confirmation_timeout") {
             writeLine({ type: "confirm_timeout", tool_call_id: evt.toolCallId });
+          } else if (evt.type === "confirmation_denied") {
+            writeLine({ type: "confirm_denied", tool_call_id: evt.toolCallId });
           }
         },
       });

@@ -52,21 +52,35 @@ export async function executeWithCache(
   // (inbound chat-relay whose tool_home points back at the initiator), run
   // allowlisted personal-assistant tools on THEIR device instead of ours.
   const toolHome = getToolHome();
-  if (toolHome && !isToolRelayInbound() && TOOL_RELAY_TOOLS.has(toolName)) {
-    const relayed = await relayToolToPeer({
-      peer_node_id: toolHome.initiatorNodeId,
-      tool: toolName,
-      input,
-      conversation_id: ctx.conversationId,
-    });
-    if (!relayed.ok) {
+  if (toolHome && !isToolRelayInbound()) {
+    // Under tool-home=initiator, shell must not silently run on the compute
+    // hub — it is intentionally excluded from TOOL_RELAY_TOOLS. Fail closed
+    // with a clear message rather than executing on the wrong machine.
+    if (toolName === "shell") {
       return {
         ok: false,
-        output: relayed.output || relayed.reason || "Tool relay to your device failed.",
-        summary: "tool-relay failed",
+        output:
+          "shell is not available when Tools are set to run on the initiating device. Use filesystem / browser / calendar / email (or switch Tools to the compute peer).",
+        summary: "shell blocked under tool-home=initiator",
       };
     }
-    return { ok: true, output: relayed.output, summary: relayed.summary };
+    if (TOOL_RELAY_TOOLS.has(toolName)) {
+      const relayed = await relayToolToPeer({
+        peer_node_id: toolHome.initiatorNodeId,
+        tool: toolName,
+        input,
+        // Prefer the initiator's conversation id (ALS) over the executor twin.
+        conversation_id: toolHome.conversationId ?? ctx.conversationId,
+      });
+      if (!relayed.ok) {
+        return {
+          ok: false,
+          output: relayed.output || relayed.reason || "Tool relay to your device failed.",
+          summary: "tool-relay failed",
+        };
+      }
+      return { ok: true, output: relayed.output, summary: relayed.summary };
+    }
   }
 
   const workspacePeer = resolveWorkspaceRelayPeer(toolName, input, ctx);

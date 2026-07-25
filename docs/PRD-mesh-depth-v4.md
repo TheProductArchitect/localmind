@@ -1,7 +1,7 @@
 # PRD — Mesh depth & deferred wave (v4)
 
 > **Product:** LocalMind / Sora  
-> **Status:** Active — implementation in progress  
+> **Status:** Shipped (M1–M5 + D1–D4); WAN (W0) intentionally out of scope  
 > **Predecessor:** [`PRD-personal-assistant-v3.md`](./PRD-personal-assistant-v3.md) (Features A–F shipped; several items explicitly deferred)  
 > **Tracker:** [`mesh-depth-v4-implementation.md`](./mesh-depth-v4-implementation.md)
 
@@ -82,9 +82,9 @@ This wave finishes the mesh promise and lands the deferred items that are produc
 - [x] Deck PDF export produces a real `.pdf` when Chromium is available (HTML fallback otherwise).
 - [x] MindStudio / Unipile disabled by default; enabling requires key + cloud label.
 - [x] Docs never claim WAN mesh.
+- [x] Remote `ask` confirmation propagation (M5) — NDJSON `confirm` frames + `confirm-decision` RPC; timeout denies. Unit/integration covered; two-device E2E still recommended.
 - [ ] Two paired devices E2E: compute=Device1, workspace=Device2 (manual QA).
 - [ ] Discard on compute removes remote worktree via RPC (covered in unit path; needs two-device E2E).
-- [ ] Remote `ask` confirmation propagation (M5 — still fail-closed).
 
 ## 6. Guardrails
 
@@ -98,3 +98,21 @@ This wave finishes the mesh promise and lands the deferred items that are produc
 Loads a configured `code_server_url` in the Electron coding window when
 `code_server_enabled` is on. Does **not** auto-install or spawn a `code-server`
 binary — operator must run it separately.
+
+## 7. DGX hub extension (post-v4)
+
+Shipped alongside M5 for the “DGX thinks, PC acts” personal-assistant setup:
+
+- **GPU-aware Auto placement** — `preferGpu` in chat placement.
+- **Tool home = initiator** — `tool-relay` allowlist + `accept_tool_relay` policy + Chat **Tools** control.
+- **Heartbeat `primary_addr` refresh** — DHCP renumbers without re-pairing.
+- See setup notes in [`mesh-depth-v4-implementation.md`](./mesh-depth-v4-implementation.md).
+
+## 8. WAN sketch (future — not this wave)
+
+Out of scope for v4. A future PRD may explore:
+
+1. Optional **relay broker** that only forwards signed LocalMind envelopes between already-paired node identities (no cleartext tool payloads at rest).
+2. Peers still authenticate with the same pinned mTLS certs / Ed25519 node ids from LAN pairing — pairing remains physical/QR, not public discovery.
+3. No STUN/TURN embedded in the app; operators who need reachability use their own tunnel/VPN and keep `primary_addr` pointed at a reachable endpoint.
+4. Rate limits + `accept_*_relay` gates remain mandatory; WAN must not widen default trust.

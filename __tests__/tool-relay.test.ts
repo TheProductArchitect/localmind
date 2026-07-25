@@ -27,6 +27,11 @@ vi.mock("../src/lib/db/queries", () => ({
 
 import { handleToolRelay, TOOL_RELAY_TOOLS } from "../src/lib/fleet/handlers/tool-relay";
 import {
+  markOutboundActive,
+  clearOutboundActive,
+  __resetChatRelayState,
+} from "../src/lib/fleet/handlers/chat-relay";
+import {
   runWithToolHome,
   getToolHome,
   runAsToolRelayInbound,
@@ -72,6 +77,8 @@ describe("handleToolRelay", () => {
     for (const k of Object.keys(toolImpls)) delete toolImpls[k];
     policy = { accept_tool_relay: true };
     peers["peer-a"] = { peer_node_id: "peer-a", trusted: 1, policy_json: "{}" };
+    __resetChatRelayState();
+    markOutboundActive("peer-a");
   });
 
   it("refuses an untrusted peer", async () => {
@@ -86,6 +93,19 @@ describe("handleToolRelay", () => {
     const r = await handleToolRelay({ envelope: envelope({ tool: "filesystem", input: {} }), senderNodeId: "peer-a" });
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/not granted tool-relay/i);
+  });
+
+  it("refuses unbound tool-relay without an active outbound chat", async () => {
+    clearOutboundActive("peer-a");
+    toolImpls["filesystem"] = {
+      execute: async () => ({ ok: true, output: "should not run", summary: "x" }),
+    };
+    const r = await handleToolRelay({
+      envelope: envelope({ tool: "filesystem", input: {} }),
+      senderNodeId: "peer-a",
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/no active chat-relay/i);
   });
 
   it("refuses a non-allowlisted tool", async () => {

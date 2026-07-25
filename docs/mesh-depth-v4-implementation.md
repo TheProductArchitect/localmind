@@ -12,7 +12,7 @@ Predecessor: [`personal-assistant-v3-implementation.md`](./personal-assistant-v3
 | **M2** | Remote worktree create/discard + session mirror | ✅ Done | `workspace-session-mirror.ts`, `db/coding.ts` (`id` override), discard local mark | same |
 | **M3** | Persist/honor compute_placement | ✅ Done | `src/app/page.tsx` (Run on PATCH + load), chat-placement `conversation_id` | placement-pins |
 | **M4** | Cross-mesh token streaming | ✅ Done | fleet NDJSON stream, `sendToPeerNdjson`, chat SSE `token` events, `runAgent` on executor | chat-relay tests still apply |
-| **M5** | Remote confirmation propagation | ✅ Done | `handlers/confirm-decision.ts`, `confirm-decision-initiator.ts`, `/api/fleet/peers/*/confirm`, chat-relay `onEvent`, NDJSON `confirm`/`confirm_timeout` frames, `page.tsx` remote decide | — |
+| **M5** | Remote confirmation propagation | ✅ Done | `handlers/confirm-decision.ts`, `confirm-decision-initiator.ts`, `/api/fleet/peers/*/confirm`, chat-relay `onEvent`, NDJSON `confirm`/`confirm_timeout` frames, `page.tsx` remote decide | `__tests__/confirm-decision.test.ts`, `__tests__/dgx-mesh-integration.test.ts` |
 | **DGX-A** | GPU-aware chat placement + addr refresh | ✅ Done | `graph/placement.ts` (`preferGpu`), `chat-placement.ts`, `capabilities.ts` (`primary_addr`, `accepts_tool_relay`), `db/fleet.ts` (`updatePeerPrimaryAddr`) | `__tests__/placement-gpu.test.ts` |
 | **DGX-B** | Tool home = initiator (PA on my PC) | ✅ Done | `handlers/tool-relay.ts`, `tool-relay-initiator.ts`, `tool-relay-context.ts`, `tool-cache-wrapper.ts`, chat-relay `tool_home`, Chat UI Tools control | `__tests__/tool-relay.test.ts` |
 | **D1** | Chromium print-to-PDF | ✅ Done | `db/presentations.ts` Playwright `page.pdf()` + HTML fallback | presentations-deck |

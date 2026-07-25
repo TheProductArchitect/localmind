@@ -22,13 +22,17 @@
  *      maps to a local conversation row tagged `relayed_from:<peerNodeId>`.
  *      The peer's UI is the user-facing thread; OUR row is the executor-side
  *      twin that holds the full audit trail.
- *   7. Run through runAgentCollect with the LOCAL agent_mode + permission
+ *   7. Run through the local engine with the LOCAL agent_mode + permission
  *      profile — the destructive-action floor still applies. A peer that
- *      tries to make us `rm -rf /` will trip the same `ask` gate as a local
- *      user. (UI-side approval propagation is a Phase-2 follow-up; for now
- *      destructive ops will simply fail-closed with a clear message.)
+ *      tries to make us `rm -rf /` will trip the same `ask`/`pin` gate as a
+ *      local user. Ask gates are streamed to the initiator as `confirm`
+ *      frames (M5); the user's decision returns via `confirm-decision` RPC.
+ *      Timeout still denies (fail-closed).
  *   8. Audit row tagged with peer_audit_id cross-reference (logStartFederated)
  *      so both sides can independently prove what was asked + executed.
+ *
+ * Optional `tool_home: "initiator"` on the request routes allowlisted personal-
+ * assistant tools back to the initiator's device (DGX thinks, PC acts).
  *
  * Defense-in-depth notes:
  *   - mTLS at transport: peers prove cert ownership before bytes flow.
@@ -66,6 +70,8 @@ export type ChatRelayRequest = {
    * (tool home = initiator); anything else keeps them on the executor.
    */
   tool_home?: "initiator" | "executor";
+  /** Optional multimodal images (base64), same shape as local /api/chat. */
+  images?: { name?: string; mime: string; data: string }[];
 };
 
 export type ChatRelayResponse = {
@@ -83,7 +89,8 @@ const MAX_MESSAGE_BYTES = 64 * 1024;
 // to defend against a runaway peer, not to enforce a billable quota.
 const inboundCounters = new Map<string, { count: number; windowStart: number }>();
 // Tracks peers we are CURRENTLY driving outbound, so we can detect loops.
-const outboundActivePeers = new Set<string>();
+// Refcounted so concurrent turns to the same peer don't clear the guard early.
+const outboundActivePeers = new Map<string, number>();
 const RATE_WINDOW_MS = 60_000;
 
 /** Test-only: lets unit tests assert empty starting state and reset between cases. */
@@ -94,10 +101,17 @@ export function __resetChatRelayState(): void {
 
 /** Called by the initiator path to mark a peer as "currently being driven by us". */
 export function markOutboundActive(peerNodeId: string): void {
-  outboundActivePeers.add(peerNodeId);
+  outboundActivePeers.set(peerNodeId, (outboundActivePeers.get(peerNodeId) || 0) + 1);
 }
 export function clearOutboundActive(peerNodeId: string): void {
-  outboundActivePeers.delete(peerNodeId);
+  const n = outboundActivePeers.get(peerNodeId) || 0;
+  if (n <= 1) outboundActivePeers.delete(peerNodeId);
+  else outboundActivePeers.set(peerNodeId, n - 1);
+}
+
+/** True while we have at least one outbound chat-relay in flight to this peer. */
+export function isOutboundActive(peerNodeId: string): boolean {
+  return (outboundActivePeers.get(peerNodeId) || 0) > 0;
 }
 
 /**
@@ -174,23 +188,25 @@ function getOrCreateRelayedConversation(args: {
   initiatorConversationId: string;
 }): string {
   const tagMarker = `relayed_from:${args.peerNodeId}:${args.initiatorConversationId}`;
-  const existing = getConvDb()
-    .prepare("SELECT id FROM conversations WHERE tags LIKE ? AND deleted_at IS NULL LIMIT 1")
-    .get(`%${tagMarker}%`) as { id: string } | undefined;
-  if (existing) return existing.id;
+  const db = getConvDb();
+  // Atomic check-or-create so two concurrent first turns don't spawn twin rows.
+  return db.transaction(() => {
+    const existing = db
+      .prepare("SELECT id FROM conversations WHERE tags LIKE ? AND deleted_at IS NULL LIMIT 1")
+      .get(`%${tagMarker}%`) as { id: string } | undefined;
+    if (existing) return existing.id;
 
-  const conv = createConversation(undefined, undefined);
-  const row = getConvDb()
-    .prepare("SELECT tags FROM conversations WHERE id=?")
-    .get(conv.id) as { tags: string };
-  const tags = (() => {
-    try { return JSON.parse(row.tags || "[]") as string[]; } catch { return []; }
+    const conv = createConversation(undefined, undefined);
+    const row = db
+      .prepare("SELECT tags FROM conversations WHERE id=?")
+      .get(conv.id) as { tags: string };
+    const tags = (() => {
+      try { return JSON.parse(row.tags || "[]") as string[]; } catch { return []; }
+    })();
+    tags.push(tagMarker);
+    db.prepare("UPDATE conversations SET tags=? WHERE id=?").run(JSON.stringify(tags), conv.id);
+    return conv.id;
   })();
-  tags.push(tagMarker);
-  getConvDb()
-    .prepare("UPDATE conversations SET tags=? WHERE id=?")
-    .run(JSON.stringify(tags), conv.id);
-  return conv.id;
 }
 
 export async function handleChatRelay(args: {
@@ -230,7 +246,7 @@ export async function handleChatRelay(args: {
   }
 
   // (2) Loop guard.
-  if (outboundActivePeers.has(peerNodeId)) {
+  if ((outboundActivePeers.get(peerNodeId) || 0) > 0) {
     return {
       ok: false,
       executor_audit_id: 0,
@@ -255,7 +271,15 @@ export async function handleChatRelay(args: {
   const payload = args.envelope.payload as ChatRelayRequest;
 
   // (4) Payload validation.
-  if (!payload || typeof payload.message !== "string" || !payload.message.trim()) {
+  const images = Array.isArray(payload.images) ? payload.images.slice(0, 4) : [];
+  const hasImages = images.some((img) => img && typeof img.data === "string" && img.data.length > 0);
+  const messageText =
+    typeof payload.message === "string" && payload.message.trim()
+      ? payload.message
+      : hasImages
+        ? "(attached image)"
+        : "";
+  if (!messageText) {
     return {
       ok: false,
       executor_audit_id: 0,
@@ -264,7 +288,7 @@ export async function handleChatRelay(args: {
       error: "Empty message.",
     };
   }
-  if (Buffer.byteLength(payload.message, "utf8") > MAX_MESSAGE_BYTES) {
+  if (Buffer.byteLength(messageText, "utf8") > MAX_MESSAGE_BYTES) {
     return {
       ok: false,
       executor_audit_id: 0,
@@ -291,7 +315,8 @@ export async function handleChatRelay(args: {
       input: {
         from_peer: peerNodeId,
         initiator_conversation_id: payload.initiator_conversation_id,
-        message_preview: payload.message.slice(0, 200),
+        message_preview: messageText.slice(0, 200),
+        has_images: hasImages,
       },
       conversationId: null,
       approvedBy: "rule",
@@ -342,49 +367,50 @@ export async function handleChatRelay(args: {
 
   let reply = "";
   try {
-    if (args.onToken) {
-      const { runAgent } = await import("../../agent/engine");
-      const controller = new AbortController();
-      reply = await withToolHome(async () => {
-        let acc = "";
-        for await (const ev of runAgent(convId, payload.message, controller.signal, {
-          processDisplayName: `Chat from peer ${peer.label || peerNodeId.slice(0, 8)}`,
-          processMetadata: {
-            kind: "chat_relay_inbound",
-            peer_node_id: peerNodeId,
-            initiator_conversation_id: payload.initiator_conversation_id,
-            initiator_audit_id: payload.initiator_audit_id,
-          },
-        })) {
-          if (ev.type === "text_chunk" && typeof (ev as { delta?: string }).delta === "string") {
-            const delta = (ev as { delta: string }).delta;
-            if (delta) {
-              acc += delta;
-              await args.onToken!(delta);
-            }
-          } else if (ev.type === "confirmation_required" || ev.type === "confirmation_timeout") {
-            // Forward ask/pin gates so the initiator can approve remotely; the
-            // engine is blocked on awaitConfirmation until confirm-decision
-            // arrives (M5 remote confirmations).
-            await args.onEvent?.(ev as unknown as { type: string; [k: string]: unknown });
+    // Always use runAgent (not runAgentCollect) so ask/pin gates can surface
+    // via onEvent. channelMode is left off — fleet M5 owns confirmation UX.
+    const { runAgent } = await import("../../agent/engine");
+    const controller = new AbortController();
+    reply = await withToolHome(async () => {
+      let acc = "";
+      for await (const ev of runAgent(convId, messageText, controller.signal, {
+        processDisplayName: `Chat from peer ${peer.label || peerNodeId.slice(0, 8)}`,
+        processMetadata: {
+          kind: "chat_relay_inbound",
+          peer_node_id: peerNodeId,
+          initiator_conversation_id: payload.initiator_conversation_id,
+          initiator_audit_id: payload.initiator_audit_id,
+          persona_id: payload.persona_id,
+        },
+        images: hasImages
+          ? images.map((img) => ({
+              name: img.name,
+              mime: img.mime || "image/png",
+              data: img.data,
+            }))
+          : undefined,
+      })) {
+        if (ev.type === "text_chunk" && typeof (ev as { delta?: string }).delta === "string") {
+          const delta = (ev as { delta: string }).delta;
+          if (delta) {
+            acc += delta;
+            if (args.onToken) await args.onToken(delta);
           }
+        } else if (
+          ev.type === "confirmation_required" ||
+          ev.type === "confirmation_timeout" ||
+          ev.type === "confirmation_denied"
+        ) {
+          if (ev.type === "confirmation_required" && !args.onEvent) {
+            throw new Error(
+              "This turn needs user confirmation, but the relay is not streaming confirm events. Retry with stream_tokens enabled."
+            );
+          }
+          await args.onEvent?.(ev as unknown as { type: string; [k: string]: unknown });
         }
-        return acc;
-      });
-    } else {
-      const { runAgentCollect } = await import("../../agent/engine");
-      reply = await withToolHome(() =>
-        runAgentCollect(convId, payload.message, {
-          processDisplayName: `Chat from peer ${peer.label || peerNodeId.slice(0, 8)}`,
-          processMetadata: {
-            kind: "chat_relay_inbound",
-            peer_node_id: peerNodeId,
-            initiator_conversation_id: payload.initiator_conversation_id,
-            initiator_audit_id: payload.initiator_audit_id,
-          },
-        })
-      );
-    }
+      }
+      return acc;
+    });
   } catch (e) {
     const msg = (e as Error).message ?? "engine threw";
     logComplete(auditId, "failed", msg);

@@ -7,11 +7,14 @@
  * own PC. The Spark is the compute EXECUTOR; this device is the INITIATOR and
  * the tool HOME.
  *
- * Security (defense in depth, mirrors workspace-relay):
+ * Security (defense in depth):
  *   - mTLS + signed envelope + peer.trusted (checked in server.ts dispatcher).
  *   - Peer must have `accept_tool_relay` in OUR policy_json (default OFF).
  *   - Tool allowlist only — device/account tools, never `shell`.
- *   - Runs through the local tool + permission profile + destructive floor.
+ *   - Bound to an in-flight outbound chat-relay to that peer (prevents unbound
+ *     tool RPCs that would bypass the executor's ask/pin gate).
+ *   - Local classify(): ask/pin actions still require a pending local
+ *     confirmation (or are denied if none can be shown).
  *   - Audited as an inbound federated row with the initiator cross-reference.
  */
 
@@ -20,6 +23,7 @@ import { parsePeerPolicy, getPeer } from "../../db/fleet";
 import { getBuiltinTool } from "../../tools";
 import type { SignedEnvelope } from "../envelope";
 import { runAsToolRelayInbound } from "../tool-relay-context";
+import { isOutboundActive } from "./chat-relay";
 
 /**
  * Personal-assistant tools that make sense to run on the user's own device.
@@ -72,6 +76,19 @@ export async function handleToolRelay(args: {
     };
   }
 
+  // Tool-home RPCs are only valid while we are driving a chat on that peer —
+  // otherwise a trusted peer could POST tool-relay unbound and skip the
+  // executor's ask/pin confirmation.
+  if (!isOutboundActive(args.senderNodeId)) {
+    return {
+      executor_audit_id: 0,
+      ok: false,
+      output: "",
+      error:
+        "Tool relay refused: no active chat-relay to this peer. Open a turn with Tools on this device first.",
+    };
+  }
+
   const payload = args.envelope.payload;
   const toolName = String(payload.tool || "");
   if (!TOOL_RELAY_TOOLS.has(toolName)) {
@@ -83,11 +100,18 @@ export async function handleToolRelay(args: {
     };
   }
 
+  const tool = getBuiltinTool(toolName);
+  if (!tool) {
+    return { executor_audit_id: 0, ok: false, output: "", error: "Unknown tool on this device." };
+  }
+
+  const input = payload.input || {};
+
   const auditId = logStartFederated(
     {
       actionType: "tool_relay",
       toolName,
-      input: payload.input || {},
+      input,
       conversationId: payload.conversation_id || null,
       approvedBy: "rule",
     },
@@ -100,12 +124,6 @@ export async function handleToolRelay(args: {
     }
   );
 
-  const tool = getBuiltinTool(toolName);
-  if (!tool) {
-    logComplete(auditId, "denied", "unknown tool");
-    return { executor_audit_id: auditId, ok: false, output: "", error: "Unknown tool on this device." };
-  }
-
   try {
     const { getSettings } = await import("../../db/queries");
     let approvedDirs: string[] = [];
@@ -115,7 +133,7 @@ export async function handleToolRelay(args: {
       /* default to none */
     }
     const result = await runAsToolRelayInbound(() =>
-      tool.execute(payload.input || {}, {
+      tool.execute(input, {
         conversationId: payload.conversation_id || "tool-relay",
         approvedDirs,
         codingSessionId: null,

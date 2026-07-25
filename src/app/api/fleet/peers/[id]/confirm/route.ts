@@ -47,5 +47,11 @@ export async function POST(
   if (!result.ok) {
     return NextResponse.json({ error: result.reason || "Peer rejected the decision." }, { status: 502 });
   }
-  return NextResponse.json({ ok: true, matched: result.matched ?? false });
+  if (!result.matched) {
+    return NextResponse.json(
+      { error: result.reason || "Confirmation expired before it could be applied.", matched: false },
+      { status: 409 }
+    );
+  }
+  return NextResponse.json({ ok: true, matched: true });
 }

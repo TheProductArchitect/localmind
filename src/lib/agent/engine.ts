@@ -36,6 +36,7 @@ export type SSEEvent =
   | { type: "tool_call_result"; toolCallId: string; status: string; output: string; summary?: string }
   | { type: "confirmation_required"; toolCallId: string; actionType: string; preview: string; timeoutSeconds: number; requiresPin: boolean }
   | { type: "confirmation_timeout"; toolCallId: string }
+  | { type: "confirmation_denied"; toolCallId: string }
   | { type: "done"; conversationId: string; title: string; tokenCount: number }
   | { type: "context_compressed" }
   | { type: "loop_suspended"; tool: string; repeats: number; reason: string }
@@ -438,6 +439,12 @@ export async function* runAgent(
               status: "waiting_confirmation",
               current_step: `Waiting for channel confirmation on ${actionType}`,
             }));
+            // Register pending BEFORE yielding so a fast confirm-decision cannot
+            // race ahead of awaitConfirmation and hang until timeout.
+            const decisionP = awaitConfirmation(call.id, 120_000, false, {
+              channelKey: opts.channelKey,
+              preview,
+            });
             yield {
               type: "confirmation_required",
               toolCallId: call.id,
@@ -454,14 +461,13 @@ export async function* runAgent(
             } catch {
               await deliver("browser", approvalMsg);
             }
-            const decision = await awaitConfirmation(call.id, 120_000, false, {
-              channelKey: opts.channelKey,
-              preview,
-            });
+            const decision = await decisionP;
             allowed = decision === "allow";
             approvedBy = "user";
-            if (!allowed) {
+            if (decision === "timeout") {
               yield { type: "confirmation_timeout", toolCallId: call.id };
+            } else if (decision === "deny") {
+              yield { type: "confirmation_denied", toolCallId: call.id };
             }
             safeProcessHook(() => updateProcess(processId, { status: "running" }));
           } else if (opts?.channelMode) {
@@ -473,6 +479,7 @@ export async function* runAgent(
               status: "waiting_confirmation",
               current_step: `Waiting for confirmation on ${actionType}`,
             }));
+            const decisionP = awaitConfirmation(call.id, CONFIRM_TIMEOUT_MS, tier === "pin");
             yield {
               type: "confirmation_required",
               toolCallId: call.id,
@@ -481,11 +488,13 @@ export async function* runAgent(
               timeoutSeconds: 60,
               requiresPin: tier === "pin",
             };
-            const decision = await awaitConfirmation(call.id, CONFIRM_TIMEOUT_MS, tier === "pin");
+            const decision = await decisionP;
             allowed = decision === "allow";
             approvedBy = "user";
-            if (!allowed) {
+            if (decision === "timeout") {
               yield { type: "confirmation_timeout", toolCallId: call.id };
+            } else if (decision === "deny") {
+              yield { type: "confirmation_denied", toolCallId: call.id };
             }
             safeProcessHook(() => updateProcess(processId, { status: "running" }));
           }

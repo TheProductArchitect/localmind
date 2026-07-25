@@ -20,6 +20,7 @@
 import { getPeer } from "../../db/fleet";
 import { submitConfirmation, confirmationRequiresPin } from "../../agent/confirmations";
 import { getSettings } from "../../db/queries";
+import { logSecurityEvent } from "../../db/jobs";
 import type { SignedEnvelope } from "../envelope";
 
 export type ConfirmDecisionRequest = {
@@ -35,6 +36,9 @@ export type ConfirmDecisionResponse = {
   matched: boolean;
   error?: string;
 };
+
+// PIN brute-force lockout (in-memory, resets on restart) — mirrors /api/chat/confirm.
+let pinAttempts = { count: 0, until: 0 };
 
 export async function handleConfirmDecision(args: {
   envelope: SignedEnvelope<ConfirmDecisionRequest>;
@@ -63,16 +67,37 @@ export async function handleConfirmDecision(args: {
     if (!s.pin_hash) {
       return { ok: false, matched: false, error: "This action needs a PIN on the compute node, but none is set there." };
     }
+    if (pinAttempts.until > Date.now()) {
+      return { ok: false, matched: false, error: "Too many incorrect PIN attempts. Try again in a few minutes." };
+    }
     if (typeof payload.pin !== "string" || payload.pin.length < 4) {
       return { ok: false, matched: false, error: "A PIN is required to allow this action." };
     }
     const bcrypt = (await import("bcryptjs")).default;
     const ok = await bcrypt.compare(payload.pin, s.pin_hash);
     if (!ok) {
+      pinAttempts.count++;
+      if (pinAttempts.count >= 3) pinAttempts.until = Date.now() + 5 * 60_000;
+      try {
+        logSecurityEvent("pin_failed", `Incorrect PIN on remote confirmation ${toolCallId}`);
+      } catch {
+        /* best-effort */
+      }
       return { ok: false, matched: false, error: "Incorrect PIN." };
     }
+    pinAttempts = { count: 0, until: 0 };
   }
 
   const matched = submitConfirmation(toolCallId, decision);
-  return { ok: true, matched };
+  // Fail closed if the pending entry raced with a timeout during PIN check —
+  // returning ok:true + matched:false caused the initiator UI to clear the
+  // card while the executor had already denied.
+  if (!matched) {
+    return {
+      ok: false,
+      matched: false,
+      error: "Confirmation expired before the decision was applied.",
+    };
+  }
+  return { ok: true, matched: true };
 }

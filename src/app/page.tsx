@@ -589,8 +589,8 @@ function ChatInner() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ tool_call_id: toolCallId, decision, pin }),
       });
-      if (!rr.ok) {
-        const j = await rr.json().catch(() => ({}));
+      const j = await rr.json().catch(() => ({}));
+      if (!rr.ok || j.matched === false) {
         toast(j.error || "Remote confirmation failed", "error");
         return;
       }
@@ -792,7 +792,13 @@ function ChatInner() {
         const res = await fetch(`/api/fleet/peers/${peerTarget}/chat`, {
           method: "POST",
           headers: { "content-type": "application/json", Accept: "text/event-stream" },
-          body: JSON.stringify({ conversation_id: convId, message: text, persona_id: persona, tool_home: toolHome }),
+          body: JSON.stringify({
+            conversation_id: convId,
+            message: text,
+            persona_id: persona,
+            tool_home: toolHome,
+            ...(images.length ? { images } : {}),
+          }),
         });
         const ct = res.headers.get("content-type") || "";
         if (!res.ok && !ct.includes("text/event-stream")) {
@@ -862,7 +868,10 @@ function ChatInner() {
                       },
                     },
                   ]);
-                } else if (ev.type === "confirm_timeout" && ev.tool_call_id) {
+                } else if (
+                  (ev.type === "confirm_timeout" || ev.type === "confirm_denied") &&
+                  ev.tool_call_id
+                ) {
                   remoteConfirmRef.current.delete(ev.tool_call_id);
                   setThread((t) =>
                     t.filter((i) => !(i.kind === "confirmation" && i.c.toolCallId === ev.tool_call_id))
@@ -877,9 +886,10 @@ function ChatInner() {
             }
           }
           if (errMsg) {
+            remoteConfirmRef.current.clear();
             setError(errMsg);
             setThread((t) => {
-              const out = [...t];
+              const out = t.filter((i) => i.kind !== "confirmation");
               for (let i = out.length - 1; i >= 0; i--) {
                 if (out[i].kind === "assistant") { out.splice(i, 1); break; }
               }
@@ -900,9 +910,10 @@ function ChatInner() {
         } else {
           const j = await res.json();
           if (!res.ok) {
+            remoteConfirmRef.current.clear();
             setError(j.error ?? `Peer returned ${res.status}`);
             setThread((t) => {
-              const out = [...t];
+              const out = t.filter((i) => i.kind !== "confirmation");
               for (let i = out.length - 1; i >= 0; i--) {
                 if (out[i].kind === "assistant") { out.splice(i, 1); break; }
               }
@@ -922,7 +933,9 @@ function ChatInner() {
           }
         }
       } catch (e) {
+        remoteConfirmRef.current.clear();
         setError((e as Error).message);
+        setThread((t) => t.filter((i) => i.kind !== "confirmation"));
       } finally {
         setStreaming(false);
         setStreamPhase(null);

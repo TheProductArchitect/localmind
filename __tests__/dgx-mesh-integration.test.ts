@@ -86,25 +86,27 @@ vi.mock("../src/lib/db", () => ({
       get: vi.fn(() => undefined),
       run: vi.fn(() => ({ changes: 1 })),
     }),
+    transaction: (fn: () => unknown) => fn,
   }),
 }));
 
 vi.mock("../src/lib/agent/engine", () => ({
-  runAgentCollect: vi.fn(async () => {
+  runAgent: async function* (_convId: string, message: string) {
     const { getToolHome } = await import("../src/lib/fleet/tool-relay-context");
     const home = getToolHome();
-    return home ? `tool_home=${home.initiatorNodeId}` : "local";
-  }),
-  runAgent: async function* () {
-    yield {
-      type: "confirmation_required",
-      toolCallId: "tc-stream-1",
-      actionType: "delete_files",
-      preview: "Delete /tmp/x",
-      timeoutSeconds: 60,
-      requiresPin: false,
-    };
-    yield { type: "text_chunk", delta: "Approved and done." };
+    if (/delete/i.test(message)) {
+      yield {
+        type: "confirmation_required",
+        toolCallId: "tc-stream-1",
+        actionType: "delete_files",
+        preview: "Delete /tmp/x",
+        timeoutSeconds: 60,
+        requiresPin: false,
+      };
+    }
+    const text = home ? `tool_home=${home.initiatorNodeId}` : "local";
+    // Streaming confirm test expects this exact assistant text.
+    yield { type: "text_chunk", delta: /delete/i.test(message) ? "Approved and done." : text };
   },
 }));
 
@@ -195,10 +197,11 @@ describe("executeWithCache — tool home = initiator", () => {
     const result = await runWithToolHome({ initiatorNodeId: "peer-pc" }, () =>
       executeWithCache(tool, { cmd: "ls" }, { conversationId: "c1", approvedDirs: [] })
     );
-    expect(result.ok).toBe(true);
-    expect(result.output).toBe("ran");
+    // Fail closed on the hub — shell is not in the tool-relay allowlist.
+    expect(result.ok).toBe(false);
+    expect(result.summary).toMatch(/shell blocked/i);
     expect(relayToolToPeer).not.toHaveBeenCalled();
-    expect(execute).toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("does not re-relay when already handling an inbound tool-relay", async () => {
