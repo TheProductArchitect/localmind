@@ -9,7 +9,7 @@ import { logStart, logComplete } from "./audit-logger";
 import { sanitizeToolOutput, isUntrustedTool } from "./sanitize-tool-output";
 import { awaitConfirmation } from "./confirmations";
 import {
-  addMessage, getMessages, getSettings, updateConversation, deleteTrailingTurn, getConversation,
+  addMessage, getMessages, getSettings, updateSettings, updateConversation, deleteTrailingTurn, getConversation,
 } from "../db/queries";
 import { approxTokens } from "../utils";
 import { startProcess, updateProcess, completeProcess, type Pillar } from "../db/agent-processes";
@@ -22,6 +22,7 @@ import { buildConversationMessages } from "./conversation-messages";
 import { unregisterProcess } from "./process-registry";
 import { resolveRoutedModel } from "./routing";
 import { isTrivialUserTurn } from "./trivial-turn";
+import { pickPreferredOllamaModel } from "../curated-models";
 
 // Best-effort orchestration hooks — orchestration writes must never crash the agent loop.
 function safeProcessHook(fn: () => void): void {
@@ -127,11 +128,29 @@ export async function* runAgent(
     routed.provider ||
     settings.provider ||
     "ollama";
-  const activeModel =
+  let activeModel =
     opts?.modelPreference ||
     conv?.model_name ||
     routed.model ||
     settings.active_model;
+  // First-run / empty settings: adopt an already-installed Ollama model instead of
+  // forcing a re-download through Model Manager.
+  if (!activeModel && (activeProvider === "ollama" || !activeProvider)) {
+    try {
+      const installed = await getProviderByName("ollama").getModels();
+      const picked = pickPreferredOllamaModel(installed);
+      if (picked) {
+        activeModel = picked;
+        try {
+          updateSettings({ active_model: picked, provider: "ollama" });
+        } catch {
+          /* settings write is best-effort */
+        }
+      }
+    } catch {
+      /* Ollama unreachable — fall through to no_model */
+    }
+  }
   if (!activeModel) {
     yield { type: "error", message: "No AI model is selected. Pull a model from the Model Manager first.", code: "no_model" };
     return;

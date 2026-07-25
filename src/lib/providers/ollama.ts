@@ -17,8 +17,13 @@ export const ollamaProvider: Provider = {
   },
 
   async getModels() {
-    const r = await fetch(`${HOST}/api/tags`);
-    if (!r.ok) return [];
+    let r: Response;
+    try {
+      r = await fetch(`${HOST}/api/tags`);
+    } catch (e: any) {
+      throw new Error(e?.message || "Cannot reach Ollama");
+    }
+    if (!r.ok) throw new Error(`Ollama HTTP ${r.status}`);
     const j = (await r.json()) as { models?: any[] };
     return (j.models || []).map((m) => ({
       name: m.name,

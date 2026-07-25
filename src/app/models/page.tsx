@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Button, Badge, EmptyState } from "@/components/ui";
 import { PageHeader, PageShell } from "@/components/page-header";
 import { useConfirm } from "@/components/confirm-dialog";
-import { CURATED_MODELS } from "@/lib/curated-models";
+import { CURATED_MODELS, modelTagsMatch } from "@/lib/curated-models";
 import { Download, Trash2, Check, ExternalLink } from "lucide-react";
 import { toast } from "@/components/toast";
 
@@ -334,7 +334,7 @@ export default function ModelsPage() {
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             {CURATED_MODELS.map((m) => {
-              const installed = models.some((x) => x.name === m.name);
+              const installed = models.some((x) => modelTagsMatch(x.name, m.name));
               return (
                 <div key={m.name} className="lm-panel">
                   <div className="flex items-start justify-between gap-2">
