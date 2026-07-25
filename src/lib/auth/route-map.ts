@@ -38,6 +38,7 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
 
   // --- Models ---
   { path: "/api/models", methods: ["GET"], role: "authenticated" },
+  { path: "/api/models/capabilities", methods: ["GET"], role: "authenticated" },
   { path: "/api/models/pull", methods: ["POST"], role: "member" },
   { path: "/api/models/*", methods: ["DELETE"], role: "owner" },
 

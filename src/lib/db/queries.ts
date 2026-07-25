@@ -303,6 +303,56 @@ export function deleteTrailingTurn(conversationId: string) {
   for (const m of toDelete) stmt.run(m.id);
 }
 
+/** Wipe every message in a conversation (keeps the conversation row). */
+export function clearConversationMessages(conversationId: string): number {
+  const db = getConvDb();
+  const info = db.prepare("DELETE FROM messages WHERE conversation_id=?").run(conversationId);
+  db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(Date.now(), conversationId);
+  return info.changes;
+}
+
+/** Replace message list: delete all, then insert the provided rows in order. */
+export function replaceConversationMessages(
+  conversationId: string,
+  rows: {
+    role: Message["role"];
+    content: string;
+    token_count?: number | null;
+    parent_message_id?: string | null;
+    attachments?: string | null;
+    origin_node_id?: string | null;
+    origin_label?: string | null;
+  }[]
+): void {
+  const db = getConvDb();
+  const now = Date.now();
+  const meta = localNodeMeta();
+  const tx = db.transaction(() => {
+    db.prepare("DELETE FROM messages WHERE conversation_id=?").run(conversationId);
+    const insert = db.prepare(
+      "INSERT INTO messages (id, conversation_id, role, content, created_at, token_count, parent_message_id, attachments, origin_node_id, origin_label) VALUES (?,?,?,?,?,?,?,?,?,?)"
+    );
+    let t = now - rows.length;
+    for (const m of rows) {
+      t += 1;
+      insert.run(
+        nanoid(12),
+        conversationId,
+        m.role,
+        m.content,
+        t,
+        m.token_count ?? 0,
+        m.parent_message_id ?? null,
+        m.attachments ?? null,
+        m.origin_node_id ?? meta.node_id,
+        m.origin_label ?? meta.label
+      );
+    }
+    db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(now, conversationId);
+  });
+  tx();
+}
+
 export function getLastUserMessage(conversationId: string): string | null {
   const msgs = getMessages(conversationId);
   for (let i = msgs.length - 1; i >= 0; i--) {

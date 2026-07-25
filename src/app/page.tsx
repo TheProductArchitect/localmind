@@ -33,10 +33,12 @@ import { ConfirmationCard, type ConfirmationState } from "@/components/chat/conf
 import { MicButton, SpeakerButton, ConversationButton, speak } from "@/components/chat/voice";
 import { toast } from "@/components/toast";
 import { Orb, type OrbState } from "@/components/orb";
-import { Plus, Send, Trash2, Star, Copy, RefreshCw, Volume2, Download, Paperclip, X } from "lucide-react";
+import { Plus, Send, Trash2, Star, Copy, RefreshCw, Volume2, Download, Paperclip, X, Minimize2, Eraser } from "lucide-react";
+import { modelSupportsVisionSync } from "@/lib/models/vision";
+import { useConfirm } from "@/components/confirm-dialog";
 
 type Conversation = { id: string; title: string; updated_at: number; starred: number };
-type Attachment = { name: string; mime: string; data: string; url: string };
+type Attachment = { name: string; mime: string; data: string; url: string; kind: "image" | "doc" };
 type ThreadItem =
   | { kind: "user"; content: string; images?: string[]; originLabel?: string | null }
   | { kind: "assistant"; content: string; originLabel?: string | null }
@@ -45,6 +47,44 @@ type ThreadItem =
 
 const MAX_ATTACH = 6;
 const MAX_IMG_DIM = 1024;
+const DOC_ACCEPT =
+  "image/*,application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,text/plain,.txt,text/markdown,.md";
+
+function isDocFile(file: File): boolean {
+  const t = file.type || "";
+  const n = file.name.toLowerCase();
+  return (
+    t === "application/pdf" ||
+    t.includes("wordprocessingml") ||
+    t === "text/plain" ||
+    t === "text/markdown" ||
+    /\.(pdf|docx|txt|md)$/i.test(n)
+  );
+}
+
+async function fileToDocAttachment(file: File): Promise<Attachment | null> {
+  if (!isDocFile(file)) return null;
+  const dataUrl: string = await new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(fr.result as string);
+    fr.onerror = rej;
+    fr.readAsDataURL(file);
+  });
+  const mime =
+    file.type ||
+    (file.name.toLowerCase().endsWith(".pdf")
+      ? "application/pdf"
+      : file.name.toLowerCase().endsWith(".docx")
+        ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        : "text/plain");
+  return {
+    name: file.name,
+    mime,
+    data: dataUrl.replace(/^data:[^;]+;base64,/, ""),
+    url: dataUrl,
+    kind: "doc",
+  };
+}
 
 // Read an image file, downscale it (bounds base64 size + context tokens), and
 // return a base64 attachment for a multimodal turn.
@@ -73,13 +113,13 @@ async function fileToAttachment(file: File): Promise<Attachment | null> {
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return { name: file.name, mime: file.type, data: dataUrl.replace(/^data:[^;]+;base64,/, ""), url: dataUrl };
+    if (!ctx) return { name: file.name, mime: file.type, data: dataUrl.replace(/^data:[^;]+;base64,/, ""), url: dataUrl, kind: "image" };
     ctx.drawImage(img, 0, 0, width, height);
     const mime = file.type === "image/png" ? "image/png" : "image/jpeg";
     const out = canvas.toDataURL(mime, 0.85);
-    return { name: file.name, mime, data: out.replace(/^data:[^;]+;base64,/, ""), url: out };
+    return { name: file.name, mime, data: out.replace(/^data:[^;]+;base64,/, ""), url: out, kind: "image" };
   } catch {
-    return { name: file.name, mime: file.type, data: dataUrl.replace(/^data:[^;]+;base64,/, ""), url: dataUrl };
+    return { name: file.name, mime: file.type, data: dataUrl.replace(/^data:[^;]+;base64,/, ""), url: dataUrl, kind: "image" };
   }
 }
 
@@ -98,6 +138,7 @@ function attachmentsToImageUrls(attachmentsJson: string | null | undefined): str
 
 function ChatInner() {
   const searchParams = useSearchParams();
+  const confirm = useConfirm();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [thread, setThread] = useState<ThreadItem[]>([]);
@@ -116,6 +157,8 @@ function ChatInner() {
   const [pickerModels, setPickerModels] = useState<{ name: string }[]>([]);
   const [pickerProvider, setPickerProvider] = useState<string>("ollama");
   const [autoRead, setAutoRead] = useState(false);
+  const [modelVision, setModelVision] = useState(false);
+  const [compacting, setCompacting] = useState(false);
   // Sora is now the only "lead" persona for chat. Sub-agents (Writer, Coder,
   // Researcher, etc.) are summoned by Sora via spawn_subagent. The legacy
   // `persona` value is preserved so the backend keeps routing to the right
@@ -162,18 +205,59 @@ function ChatInner() {
 
   async function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files || []);
-    if (files.some((f) => f.type.startsWith("video/"))) {
-      toast("Video isn't supported by local vision models yet — images only for now.", "info");
+    if (!modelVision) {
+      toast("This model doesn't accept images or documents. Pick a vision / multimodal model first.", "info");
+      e.target.value = "";
+      return;
     }
-    const imgs = files.filter((f) => f.type.startsWith("image/"));
+    if (files.some((f) => f.type.startsWith("video/"))) {
+      toast("Video isn't supported yet — images and documents only.", "info");
+    }
     const added: Attachment[] = [];
-    for (const f of imgs) {
-      const a = await fileToAttachment(f);
-      if (a) added.push(a);
+    for (const f of files) {
+      if (f.type.startsWith("image/")) {
+        const a = await fileToAttachment(f);
+        if (a) added.push(a);
+      } else if (isDocFile(f)) {
+        const a = await fileToDocAttachment(f);
+        if (a) added.push(a);
+      }
     }
     if (added.length) setAttachments((cur) => [...cur, ...added].slice(0, MAX_ATTACH));
+    else if (files.length) toast("Couldn't attach those files. Try an image, PDF, DOCX, or text file.", "info");
     e.target.value = "";
   }
+
+  // Probe vision/multimodal support whenever the active model changes.
+  useEffect(() => {
+    let cancelled = false;
+    const name = model;
+    if (!name) {
+      setModelVision(false);
+      return;
+    }
+    // Optimistic heuristic so the paperclip appears immediately for known vision models.
+    setModelVision(modelSupportsVisionSync({ name }));
+    (async () => {
+      try {
+        const r = await fetch(
+          `/api/models/capabilities?model=${encodeURIComponent(name)}&provider=${encodeURIComponent(provider || "ollama")}`
+        );
+        const j = await r.json();
+        if (!cancelled) setModelVision(!!j.vision);
+      } catch {
+        /* keep heuristic */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [model, provider]);
+
+  // Drop staged attachments when switching to a non-vision model.
+  useEffect(() => {
+    if (!modelVision && attachments.length) setAttachments([]);
+  }, [modelVision]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const threadRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -425,6 +509,52 @@ function ChatInner() {
     loadConversations();
   }
 
+  async function clearChat() {
+    if (!activeId || streaming) return;
+    const ok = await confirm({
+      title: "Clear this chat?",
+      message: "All messages in this conversation will be removed. The chat itself stays in the sidebar.",
+      confirmLabel: "Clear",
+      destructive: true,
+    });
+    if (!ok) return;
+    const r = await fetch(`/api/conversations/${activeId}/clear`, { method: "POST" });
+    if (!r.ok) {
+      toast("Could not clear chat", "error");
+      return;
+    }
+    setThread([]);
+    setAttachments([]);
+    toast("Chat cleared", "success");
+  }
+
+  async function compactChat() {
+    if (!activeId || streaming || compacting) return;
+    const ok = await confirm({
+      title: "Compact this chat?",
+      message: "Older turns will be summarized and dropped so the model has more room. Recent messages stay.",
+      confirmLabel: "Compact",
+    });
+    if (!ok) return;
+    setCompacting(true);
+    try {
+      const r = await fetch(`/api/conversations/${activeId}/compact`, { method: "POST" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        toast(j.error || "Could not compact chat", "error");
+        return;
+      }
+      if (!j.compacted) {
+        toast(j.reason || "Nothing to compact", "info");
+        return;
+      }
+      toast(`Compacted — dropped ${j.dropped} older messages`, "success");
+      await openConversation(activeId);
+    } finally {
+      setCompacting(false);
+    }
+  }
+
   async function resumeSuspended() {
     if (!activeId) return;
     const r = await fetch("/api/chat/resume", {
@@ -586,7 +716,13 @@ function ChatInner() {
     setAttachments([]);
     setThread((t) => [
       ...t,
-      { kind: "user", content: text, images: outgoing.length ? outgoing.map((a) => a.url) : undefined },
+      {
+        kind: "user",
+        content: text || (outgoing.some((a) => a.kind === "doc") ? outgoing.filter((a) => a.kind === "doc").map((a) => `Attached: ${a.name}`).join("\n") : ""),
+        images: outgoing.filter((a) => a.kind === "image").length
+          ? outgoing.filter((a) => a.kind === "image").map((a) => a.url)
+          : undefined,
+      },
       { kind: "assistant", content: "" },
     ]);
 
@@ -767,6 +903,10 @@ function ChatInner() {
     if (ev.type === "status") {
       setStreamPhase(ev.phase || "thinking");
       if (ev.phase === "thinking" || ev.phase === "receiving") setStreamPhase(ev.phase);
+      return;
+    }
+    if (ev.type === "context_compressed") {
+      toast("Older turns were summarized to free context", "info");
       return;
     }
     if (ev.type === "text_chunk") {
@@ -1001,10 +1141,41 @@ function ChatInner() {
             </div>
           </div>
           {activeId && (
-            <a href={`/api/conversations/${activeId}/export`} className="lm-thread__export" data-pulse="true">
-              <Download className="h-3.5 w-3.5" />
-              <span className="lm-micro">Export</span>
-            </a>
+            <div className="flex items-center gap-2">
+              {thread.length > 0 && (
+                <>
+                  <span className="lm-micro" style={{ color: "hsl(0 0% 100% / 0.4)", textTransform: "none" }}>
+                    {thread.filter((t) => t.kind === "user" || t.kind === "assistant").length} turns
+                  </span>
+                  <button
+                    type="button"
+                    onClick={compactChat}
+                    disabled={streaming || compacting || thread.length < 8}
+                    className="lm-thread__export"
+                    title="Summarize older turns and free context"
+                    data-pulse="true"
+                  >
+                    <Minimize2 className="h-3.5 w-3.5" />
+                    <span className="lm-micro">{compacting ? "Compacting…" : "Compact"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearChat}
+                    disabled={streaming}
+                    className="lm-thread__export"
+                    title="Clear all messages in this chat"
+                    data-pulse="true"
+                  >
+                    <Eraser className="h-3.5 w-3.5" />
+                    <span className="lm-micro">Clear</span>
+                  </button>
+                </>
+              )}
+              <a href={`/api/conversations/${activeId}/export`} className="lm-thread__export" data-pulse="true">
+                <Download className="h-3.5 w-3.5" />
+                <span className="lm-micro">Export</span>
+              </a>
+            </div>
           )}
         </header>
 
@@ -1243,8 +1414,23 @@ function ChatInner() {
             <div className="mx-auto flex flex-wrap gap-2 mb-2" style={{ maxWidth: 720 }}>
               {attachments.map((a, i) => (
                 <div key={i} className="relative">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={a.url} alt={a.name} className="h-16 w-16 object-cover rounded-lg border border-white/10" />
+                  {a.kind === "image" ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={a.url} alt={a.name} className="h-16 w-16 object-cover rounded-lg border border-white/10" />
+                  ) : (
+                    <div
+                      className="h-16 min-w-[4rem] max-w-[9rem] px-2 rounded-lg border border-white/10 flex flex-col items-center justify-center text-center"
+                      style={{ background: "hsl(0 0% 100% / 0.06)" }}
+                      title={a.name}
+                    >
+                      <span className="text-[10px] uppercase tracking-wide" style={{ color: "hsl(0 0% 100% / 0.45)" }}>
+                        {a.name.split(".").pop() || "doc"}
+                      </span>
+                      <span className="text-[11px] truncate w-full" style={{ color: "hsl(0 0% 100% / 0.85)" }}>
+                        {a.name}
+                      </span>
+                    </div>
+                  )}
                   <button
                     onClick={() => setAttachments((cur) => cur.filter((_, j) => j !== i))}
                     aria-label="Remove attachment"
@@ -1260,22 +1446,24 @@ function ChatInner() {
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept={DOC_ACCEPT}
               multiple
               onChange={onPickFiles}
               className="hidden"
             />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={streaming || attachments.length >= MAX_ATTACH}
-              className="lm-composer__send"
-              style={{ background: "hsl(0 0% 100% / 0.06)", color: "hsl(0 0% 100% / 0.9)" }}
-              aria-label="Attach image"
-              title="Attach image (vision models)"
-              data-pulse="true"
-            >
-              <Paperclip className="h-4 w-4" />
-            </button>
+            {modelVision && (
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={streaming || attachments.length >= MAX_ATTACH}
+                className="lm-composer__send"
+                style={{ background: "hsl(0 0% 100% / 0.06)", color: "hsl(0 0% 100% / 0.9)" }}
+                aria-label="Attach image or document"
+                title="Attach images, PDFs, or documents (this model is multimodal)"
+                data-pulse="true"
+              >
+                <Paperclip className="h-4 w-4" />
+              </button>
+            )}
             <Textarea
               ref={composerRef}
               rows={1}
