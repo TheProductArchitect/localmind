@@ -52,6 +52,8 @@ let win = null;
 let codingWin = null;
 let serverProc = null;
 let codingWatchTimer = null;
+/** Origin the LocalMind UI is served from; anything else is web content. */
+let appOrigin = null;
 
 // ---------------------------------------------------------------- server ---
 
@@ -193,6 +195,48 @@ function withTab(id, fn) {
   if (t) fn(t.view.webContents);
 }
 
+// ------------------------------------------------------- link escape hatch ---
+
+/** True when a URL belongs to the LocalMind app itself (safe to navigate to). */
+function isAppUrl(target) {
+  if (!appOrigin) return false;
+  try {
+    return new URL(target).origin === appOrigin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Web links clicked inside the LocalMind UI must never replace the chrome —
+ * that used to strand the user with no way back except quitting. They open as
+ * a real tab in our own browser instead, and the UI is told to show /browse.
+ */
+function openLinkInAppBrowser(target) {
+  if (!/^https?:/i.test(target)) {
+    if (/^(mailto|tel):/i.test(target)) shell.openExternal(target).catch(() => {});
+    return null;
+  }
+  const id = createTab(target);
+  if (win && !win.isDestroyed()) {
+    win.webContents.send("browser:opened-tab", { tabId: id, url: target });
+  }
+  return id;
+}
+
+/** Keep the chrome window on the app; hand every outside link to the browser. */
+function wireChromeNavigationPolicy(wc) {
+  wc.setWindowOpenHandler(({ url: target }) => {
+    openLinkInAppBrowser(target);
+    return { action: "deny" };
+  });
+  wc.on("will-navigate", (event, target) => {
+    if (isAppUrl(target)) return;
+    event.preventDefault();
+    openLinkInAppBrowser(target);
+  });
+}
+
 function wireIpc() {
   ipcMain.handle("browser:new-tab", (_e, url) => createTab(typeof url === "string" && url ? url : "about:blank"));
   ipcMain.handle("browser:close-tab", (_e, id) => {
@@ -239,6 +283,17 @@ function wireIpc() {
 
   ipcMain.handle("branding:get", () => getBranding());
   ipcMain.handle("branding:set", (_e, patch) => updateBranding(patch || {}));
+
+  // Explicit "open in my system browser" for links the user wants outside.
+  ipcMain.handle("shell:open-external", async (_e, url) => {
+    if (typeof url !== "string" || !/^https?:/i.test(url)) return false;
+    try {
+      await shell.openExternal(url);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 // ------------------------------------------------------------------- boot ---
@@ -280,6 +335,12 @@ main{min-height:100%;display:grid;place-items:center;letter-spacing:.02em}
   if (win && !win.isDestroyed()) win.show();
 
   const url = await ensureServer();
+  try {
+    appOrigin = new URL(url).origin;
+  } catch {
+    appOrigin = null;
+  }
+  wireChromeNavigationPolicy(win.webContents);
 
   await initBranding({
     mainWindow: win,

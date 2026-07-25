@@ -23,6 +23,14 @@ contextBridge.exposeInMainWorld("lmBrowser", {
     ipcRenderer.on("browser:state", handler);
     return () => ipcRenderer.removeListener("browser:state", handler);
   },
+  /** Fires when a link clicked in the app UI was opened as a browser tab. */
+  onOpenedTab: (cb) => {
+    const handler = (_e, info) => cb(info);
+    ipcRenderer.on("browser:opened-tab", handler);
+    return () => ipcRenderer.removeListener("browser:opened-tab", handler);
+  },
+  /** Hand a link to the user's system browser. */
+  openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
   /** Hyper-personal shell: app name = assistant, dock icon = live orb. */
   setBranding: (patch) => ipcRenderer.invoke("branding:set", patch),
   getBranding: () => ipcRenderer.invoke("branding:get"),

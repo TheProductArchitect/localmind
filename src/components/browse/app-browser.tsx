@@ -13,9 +13,27 @@ import { Button, Input } from "@/components/ui";
 import { BrowseSoraPanel } from "@/components/browse/sora-panel";
 import { Orb } from "@/components/orb";
 import { toast } from "@/components/toast";
-import { ArrowLeft, ArrowRight, RotateCw, Plus, X, Globe, Loader2, Eye, EyeOff } from "lucide-react";
+import { ArrowLeft, ArrowRight, RotateCw, Plus, X, Globe, Loader2, Eye, EyeOff, MousePointer2, ExternalLink } from "lucide-react";
 
 const SORA_OPEN_KEY = "lm-browse-sora-open";
+
+type AgentActivity = { at: number; action: string; detail: string; ok: boolean };
+
+function activityLabel(a: AgentActivity): string {
+  const detail = a.detail ? ` ${a.detail}` : "";
+  switch (a.action) {
+    case "navigate": return `${a.ok ? "opened" : "could not open"}${detail}`;
+    case "click":
+    case "click_index":
+    case "click_text": return `${a.ok ? "clicked" : "could not click"}${detail}`;
+    case "type": return `typed${detail}`;
+    case "scroll": return `scrolled${detail}`;
+    case "back": return "went back";
+    case "forward": return "went forward";
+    case "press": return `pressed${detail}`;
+    default: return `${a.action}${detail}`;
+  }
+}
 
 type TabInfo = {
   id: number;
@@ -40,6 +58,8 @@ type LmBrowser = {
   getState: () => Promise<BrowserState>;
   getTargetId: (id: number) => Promise<string | null>;
   onState: (cb: (s: BrowserState) => void) => () => void;
+  onOpenedTab?: (cb: (info: { tabId: number; url: string }) => void) => () => void;
+  openExternal?: (url: string) => Promise<boolean>;
   setBranding?: (patch: { name?: string; orbState?: string }) => Promise<{ name: string; orbState: string }>;
   getBranding?: () => Promise<{ name: string; orbState: string }>;
 };
@@ -75,9 +95,36 @@ export function AppBrowser() {
   // conversation and any active tab grant survive hide→show.
   const [soraOpen, setSoraOpen] = useState(true);
   const contentRef = useRef<HTMLDivElement>(null);
+  const [agentAction, setAgentAction] = useState<AgentActivity | null>(null);
 
   const active = state.tabs.find((t) => t.id === state.activeTabId) ?? null;
   const activeSessionId = active ? grants[active.id] ?? null : null;
+
+  // Narrate the agent's actions on the granted tab, drawn by our chrome so the
+  // page itself can never fake or hide it.
+  useEffect(() => {
+    setAgentAction(null);
+    if (!activeSessionId) return;
+    const es = new EventSource(
+      `/api/browse/agent-activity?session_id=${encodeURIComponent(activeSessionId)}`
+    );
+    es.addEventListener("activity", (e) => {
+      try {
+        setAgentAction(JSON.parse((e as MessageEvent).data) as AgentActivity);
+      } catch {
+        /* ignore malformed frame */
+      }
+    });
+    es.onerror = () => es.close();
+    return () => es.close();
+  }, [activeSessionId]);
+
+  // Clear the narration once it goes stale so the strip doesn't look live.
+  useEffect(() => {
+    if (!agentAction) return;
+    const t = setTimeout(() => setAgentAction(null), 6000);
+    return () => clearTimeout(t);
+  }, [agentAction]);
 
   async function toggleGrant() {
     if (!active || granting) return;
@@ -276,6 +323,18 @@ export function AppBrowser() {
           onChange={(e) => setUrlInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") go(); }}
         />
+        {lm.openExternal && (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!active?.url || active.url === "about:blank"}
+            onClick={() => active?.url && lm.openExternal?.(active.url)}
+            aria-label="Open in system browser"
+            title="Open this page in your system browser"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </Button>
+        )}
         <Button
           size="sm"
           variant={activeSessionId ? "default" : "outline"}
@@ -292,14 +351,28 @@ export function AppBrowser() {
       </div>
 
       {/* Non-spoofable watching indicator: drawn by LocalMind's chrome,
-          above the WebContentsView — page content cannot draw here. */}
+          above the WebContentsView — page content cannot draw here. It doubles
+          as the live narration of what Sora is doing on the page. */}
       {activeSessionId && (
         <button
           onClick={toggleGrant}
-          className="shrink-0 flex items-center justify-center gap-1.5 bg-emerald-500/15 text-emerald-500 border-b border-emerald-500/30 text-[11px] py-0.5 hover:bg-emerald-500/25"
+          className={`shrink-0 flex items-center justify-center gap-1.5 border-b text-[11px] py-0.5 ${
+            agentAction
+              ? "bg-[hsl(222_100%_74%/0.16)] text-[hsl(222_100%_80%)] border-[hsl(222_100%_74%/0.35)] hover:bg-[hsl(222_100%_74%/0.24)]"
+              : "bg-emerald-500/15 text-emerald-500 border-emerald-500/30 hover:bg-emerald-500/25"
+          }`}
           title="Click to revoke"
         >
-          <Eye className="h-3 w-3" /> Sora can see and act on this tab
+          {agentAction ? (
+            <>
+              <MousePointer2 className="h-3 w-3" />
+              Sora {activityLabel(agentAction)}
+            </>
+          ) : (
+            <>
+              <Eye className="h-3 w-3" /> Sora can see and act on this tab
+            </>
+          )}
         </button>
       )}
 
