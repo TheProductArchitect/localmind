@@ -25,8 +25,9 @@ import {
   Wifi,             // Fleet
   SlidersHorizontal,// Settings
 } from "lucide-react";
-import { Orb, type OrbState } from "@/components/orb";
+import { Orb } from "@/components/orb";
 import { cn } from "@/lib/utils";
+import { subscribePulse, type Pulse } from "@/lib/client/pulse-store";
 
 type Dest = {
   href: string;
@@ -51,24 +52,15 @@ function isActive(path: string, dest: Dest): boolean {
   return dest.matches.some((m) => path === m || path.startsWith(m + "/"));
 }
 
-type Pulse = { state: OrbState; processes: number; graphs: number; subagents: number; suspended: boolean };
-
 function usePulse(): Pulse {
-  const [pulse, setPulse] = useState<Pulse>({ state: "idle", processes: 0, graphs: 0, subagents: 0, suspended: false });
-  useEffect(() => {
-    let alive = true;
-    const tick = async () => {
-      try {
-        const r = await fetch("/api/pulse", { cache: "no-store" });
-        if (!r.ok) return;
-        const j = (await r.json()) as Pulse;
-        if (alive) setPulse(j);
-      } catch { /* ignore */ }
-    };
-    tick();
-    const t = setInterval(tick, 4_000);
-    return () => { alive = false; clearInterval(t); };
-  }, []);
+  const [pulse, setPulse] = useState<Pulse>({
+    state: "idle",
+    processes: 0,
+    graphs: 0,
+    subagents: 0,
+    suspended: false,
+  });
+  useEffect(() => subscribePulse(setPulse), []);
   return pulse;
 }
 

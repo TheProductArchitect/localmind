@@ -9,6 +9,7 @@ import {
   RefreshCw, ExternalLink, CheckCircle2, AlertCircle, Wrench, MessagesSquare, Globe, Boxes,
 } from "lucide-react";
 import { SETTINGS_SECTIONS, type SettingsSectionId, type HiddenSectionId } from "@/components/settings-sidebar";
+import { patchSettingsCache } from "@/lib/client/settings-cache";
 
 // Tools is reachable via ?section=Tools but doesn't appear in the in-page
 // tab list — it's surfaced under "Context engineering" in the sidebar.
@@ -269,6 +270,7 @@ function useSettings() {
       toast(j.message || j.error || "Save failed", "error");
       return;
     }
+    patchSettingsCache(patch);
     if (typeof patch?.assistant_name === "string") {
       const { notifyAssistantName } = await import("@/components/branding-sync");
       notifyAssistantName(patch.assistant_name);

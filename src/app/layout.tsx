@@ -2,14 +2,13 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Rail } from "@/components/rail";
-import { EdgePulse } from "@/components/edge-pulse";
 import { Toaster } from "@/components/toast";
-import { CommandPalette } from "@/components/command-palette";
 import { DiskBanner } from "@/components/disk-banner";
 import { SettingsSidebar } from "@/components/settings-sidebar";
 import { FontScale } from "@/components/font-scale";
 import { ConfirmProvider } from "@/components/confirm-dialog";
 import { BrandingSync } from "@/components/branding-sync";
+import { DeferredShell } from "@/components/deferred-shell";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -47,8 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </div>
           <Toaster />
-          <CommandPalette />
-          <EdgePulse />
+          <DeferredShell />
           <FontScale />
         </ConfirmProvider>
       </body>

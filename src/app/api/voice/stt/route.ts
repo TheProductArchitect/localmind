@@ -43,15 +43,27 @@ function which(cmd: string): string | null {
   return out || null;
 }
 
-export async function GET() {
-  // Capability probe — used by the MicButton on mount to decide whether to
-  // surface itself at all.
+type SttReadyPayload = {
+  ready: boolean;
+  whisper_path: string | null;
+  ffmpeg_path: string | null;
+  model_path: string;
+  model_present: boolean;
+  hint: string;
+};
+
+let readyCache: { at: number; payload: SttReadyPayload } | null = null;
+const READY_TTL_MS = 5 * 60_000;
+
+async function probeReady(): Promise<SttReadyPayload> {
+  const now = Date.now();
+  if (readyCache && now - readyCache.at < READY_TTL_MS) return readyCache.payload;
   const whisper = which("whisper-cli");
   const ffmpeg = which("ffmpeg");
   let modelExists = false;
   try { await fs.access(MODEL_PATH); modelExists = true; } catch { /* missing */ }
   const ready = !!(whisper && ffmpeg && modelExists);
-  return NextResponse.json({
+  const payload: SttReadyPayload = {
     ready,
     whisper_path: whisper,
     ffmpeg_path: ffmpeg,
@@ -64,7 +76,15 @@ export async function GET() {
         : !ffmpeg
           ? "Install ffmpeg: `brew install ffmpeg` on macOS, `apt-get install -y ffmpeg` on Ubuntu/Debian."
           : `Download the model: \`curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin -o ${MODEL_PATH}\``,
-  });
+  };
+  readyCache = { at: now, payload };
+  return payload;
+}
+
+export async function GET() {
+  // Capability probe — used by the MicButton on mount to decide whether to
+  // surface itself at all. Cached so dual Mic + Conversation probes are cheap.
+  return NextResponse.json(await probeReady());
 }
 
 export async function POST(req: NextRequest) {

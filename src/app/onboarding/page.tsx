@@ -7,6 +7,7 @@ import {
   modelTagsMatch,
   pickPreferredOllamaModel,
 } from "@/lib/curated-models";
+import { patchSettingsCache } from "@/lib/client/settings-cache";
 
 type InstalledModel = { name: string; family?: string; size?: number; modified?: string };
 
@@ -28,11 +29,13 @@ export default function Onboarding() {
   const [ollamaError, setOllamaError] = useState<string | null>(null);
 
   async function patch(p: any) {
-    await fetch("/api/settings", {
+    const response = await fetch("/api/settings", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(p),
     });
+    if (!response.ok) throw new Error(`settings ${response.status}`);
+    patchSettingsCache(p);
   }
 
   // Discover already-installed Ollama models when entering the model step.

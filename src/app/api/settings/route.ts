@@ -7,11 +7,7 @@ export const runtime = "nodejs";
 export async function GET() {
   const s = getSettings();
   const { pin_hash, ...rest } = s;
-  // Keep Electron branding mirror fresh even if the user never re-saves.
-  try {
-    const { writeBrandingMirror } = await import("@/lib/branding-mirror");
-    writeBrandingMirror();
-  } catch { /* ignore */ }
+  // Branding mirror is written on PATCH only — GET stays cheap for mount storms.
   return NextResponse.json({ settings: { ...rest, pin_set: !!pin_hash } });
 }
 

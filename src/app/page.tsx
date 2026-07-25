@@ -23,19 +23,32 @@
  * presentation and the orb wiring are new.
  */
 
-import { useEffect, useRef, useState, useCallback, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
+import dynamic from "next/dynamic";
 import { Textarea } from "@/components/ui";
 import { ToolCallCard, type ToolCallState } from "@/components/chat/tool-call-card";
 import { ConfirmationCard, type ConfirmationState } from "@/components/chat/confirmation-card";
-import { MicButton, SpeakerButton, ConversationButton, speak } from "@/components/chat/voice";
+import { SpeakerButton, speak } from "@/components/chat/tts";
 import { toast } from "@/components/toast";
 import { Orb, type OrbState } from "@/components/orb";
 import { Plus, Send, Trash2, Star, Copy, RefreshCw, Volume2, Download, Paperclip, X, Minimize2, Eraser } from "lucide-react";
 import { modelSupportsVisionSync } from "@/lib/models/vision";
 import { useConfirm } from "@/components/confirm-dialog";
+import { fetchSettings, patchSettingsCache } from "@/lib/client/settings-cache";
+import { readChatBoot, writeChatBoot } from "@/lib/client/chat-boot-cache";
+
+const MarkdownBody = dynamic(
+  () => import("@/components/chat/markdown-body").then((m) => m.MarkdownBody),
+  { ssr: false }
+);
+const MicButton = dynamic(
+  () => import("@/components/chat/voice").then((m) => ({ default: m.MicButton })),
+  { ssr: false, loading: () => null }
+);
+const ConversationButton = dynamic(
+  () => import("@/components/chat/voice").then((m) => ({ default: m.ConversationButton })),
+  { ssr: false, loading: () => null }
+);
 
 type Conversation = { id: string; title: string; updated_at: number; starred: number };
 type Attachment = { name: string; mime: string; data: string; url: string; kind: "image" | "doc" };
@@ -137,13 +150,13 @@ function attachmentsToImageUrls(attachmentsJson: string | null | undefined): str
 }
 
 function ChatInner() {
-  const searchParams = useSearchParams();
   const confirm = useConfirm();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [thread, setThread] = useState<ThreadItem[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [creatingConversation, setCreatingConversation] = useState(false);
   const [streamPhase, setStreamPhase] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -207,6 +220,23 @@ function ChatInner() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Paint model/mode/paperclip from last session before /api/settings returns.
+  useLayoutEffect(() => {
+    const boot = readChatBoot();
+    if (!boot) return;
+    if (boot.model) {
+      setModel(boot.model);
+      setDefaultModel(boot.model);
+    }
+    if (boot.provider) {
+      setProvider(boot.provider);
+      setDefaultProvider(boot.provider);
+    }
+    if (boot.agentMode) setAgentMode(boot.agentMode);
+    if (boot.modelVision) setModelVision(true);
+    if (boot.toolHome) setToolHome(boot.toolHome);
+  }, []);
+
   async function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files || []);
     if (!modelVision) {
@@ -242,13 +272,17 @@ function ChatInner() {
     }
     // Optimistic heuristic so the paperclip appears immediately for known vision models.
     setModelVision(modelSupportsVisionSync({ name }));
+    writeChatBoot({ model: name, provider, modelVision: modelSupportsVisionSync({ name }) });
     (async () => {
       try {
         const r = await fetch(
           `/api/models/capabilities?model=${encodeURIComponent(name)}&provider=${encodeURIComponent(provider || "ollama")}`
         );
         const j = await r.json();
-        if (!cancelled) setModelVision(!!j.vision);
+        if (!cancelled) {
+          setModelVision(!!j.vision);
+          writeChatBoot({ modelVision: !!j.vision });
+        }
       } catch {
         /* keep heuristic */
       }
@@ -288,31 +322,44 @@ function ChatInner() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/settings")
-      .then((r) => r.json())
-      .then((j) => {
-        if (j.settings && !j.settings.onboarded) window.location.href = "/onboarding";
-        else {
-          setModel(j.settings?.active_model || null);
-          setDefaultModel(j.settings?.active_model || null);
-          setProvider(j.settings?.provider || "ollama");
-          setDefaultProvider(j.settings?.provider || "ollama");
-          setAgentMode((j.settings?.agent_mode as "auto" | "plan" | "ask") || "auto");
-          const cp = j.settings?.compute_placement;
-          if (cp === "local") setRunOnPeer(null);
-          else if (cp && cp !== "auto") setRunOnPeer(cp);
-          else if (cp === "auto") setRunOnPeer("__auto__");
-          const wp = j.settings?.workspace_placement;
-          if (wp && wp !== "local" && wp !== "auto") setWorkspacePeer(wp);
-          else setWorkspacePeer("");
-          const th = j.settings?.tool_home_placement;
-          if (th === "executor" || th === "initiator") setToolHome(th);
-          const fs = Number(j.settings?.chat_font_size);
-          if (fs >= 12 && fs <= 28) {
-            document.documentElement.style.setProperty("--lm-root-fs", `${fs}px`);
-          }
+    void fetchSettings()
+      .then((settings) => {
+        if (settings && !settings.onboarded) {
+          window.location.href = "/onboarding";
+          return;
         }
-      });
+        const activeModel = (settings?.active_model as string) || null;
+        const prov = (settings?.provider as string) || "ollama";
+        const mode = (settings?.agent_mode as "auto" | "plan" | "ask") || "auto";
+        setModel(activeModel);
+        setDefaultModel(activeModel);
+        setProvider(prov);
+        setDefaultProvider(prov);
+        setAgentMode(mode);
+        const cp = settings?.compute_placement as string | undefined;
+        if (cp === "local") setRunOnPeer(null);
+        else if (cp && cp !== "auto") setRunOnPeer(cp);
+        else if (cp === "auto") setRunOnPeer("__auto__");
+        const wp = settings?.workspace_placement as string | undefined;
+        if (wp && wp !== "local" && wp !== "auto") setWorkspacePeer(wp);
+        else setWorkspacePeer("");
+        const th = settings?.tool_home_placement as string | undefined;
+        const toolHomeNext =
+          th === "executor" || th === "initiator" ? th : "initiator";
+        setToolHome(toolHomeNext);
+        const fs = Number(settings?.chat_font_size);
+        if (fs >= 12 && fs <= 28) {
+          document.documentElement.style.setProperty("--lm-root-fs", `${fs}px`);
+        }
+        writeChatBoot({
+          model: activeModel,
+          provider: prov,
+          agentMode: mode,
+          modelVision: modelSupportsVisionSync({ name: activeModel || "" }),
+          toolHome: toolHomeNext,
+        });
+      })
+      .catch(() => { /* offline — keep boot cache */ });
     loadConversations();
     // Best-effort peer fetch for the "Run on" composer selector. Failure is
     // silent — if the user isn't an owner the endpoint 403s and we just hide
@@ -325,18 +372,23 @@ function ChatInner() {
         if (list.some((p) => p.trusted === 1)) setRunOnPeer("__auto__");
       })
       .catch(() => setPeers([]));
-    // Pull conversation deltas from sync-enabled peers so this device
-    // sees the shared mesh history.
-    fetch("/api/fleet/sync", { method: "POST" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        if (j?.messages > 0) loadConversations();
-      })
-      .catch(() => { /* no peers / fleet off */ });
+    // Defer mesh conversation sync so first paint + settings aren't starved
+    // by slow/offline peers.
+    const syncTimer = window.setTimeout(() => {
+      fetch("/api/fleet/sync", { method: "POST" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => {
+          if (j?.messages > 0) loadConversations();
+        })
+        .catch(() => { /* no peers / fleet off */ });
+    }, 2500);
+    return () => window.clearTimeout(syncTimer);
   }, [loadConversations]);
 
   async function changeMode(next: "auto" | "plan" | "ask") {
     setAgentMode(next);
+    writeChatBoot({ agentMode: next });
+    patchSettingsCache({ agent_mode: next });
     await fetch("/api/settings", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -373,6 +425,12 @@ function ChatInner() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ provider: nextProvider, active_model: nextModel }),
       });
+      patchSettingsCache({ provider: nextProvider, active_model: nextModel });
+      writeChatBoot({
+        provider: nextProvider,
+        model: nextModel,
+        modelVision: modelSupportsVisionSync({ name: nextModel }),
+      });
       setDefaultProvider(nextProvider);
       setDefaultModel(nextModel);
       setProvider(nextProvider);
@@ -386,6 +444,11 @@ function ChatInner() {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model_provider: nextProvider, model_name: nextModel }),
+    });
+    writeChatBoot({
+      provider: nextProvider,
+      model: nextModel,
+      modelVision: modelSupportsVisionSync({ name: nextModel }),
     });
     setProvider(nextProvider);
     setModel(nextModel);
@@ -409,12 +472,17 @@ function ChatInner() {
   }
 
   useEffect(() => {
-    if (searchParams.get("new") === "1") newConversation();
-    // Prefill from other surfaces (e.g. Browse → "Ask Sora about this page").
-    const ask = searchParams.get("ask");
-    if (ask) setInput(ask);
+    // Avoid useSearchParams Suspense — read once from the URL so chrome paints immediately.
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get("new") === "1") void newConversation();
+      const ask = sp.get("ask");
+      if (ask) setInput(ask);
+    } catch {
+      /* ignore */
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, []);
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
@@ -481,12 +549,34 @@ function ChatInner() {
   }
 
   async function newConversation() {
-    const r = await fetch("/api/conversations", { method: "POST" });
-    const j = await r.json();
-    await loadConversations();
-    setActiveId(j.conversation.id);
+    if (creatingConversation) return;
+    const tempId = `tmp-${Date.now()}`;
+    setCreatingConversation(true);
+    setActiveId(tempId);
     setThread([]);
     setSuspendedNotice(null);
+    setConversations((cur) => [
+      { id: tempId, title: "New chat", updated_at: Date.now(), starred: 0 },
+      ...cur.filter((c) => c.id !== tempId),
+    ]);
+    try {
+      const r = await fetch("/api/conversations", { method: "POST" });
+      if (!r.ok) throw new Error(`conversation ${r.status}`);
+      const j = await r.json();
+      const real = j.conversation as Conversation;
+      if (!real?.id) throw new Error("Missing conversation id");
+      setConversations((cur) => [
+        real,
+        ...cur.filter((c) => c.id !== tempId && c.id !== real.id),
+      ]);
+      setActiveId(real.id);
+    } catch {
+      setConversations((cur) => cur.filter((c) => c.id !== tempId));
+      setActiveId(null);
+      toast("Could not start a new chat", "error");
+    } finally {
+      setCreatingConversation(false);
+    }
   }
 
   async function deleteConversation(id: string) {
@@ -706,7 +796,7 @@ function ChatInner() {
   // immediately send. The button itself manages turn-taking state.
   async function sendUtterance(text: string) {
     const cleaned = text.trim();
-    if (!cleaned || streaming) return;
+    if (!cleaned || creatingConversation || streaming) return;
     setStreaming(true);
     setStreamPhase("preparing");
     setInput("");
@@ -729,7 +819,7 @@ function ChatInner() {
 
   async function send() {
     const text = input.trim();
-    if ((!text && attachments.length === 0) || streaming) return;
+    if ((!text && attachments.length === 0) || creatingConversation || streaming) return;
     const outgoing = attachments;
     const images = outgoing.map((a) => ({ name: a.name, mime: a.mime, data: a.data }));
 
@@ -1062,7 +1152,12 @@ function ChatInner() {
     <div className="lm-chat">
       {/* Conversations strip */}
       <aside className="lm-conv">
-        <button onClick={newConversation} className="lm-conv__new" data-pulse="true">
+        <button
+          onClick={newConversation}
+          disabled={creatingConversation}
+          className="lm-conv__new"
+          data-pulse="true"
+        >
           <Plus className="h-3.5 w-3.5" />
           <span>New</span>
         </button>
@@ -1328,7 +1423,7 @@ function ChatInner() {
                       <div className="lm-stream-plain" style={{ whiteSpace: "pre-wrap" }}>{item.content}</div>
                     ) : (
                       <div className="markdown">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.content}</ReactMarkdown>
+                        <MarkdownBody>{item.content}</MarkdownBody>
                       </div>
                     )}
                     {!isLive && (
@@ -1378,6 +1473,7 @@ function ChatInner() {
                       body: JSON.stringify({ compute_placement }),
                     });
                   } else {
+                    patchSettingsCache({ compute_placement });
                     await fetch("/api/settings", {
                       method: "PATCH",
                       headers: { "content-type": "application/json" },
@@ -1409,6 +1505,7 @@ function ChatInner() {
                       body: JSON.stringify({ workspace_placement: v || "local" }),
                     });
                   } else {
+                    patchSettingsCache({ workspace_placement: v || "local" });
                     await fetch("/api/settings", {
                       method: "PATCH",
                       headers: { "content-type": "application/json" },
@@ -1440,6 +1537,8 @@ function ChatInner() {
                     onChange={async (e) => {
                       const v = e.target.value as "initiator" | "executor";
                       setToolHome(v);
+                      writeChatBoot({ toolHome: v });
+                      patchSettingsCache({ tool_home_placement: v });
                       await fetch("/api/settings", {
                         method: "PATCH",
                         headers: { "content-type": "application/json" },
@@ -1581,7 +1680,7 @@ function ChatInner() {
             <MicButton onText={(t, opts) => setInput((prev) => (opts?.append && prev ? `${prev} ${t}` : t))} />
             <button
               onClick={send}
-              disabled={streaming || (!input.trim() && attachments.length === 0)}
+              disabled={creatingConversation || streaming || (!input.trim() && attachments.length === 0)}
               className="lm-composer__send"
               aria-label="Send"
               data-pulse="true"
@@ -2003,10 +2102,8 @@ function orbStateLabel(s: OrbState): string {
 
 export default function ChatPage() {
   return (
-    <Suspense fallback={<div className="p-6 lm-body h-full" style={{ color: "hsl(0 0% 100% / 0.5)" }}>Loading…</div>}>
-      <div className="h-full min-h-0">
-        <ChatInner />
-      </div>
-    </Suspense>
+    <div className="h-full min-h-0">
+      <ChatInner />
+    </div>
   );
 }

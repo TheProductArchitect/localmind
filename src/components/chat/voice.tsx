@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Mic, Volume2, MicOff, Loader2, Radio, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fetchVoiceReady } from "@/lib/client/voice-ready";
+import { speak, type SpeakHandle } from "@/components/chat/tts";
 
 /**
  * MicButton — local speech-to-text with two modes:
@@ -27,8 +29,7 @@ export function MicButton({ onText }: { onText: (t: string, opts?: { append?: bo
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/voice/stt")
-      .then((r) => r.json())
+    fetchVoiceReady()
       .then((j) => {
         if (cancelled) return;
         setAvailable(!!j.ready);
@@ -197,51 +198,6 @@ export function MicButton({ onText }: { onText: (t: string, opts?: { append?: bo
   );
 }
 
-/**
- * Text-to-speech via the browser's built-in Speech Synthesis API — uses
- * the user's system voices and renders in-browser, no network.
- *
- * Returns a handle the caller can await/cancel. Conversation mode uses the
- * `done` promise to know when Sora has finished speaking so it can re-open
- * the mic without having the assistant transcribe itself.
- */
-export type SpeakHandle = {
-  done: Promise<void>;
-  cancel: () => void;
-};
-
-export function speak(text: string, opts?: { onEnd?: () => void }): SpeakHandle {
-  if (typeof window === "undefined" || !window.speechSynthesis) {
-    opts?.onEnd?.();
-    return { done: Promise.resolve(), cancel: () => {} };
-  }
-  const u = new SpeechSynthesisUtterance(text.slice(0, 4000));
-  let resolve: () => void = () => {};
-  const done = new Promise<void>((r) => { resolve = r; });
-  const finish = () => { try { opts?.onEnd?.(); } catch { /* ignore */ } resolve(); };
-  u.onend = finish;
-  u.onerror = finish;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(u);
-  return {
-    done,
-    cancel: () => { try { window.speechSynthesis.cancel(); } catch { /* ignore */ } finish(); },
-  };
-}
-
-export function SpeakerButton({ text }: { text: string }) {
-  return (
-    <button
-      type="button"
-      title="Read aloud"
-      onClick={() => speak(text)}
-      className="text-muted-foreground hover:text-foreground"
-    >
-      <Volume2 className="h-3.5 w-3.5" />
-    </button>
-  );
-}
-
 /* ============================================================ */
 /* Conversation mode — hands-free                                */
 /* ============================================================ */
@@ -302,7 +258,7 @@ export function ConversationButton({
   // MicButton. If STT isn't installed, the button hides.
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/voice/stt").then((r) => r.json()).then((j) => {
+    fetchVoiceReady().then((j) => {
       if (!cancelled) setAvailable(!!j.ready);
     }).catch(() => { if (!cancelled) setAvailable(false); });
     return () => { cancelled = true; };

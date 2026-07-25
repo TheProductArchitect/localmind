@@ -6,6 +6,7 @@ import { useConfirm } from "@/components/confirm-dialog";
 import { CURATED_MODELS, modelTagsMatch } from "@/lib/curated-models";
 import { Download, Trash2, Check, ExternalLink } from "lucide-react";
 import { toast } from "@/components/toast";
+import { patchSettingsCache } from "@/lib/client/settings-cache";
 
 type Model = { name: string; family?: string; size?: number; modified?: string; path?: string };
 type HfCatalogueEntry = {
@@ -103,6 +104,10 @@ export default function ModelsPage() {
       setErr(j.error || `Could not set active model (HTTP ${r.status})`);
       return;
     }
+    patchSettingsCache({
+      active_model: name,
+      ...(chatProvider ? { provider: chatProvider } : {}),
+    });
     setActive(name);
     if (chatProvider) setActiveProvider(chatProvider);
   }

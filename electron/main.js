@@ -244,12 +244,13 @@ function wireIpc() {
 // ------------------------------------------------------------------- boot ---
 
 async function boot() {
-  const url = await ensureServer();
   wireIpc();
 
+  // Show a window immediately so cold `next start` / build doesn't feel hung.
   win = new BrowserWindow({
     width: 1440,
     height: 900,
+    show: false,
     title: readAssistantNameFromDb() || "Assistant",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -260,6 +261,25 @@ async function boot() {
   });
   win.on("resize", layout);
   win.on("closed", () => { win = null; });
+  win.once("ready-to-show", () => {
+    if (win && !win.isDestroyed()) win.show();
+  });
+
+  // Lightweight splash while the Next server comes up.
+  await win.loadURL(
+    "data:text/html," +
+      encodeURIComponent(
+        `<!doctype html><html><head><meta charset="utf-8"><title>LocalMind</title>
+<style>html,body{height:100%;margin:0;background:#07080f;color:#c8c9d4;font:15px/1.4 system-ui,sans-serif}
+main{min-height:100%;display:grid;place-items:center;letter-spacing:.02em}
+.dot{display:inline-block;width:.55rem;height:.55rem;border-radius:50%;background:#7aa2ff;margin-right:.55rem;animation:p 1.1s ease-in-out infinite}
+@keyframes p{0%,100%{opacity:.35}50%{opacity:1}}</style></head>
+<body><main><div><span class="dot"></span>Starting LocalMind…</div></main></body></html>`
+      )
+  );
+  if (win && !win.isDestroyed()) win.show();
+
+  const url = await ensureServer();
 
   await initBranding({
     mainWindow: win,
