@@ -36,6 +36,8 @@ import { modelSupportsVisionSync } from "@/lib/models/vision";
 import { useConfirm } from "@/components/confirm-dialog";
 import { fetchSettings, patchSettingsCache } from "@/lib/client/settings-cache";
 import { readChatBoot, writeChatBoot } from "@/lib/client/chat-boot-cache";
+import { useStickyThreadScroll } from "@/lib/client/use-sticky-thread-scroll";
+import { createStreamBatcher } from "@/lib/client/stream-batcher";
 
 const MarkdownBody = dynamic(
   () => import("@/components/chat/markdown-body").then((m) => m.MarkdownBody),
@@ -297,7 +299,19 @@ function ChatInner() {
     if (!modelVision && attachments.length) setAttachments([]);
   }, [modelVision]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const threadRef = useRef<HTMLDivElement>(null);
+  const {
+    scrollerRef,
+    bottomRef,
+    onScroll: onThreadScroll,
+    scrollToBottom,
+    lockFollow,
+    isFollowing,
+  } = useStickyThreadScroll();
+  const streamBatcherRef = useRef<ReturnType<typeof createStreamBatcher> | null>(null);
+  const scrollToBottomRef = useRef(scrollToBottom);
+  scrollToBottomRef.current = scrollToBottom;
+  const streamOriginRef = useRef<string | null>(null);
+  const [showJumpLatest, setShowJumpLatest] = useState(false);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   // Maps a pending confirmation's toolCallId → the peer that raised it, so
   // decide() can route the answer back over the fleet (M5 remote confirms).
@@ -484,9 +498,34 @@ function ChatInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Coalesce token deltas onto one React update per animation frame.
   useEffect(() => {
-    threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
-  }, [thread]);
+    streamBatcherRef.current = createStreamBatcher((chunk) => {
+      const origin = streamOriginRef.current;
+      setThread((t) => {
+        const next = [...t];
+        for (let i = next.length - 1; i >= 0; i--) {
+          if (next[i].kind === "assistant") {
+            const prev = next[i] as { kind: "assistant"; content: string; originLabel?: string | null };
+            next[i] = {
+              ...prev,
+              content: (prev.content || "") + chunk,
+              ...(origin && prev.originLabel !== origin ? { originLabel: origin } : {}),
+            };
+            break;
+          }
+        }
+        return next;
+      });
+      scrollToBottomRef.current();
+    });
+    return () => streamBatcherRef.current?.clear();
+  }, []);
+
+  // Show a "Jump to latest" chip when the user scrolls away mid-stream.
+  useEffect(() => {
+    setShowJumpLatest(streaming && !isFollowing());
+  }, [streaming, thread, isFollowing]);
 
   // Auto-fade error state on the orb 1.5s after it fires.
   useEffect(() => {
@@ -504,6 +543,7 @@ function ChatInner() {
     setActiveId(id);
     setError(null);
     setSuspendedNotice(null);
+    lockFollow();
     const r = await fetch(`/api/conversations/${id}`);
     if (req !== openReqRef.current) return; // stale — a newer open won
     const j = await r.json();
@@ -538,6 +578,8 @@ function ChatInner() {
       }
     }
     setThread(items);
+    // Wait a frame so the DOM has the messages before we jump.
+    requestAnimationFrame(() => scrollToBottom({ force: true }));
 
     // Check if this conversation is currently suspended.
     fetch(`/api/chat/resume?conversation_id=${id}`)
@@ -768,10 +810,12 @@ function ChatInner() {
       }
       if (gotDone) setError(null);
     } finally {
+      streamBatcherRef.current?.flushNow();
       setStreaming(false);
       setStreamPhase(null);
       setActiveTools({});
       loadConversations();
+      scrollToBottom({ force: false });
       // Conversation-mode handoff: once streaming has stopped, hand the
       // latest assistant turn over to <ConversationButton/> for TTS. We
       // read from a ref-style closure of the latest thread state.
@@ -797,6 +841,9 @@ function ChatInner() {
   async function sendUtterance(text: string) {
     const cleaned = text.trim();
     if (!cleaned || creatingConversation || streaming) return;
+    lockFollow();
+    streamBatcherRef.current?.clear();
+    streamOriginRef.current = null;
     setStreaming(true);
     setStreamPhase("preparing");
     setInput("");
@@ -825,6 +872,9 @@ function ChatInner() {
 
     // Paint the turn + typing state BEFORE any network — the previous path
     // awaited conversation create / fleet placement with a blank thread.
+    lockFollow();
+    streamBatcherRef.current?.clear();
+    streamOriginRef.current = null;
     setStreaming(true);
     setStreamPhase("preparing");
     setError(null);
@@ -841,6 +891,7 @@ function ChatInner() {
       },
       { kind: "assistant", content: "" },
     ]);
+    requestAnimationFrame(() => scrollToBottom({ force: true }));
 
     let convId = activeId;
     if (!convId) {
@@ -932,22 +983,10 @@ function ChatInner() {
                 } else if (ev.type === "token" && typeof ev.text === "string") {
                   setStreamPhase("streaming");
                   setExecutorHint(`Receiving from ${label}…`);
-                  setThread((t) => {
-                    const out = [...t];
-                    for (let i = out.length - 1; i >= 0; i--) {
-                      if (out[i].kind === "assistant") {
-                        const prev = out[i] as { kind: "assistant"; content: string; originLabel?: string };
-                        out[i] = {
-                          kind: "assistant",
-                          content: (prev.content || "") + ev.text,
-                          originLabel: label,
-                        };
-                        break;
-                      }
-                    }
-                    return out;
-                  });
+                  streamOriginRef.current = label;
+                  streamBatcherRef.current?.push(ev.text);
                 } else if (ev.type === "confirm" && ev.tool_call_id) {
+                  streamBatcherRef.current?.flushNow();
                   // Executor raised an ask/pin gate; surface it locally and
                   // remember the peer so decide() relays the answer back.
                   remoteConfirmRef.current.set(ev.tool_call_id, peerTarget as string);
@@ -978,9 +1017,11 @@ function ChatInner() {
                     t.filter((i) => !(i.kind === "confirmation" && i.c.toolCallId === ev.tool_call_id))
                   );
                 } else if (ev.type === "done") {
+                  streamBatcherRef.current?.flushNow();
                   reply = ev.reply ?? "";
                   if (ev.peer_label) label = ev.peer_label;
                 } else if (ev.type === "error") {
+                  streamBatcherRef.current?.flushNow();
                   errMsg = ev.message || "Relay failed.";
                 }
               } catch { /* ignore malformed SSE chunk */ }
@@ -1050,6 +1091,9 @@ function ChatInner() {
 
   async function regenerate() {
     if (!activeId || streaming) return;
+    lockFollow();
+    streamBatcherRef.current?.clear();
+    streamOriginRef.current = null;
     setThread((t) => {
       let lastUser = -1;
       for (let i = t.length - 1; i >= 0; i--) if (t[i].kind === "user") { lastUser = i; break; }
@@ -1071,7 +1115,14 @@ function ChatInner() {
     }
     if (ev.type === "text_chunk") {
       setStreamPhase("streaming");
+      // Batch tokens onto the next frame — re-rendering on every token is
+      // what made the stream feel stuttery.
+      streamBatcherRef.current?.push(String(ev.delta ?? ""));
+      return;
     }
+    // Non-text events must see the latest text first.
+    streamBatcherRef.current?.flushNow();
+
     if (ev.type === "tool_call_start") {
       setActiveTools((m) => ({ ...m, [ev.toolCallId]: ev.toolName }));
       setStreamPhase("tool");
@@ -1090,10 +1141,7 @@ function ChatInner() {
         for (let i = next.length - 1; i >= 0; i--) if (next[i].kind === "assistant") return i;
         return -1;
       };
-      if (ev.type === "text_chunk") {
-        const idx = lastAssistant();
-        if (idx >= 0) next[idx] = { kind: "assistant", content: (next[idx] as any).content + ev.delta };
-      } else if (ev.type === "tool_call_start") {
+      if (ev.type === "tool_call_start") {
         next.push({ kind: "tool", tc: { id: ev.toolCallId, toolName: ev.toolName, status: ev.status, input: ev.input } });
         next.push({ kind: "assistant", content: "" });
       } else if (ev.type === "tool_call_result") {
@@ -1130,6 +1178,15 @@ function ChatInner() {
       }
       return next;
     });
+    // Tool cards / confirms grow the thread — follow if the user is already at the bottom.
+    if (
+      ev.type === "tool_call_start" ||
+      ev.type === "tool_call_result" ||
+      ev.type === "confirmation_required" ||
+      ev.type === "confirmation_timeout"
+    ) {
+      scrollToBottom();
+    }
   }
 
   // Derive the orb state from current activity.
@@ -1356,7 +1413,15 @@ function ChatInner() {
           </div>
         )}
 
-        <div ref={threadRef} className="lm-thread__scroll">
+        <div className="lm-thread__body">
+        <div
+          ref={scrollerRef}
+          className="lm-thread__scroll"
+          onScroll={() => {
+            onThreadScroll();
+            setShowJumpLatest(streaming && !isFollowing());
+          }}
+        >
           <div className="mx-auto" style={{ maxWidth: 720 }}>
             {thread.length === 0 && (
               <div className="lm-empty">
@@ -1420,7 +1485,10 @@ function ChatInner() {
                       </p>
                     )}
                     {isLive ? (
-                      <div className="lm-stream-plain" style={{ whiteSpace: "pre-wrap" }}>{item.content}</div>
+                      <div className="lm-stream-plain" data-streaming="true">
+                        {item.content}
+                        <span className="lm-stream-caret" aria-hidden />
+                      </div>
                     ) : (
                       <div className="markdown">
                         <MarkdownBody>{item.content}</MarkdownBody>
@@ -1452,7 +1520,22 @@ function ChatInner() {
               </button>
             )}
             {error && <div className="lm-error">{error}</div>}
+            <div ref={bottomRef} className="lm-thread__anchor" aria-hidden />
           </div>
+        </div>
+        {showJumpLatest && (
+          <button
+            type="button"
+            className="lm-jump-latest"
+            onClick={() => {
+              lockFollow();
+              scrollToBottom({ force: true, smooth: true });
+              setShowJumpLatest(false);
+            }}
+          >
+            Jump to latest
+          </button>
+        )}
         </div>
 
         <footer className="lm-composer">
@@ -1807,6 +1890,13 @@ function ChatInner() {
           height: 100%;
           overflow: hidden;
         }
+        .lm-thread__body {
+          flex: 1;
+          min-height: 0;
+          position: relative;
+          display: flex;
+          flex-direction: column;
+        }
         .lm-thread__head {
           display: flex; align-items: center; justify-content: space-between;
           flex-shrink: 0;
@@ -1871,6 +1961,34 @@ function ChatInner() {
           overflow-y: auto;
           overscroll-behavior: contain;
           padding: 40px 28px 60px;
+          scroll-behavior: auto;
+          -webkit-overflow-scrolling: touch;
+        }
+        .lm-thread__anchor {
+          height: 1px;
+          width: 100%;
+          pointer-events: none;
+        }
+        .lm-jump-latest {
+          position: absolute;
+          left: 50%;
+          bottom: 12px;
+          transform: translateX(-50%);
+          z-index: 5;
+          padding: 7px 14px;
+          border-radius: 999px;
+          border: 1px solid hsl(0 0% 100% / 0.14);
+          background: hsl(234 18% 10% / 0.92);
+          color: hsl(0 0% 100% / 0.88);
+          font-size: 12px;
+          letter-spacing: 0.01em;
+          backdrop-filter: blur(10px);
+          box-shadow: 0 8px 24px hsl(0 0% 0% / 0.35);
+          cursor: pointer;
+        }
+        .lm-jump-latest:hover {
+          background: hsl(234 18% 14% / 0.95);
+          color: hsl(0 0% 100%);
         }
 
         .lm-empty {
@@ -1904,6 +2022,22 @@ function ChatInner() {
           font-size: inherit;
           line-height: inherit;
           color: hsl(0 0% 100% / 0.92);
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+        .lm-stream-caret {
+          display: inline-block;
+          width: 0.55ch;
+          height: 1.05em;
+          margin-left: 1px;
+          vertical-align: text-bottom;
+          background: hsl(0 0% 100% / 0.72);
+          border-radius: 1px;
+          animation: lm-caret-blink 1s steps(1) infinite;
+        }
+        @keyframes lm-caret-blink {
+          0%, 45% { opacity: 1; }
+          50%, 100% { opacity: 0; }
         }
         .lm-typing {
           display: inline-flex;
