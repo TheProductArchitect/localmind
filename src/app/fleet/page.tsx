@@ -51,6 +51,12 @@ type PairingStart = {
   window: { token_short: string; issued_at: number; expires_at: number; ttl_ms: number };
 };
 
+type ListenerStatus = {
+  running: boolean;
+  port: number | null;
+  last_error: { message: string; at: number } | null;
+};
+
 function ageOf(ms: number | null): string {
   if (!ms) return "never";
   const d = Date.now() - ms;
@@ -70,12 +76,14 @@ export default function FleetPage() {
   const [acceptPayload, setAcceptPayload] = useState("");
   const [acceptLabel, setAcceptLabel] = useState("");
   const [accepting, setAccepting] = useState(false);
+  const [listener, setListener] = useState<ListenerStatus | null>(null);
   const expiryRef = useRef<HTMLSpanElement>(null);
 
   const load = useCallback(async () => {
     const r = await fetch("/api/fleet/peers");
-    const j = (await r.json()) as { peers: Peer[] };
+    const j = (await r.json()) as { peers: Peer[]; listener?: ListenerStatus };
     setPeers(j.peers || []);
+    setListener(j.listener ?? null);
     setLoaded(true);
   }, []);
 
@@ -245,6 +253,23 @@ export default function FleetPage() {
           <RefreshCw className="h-3.5 w-3.5" />
         </button>
       </header>
+
+      {/* Pairing silently depends on this listener, so say when it's down. */}
+      {listener && !listener.running && (
+        <div
+          role="alert"
+          className="lm-surface-1 mb-8 p-4"
+          style={{ borderRadius: 14, borderColor: "hsl(0 90% 64% / 0.4)" }}
+        >
+          <p className="lm-body" style={{ color: "hsl(0 100% 82%)" }}>
+            Pairing is unavailable — the fleet listener is not running on this device.
+          </p>
+          <p className="lm-body mt-2" style={{ color: "hsl(0 0% 100% / 0.7)" }}>
+            {listener.last_error?.message ??
+              "No startup error was recorded, so the app may still be starting. Restart LocalMind and refresh."}
+          </p>
+        </div>
+      )}
 
       {/* Peers section */}
       <section className="mb-16">

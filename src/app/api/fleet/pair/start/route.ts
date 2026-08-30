@@ -25,7 +25,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import QRCode from "qrcode";
 import { openPairingWindow, encodePayload } from "@/lib/fleet/pairing";
-import { activeFleetPort, isRunning } from "@/lib/fleet/server";
+import { activeFleetPort, isRunning, listenerDownMessage } from "@/lib/fleet/server";
 import os from "os";
 
 export const runtime = "nodejs";
@@ -53,10 +53,7 @@ function detectPrimaryAddr(): string {
 
 export async function POST(req: NextRequest) {
   if (!isRunning()) {
-    return NextResponse.json(
-      { error: "Fleet listener is not running. Check that openssl is installed and restart the app." },
-      { status: 503 }
-    );
+    return NextResponse.json({ error: listenerDownMessage() }, { status: 503 });
   }
 
   const parsed = Body.safeParse(await req.json().catch(() => ({})));

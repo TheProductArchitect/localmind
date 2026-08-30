@@ -47,13 +47,22 @@ type GlobalFleet = {
   server: https.Server | null;
   port: number | null;
   handlersRegistered: boolean;
+  /**
+   * Why the listener is down. Without this the reason only ever reached the
+   * log file, so pairing could report nothing better than "not running" —
+   * leaving the user to guess between missing openssl, a taken port, and an
+   * app that never booted.
+   */
+  lastError: { message: string; at: number } | null;
 };
 const GLOBAL_KEY = Symbol.for("localmind.fleet.server");
 const globalSlot = globalThis as unknown as Record<symbol, GlobalFleet>;
 if (!globalSlot[GLOBAL_KEY]) {
-  globalSlot[GLOBAL_KEY] = { server: null, port: null, handlersRegistered: false };
+  globalSlot[GLOBAL_KEY] = { server: null, port: null, handlersRegistered: false, lastError: null };
 }
 const fleetState: GlobalFleet = globalSlot[GLOBAL_KEY];
+// Older module instances may predate lastError.
+if (fleetState.lastError === undefined) fleetState.lastError = null;
 
 export type HandlerCtx<P> = {
   envelope: SignedEnvelope<P>;
@@ -250,10 +259,19 @@ export async function startFleetServer(opts: { port?: number; host?: string } = 
     return { port: fleetState.port, cert_fingerprint: getTlsMaterial().fingerprint_sha256 };
   }
   if (!opensslAvailable()) {
-    throw new Error("openssl not available — fleet server cannot start. Install openssl and restart.");
+    throw recordStartFailure(
+      new Error("openssl is not installed, so the fleet TLS certificate cannot be generated. Install openssl and restart the app.")
+    );
   }
 
-  const tls = getTlsMaterial();
+  let tls: ReturnType<typeof getTlsMaterial>;
+  try {
+    tls = getTlsMaterial();
+  } catch (e) {
+    throw recordStartFailure(
+      new Error(`Could not load or generate the fleet TLS certificate: ${(e as Error).message}`)
+    );
+  }
   const port = opts.port ?? DEFAULT_FLEET_PORT;
   const host = opts.host ?? FLEET_BIND_HOST;
 
@@ -275,15 +293,38 @@ export async function startFleetServer(opts: { port?: number; host?: string } = 
     }
   );
 
-  await new Promise<void>((resolve, reject) => {
-    fleetState.server!.once("error", reject);
-    fleetState.server!.listen(port, host, () => {
-      fleetState.server!.off("error", reject);
-      resolve();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      fleetState.server!.once("error", reject);
+      fleetState.server!.listen(port, host, () => {
+        fleetState.server!.off("error", reject);
+        resolve();
+      });
     });
-  });
+  } catch (e) {
+    // A failed bind used to leave `server` non-null with `port` unset, so
+    // isRunning() reported a listener that was not listening.
+    try { fleetState.server?.close(); } catch { /* never listened */ }
+    fleetState.server = null;
+    fleetState.port = null;
+    const err = e as NodeJS.ErrnoException;
+    const detail =
+      err.code === "EADDRINUSE"
+        ? `port ${port} is already in use — another LocalMind instance or service holds it. Set LOCALMIND_FLEET_PORT to a free port and restart.`
+        : err.code === "EACCES"
+          ? `permission denied binding port ${port}. Use a port above 1024 via LOCALMIND_FLEET_PORT.`
+          : err.message;
+    throw recordStartFailure(new Error(`Fleet listener could not bind: ${detail}`));
+  }
   fleetState.port = port;
+  fleetState.lastError = null;
   return { port, cert_fingerprint: tls.fingerprint_sha256 };
+}
+
+/** Remember why startup failed, then hand the error back for throwing. */
+function recordStartFailure(err: Error): Error {
+  fleetState.lastError = { message: err.message, at: Date.now() };
+  return err;
 }
 
 /** Stop the listener (graceful, waits up to 2s for in-flight). */
@@ -300,11 +341,39 @@ export async function stopFleetServer(): Promise<void> {
 }
 
 export function isRunning(): boolean {
-  return fleetState.server !== null;
+  // Both must hold: a bind failure clears them together.
+  return fleetState.server !== null && fleetState.port !== null;
 }
 
 export function activeFleetPort(): number | null {
   return fleetState.port;
+}
+
+export type FleetListenerStatus = {
+  running: boolean;
+  port: number | null;
+  last_error: { message: string; at: number } | null;
+};
+
+export function fleetListenerStatus(): FleetListenerStatus {
+  return {
+    running: isRunning(),
+    port: fleetState.port,
+    last_error: fleetState.lastError,
+  };
+}
+
+/**
+ * One explanation for "the listener is down", used by every caller that needs
+ * to refuse. Names the real cause when we know it instead of guessing.
+ */
+export function listenerDownMessage(): string {
+  const { last_error } = fleetListenerStatus();
+  if (last_error) return `Fleet listener is not running: ${last_error.message}`;
+  return (
+    "Fleet listener is not running on this device, and no startup error was recorded — " +
+    "the app may still be starting. Restart LocalMind and check Fleet again."
+  );
 }
 
 // -------------------------------------------------------------------------

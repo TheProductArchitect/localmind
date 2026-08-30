@@ -26,7 +26,7 @@ import { sendUnpaired } from "@/lib/fleet/peer-client";
 import { pairPeer, recordCapabilities, getPeer } from "@/lib/db/fleet";
 import { getNodeIdentity, exportPublicKey } from "@/lib/fleet/identity";
 import { getTlsMaterial } from "@/lib/fleet/tls";
-import { activeFleetPort, isRunning } from "@/lib/fleet/server";
+import { activeFleetPort, isRunning, listenerDownMessage } from "@/lib/fleet/server";
 
 export const runtime = "nodejs";
 
@@ -50,7 +50,9 @@ function detectOwnPrimaryAddr(): string {
 export async function POST(req: NextRequest) {
   if (!isRunning()) {
     return NextResponse.json(
-      { error: "Fleet listener is not running. Both devices need the listener up." },
+      // This guard is about THIS device. The old copy said "both devices need
+      // the listener up", which sent people looking at the wrong machine.
+      { error: `${listenerDownMessage()} Pairing needs the listener up on this device.` },
       { status: 503 }
     );
   }
