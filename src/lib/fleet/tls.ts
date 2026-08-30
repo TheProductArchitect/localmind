@@ -24,6 +24,7 @@
 
 import { spawnSync } from "child_process";
 import crypto, { X509Certificate } from "crypto";
+import https from "https";
 import fs from "fs";
 import { ensureDataDir, KEYS_DIR, NODE_PRIVKEY_FILE, TLS_CERT_FILE, TLS_FINGERPRINT_FILE } from "../paths";
 import { getNodeIdentity } from "./identity";
@@ -119,28 +120,36 @@ export function getTlsMaterial(): TlsMaterial {
   if (fs.existsSync(TLS_CERT_FILE)) {
     const certPem = fs.readFileSync(TLS_CERT_FILE, "utf8");
     const keyPem = fs.readFileSync(NODE_PRIVKEY_FILE, "utf8");
-    const fingerprint = computeFingerprint(certPem);
 
-    // If the file on disk says one fingerprint and the actual cert says another,
-    // something is corrupted — log loudly. The cert wins because it's the auth-
-    // oritative artefact.
-    if (fs.existsSync(TLS_FINGERPRINT_FILE)) {
-      const recorded = fs.readFileSync(TLS_FINGERPRINT_FILE, "utf8").trim();
-      if (recorded !== fingerprint) {
-        console.warn(`[fleet.tls] fingerprint file mismatch (recorded=${recorded}, actual=${fingerprint}) — overwriting`);
+    // Validate that the certificate matches the current private key
+    try {
+      const cert = new X509Certificate(certPem);
+      const testServer = https.createServer({ cert: certPem, key: keyPem });
+      testServer.close();
+
+      const fingerprint = computeFingerprint(certPem);
+
+      if (fs.existsSync(TLS_FINGERPRINT_FILE)) {
+        const recorded = fs.readFileSync(TLS_FINGERPRINT_FILE, "utf8").trim();
+        if (recorded !== fingerprint) {
+          console.warn(`[fleet.tls] fingerprint file mismatch (recorded=${recorded}, actual=${fingerprint}) — overwriting`);
+        }
       }
-    }
-    persistFingerprint(fingerprint);
+      persistFingerprint(fingerprint);
 
-    const cert = new X509Certificate(certPem);
-    cached = {
-      cert_pem: certPem,
-      key_pem: keyPem,
-      fingerprint_sha256: fingerprint,
-      fingerprint_short: fingerprint.slice(0, 16),
-      not_after: new Date(cert.validTo),
-    };
-    return cached;
+      cached = {
+        cert_pem: certPem,
+        key_pem: keyPem,
+        fingerprint_sha256: fingerprint,
+        fingerprint_short: fingerprint.slice(0, 16),
+        not_after: new Date(cert.validTo),
+      };
+      return cached;
+    } catch (e) {
+      console.warn("[fleet.tls] Existing certificate does not match private key, regenerating...", (e as Error).message);
+      if (fs.existsSync(TLS_CERT_FILE)) fs.unlinkSync(TLS_CERT_FILE);
+      if (fs.existsSync(TLS_FINGERPRINT_FILE)) fs.unlinkSync(TLS_FINGERPRINT_FILE);
+    }
   }
 
   cached = generateCert();
