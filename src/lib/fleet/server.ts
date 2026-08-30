@@ -46,12 +46,16 @@ const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1 MiB — capability/heartbeat envelo
 type GlobalFleet = {
   server: https.Server | null;
   port: number | null;
-  handlersRegistered: boolean;
+  handlers: Map<EnvelopeKind, Handler<unknown, unknown>>;
 };
 const GLOBAL_KEY = Symbol.for("localmind.fleet.server");
 const globalSlot = globalThis as unknown as Record<symbol, GlobalFleet>;
 if (!globalSlot[GLOBAL_KEY]) {
-  globalSlot[GLOBAL_KEY] = { server: null, port: null, handlersRegistered: false };
+  globalSlot[GLOBAL_KEY] = {
+    server: null,
+    port: null,
+    handlers: new Map<EnvelopeKind, Handler<unknown, unknown>>(),
+  };
 }
 const fleetState: GlobalFleet = globalSlot[GLOBAL_KEY];
 
@@ -62,7 +66,7 @@ export type HandlerCtx<P> = {
 
 export type Handler<Req, Res> = (ctx: HandlerCtx<Req>) => Promise<Res>;
 
-const HANDLERS = new Map<EnvelopeKind, Handler<unknown, unknown>>();
+const HANDLERS = fleetState.handlers;
 
 /** Register a handler for a given envelope kind. Idempotent — last write wins. */
 export function registerHandler<Req, Res>(kind: EnvelopeKind, handler: Handler<Req, Res>): void {
@@ -125,6 +129,7 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse): Pr
   }
 
   const kind = url.pathname.slice("/fleet/".length) as EnvelopeKind;
+  registerBuiltinHandlers();
   const handler = HANDLERS.get(kind);
   if (!handler) {
     writeJson(res, 404, { error: `No handler for kind '${kind}'` });
@@ -212,6 +217,7 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse): Pr
  * tation re-fire).
  */
 export async function startFleetServer(opts: { port?: number; host?: string } = {}): Promise<{ port: number; cert_fingerprint: string }> {
+  registerBuiltinHandlers();
   if (fleetState.server && fleetState.port) {
     return { port: fleetState.port, cert_fingerprint: getTlsMaterial().fingerprint_sha256 };
   }
@@ -222,8 +228,6 @@ export async function startFleetServer(opts: { port?: number; host?: string } = 
   const tls = getTlsMaterial();
   const port = opts.port ?? DEFAULT_FLEET_PORT;
   const host = opts.host ?? FLEET_BIND_HOST;
-
-  registerBuiltinHandlers();
 
   fleetState.server = https.createServer(
     {
@@ -278,10 +282,7 @@ export function activeFleetPort(): number | null {
 // -------------------------------------------------------------------------
 
 function registerBuiltinHandlers(): void {
-  if (fleetState.handlersRegistered) return;
-  fleetState.handlersRegistered = true;
-
-  // capabilities — peer pushes us their snapshot; we record it.
+  // Always register handlers into the map, idempotent
   registerHandler<Record<string, unknown>, { ack: boolean; node_id: string }>(
     "capabilities",
     async ({ envelope, senderNodeId }) => {
@@ -347,7 +348,16 @@ function registerBuiltinHandlers(): void {
       expectedRecipient: getNodeIdentity().node_id,
       allowClockSkew: true,
     });
-    if (!v.ok) throw new Error(`Pair-confirm envelope verify failed: ${v.reason}`);
+    if (!v.ok) {
+      console.error("[fleet/pair-confirm] envelope verify failed:", v.reason, {
+        sender: envelope.sender,
+        recipient: envelope.recipient,
+        expectedRecipient: getNodeIdentity().node_id,
+        lamport: envelope.lamport,
+        ts: envelope.ts,
+      });
+      throw new Error(`Pair-confirm envelope verify failed: ${v.reason}`);
+    }
 
     // Token check — single-use, time-bounded. If this fails, the responder
     // didn't have the QR or the QR is too old.
