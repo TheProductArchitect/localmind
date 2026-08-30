@@ -196,8 +196,8 @@ describe("chat page", () => {
   it("renders conversations from /api/conversations", async () => {
     installChatFetch(baseRoutes());
     await renderChat();
-    expect(screen.getByText("First chat")).toBeInTheDocument();
-    expect(screen.getByText("Starred notes")).toBeInTheDocument();
+    expect(await screen.findByText("First chat")).toBeInTheDocument();
+    expect(await screen.findByText("Starred notes")).toBeInTheDocument();
   });
 
   it("shows an empty list state when there are no conversations", async () => {
@@ -325,18 +325,18 @@ describe("chat page", () => {
     await user.click(screen.getByRole("button", { name: /New/ }));
     await waitFor(() => expect(screen.getByText("New chat")).toBeInTheDocument());
 
-    await user.click(screen.getByText("First chat"));
+    await user.click(await screen.findByText("First chat"));
     await waitFor(() => expect(screen.getByText("Prior question")).toBeInTheDocument());
     expect(screen.getByText("Prior answer")).toBeInTheDocument();
 
-    const starredRow = screen.getByText("Starred notes").closest('[role="button"]') as HTMLElement;
+    const starredRow = (await screen.findByText("Starred notes")).closest('[role="button"]') as HTMLElement;
     starredRow.focus();
     await user.keyboard("{Enter}");
     await waitFor(() => expect(screen.getByText("Starred turn")).toBeInTheDocument());
 
-    await user.click(screen.getByText("First chat"));
+    await user.click(await screen.findByText("First chat"));
     await waitFor(() => expect(screen.getByText("Prior question")).toBeInTheDocument());
-    const firstRow = screen.getByText("First chat").closest('[role="button"]') as HTMLElement;
+    const firstRow = (await screen.findByText("First chat")).closest('[role="button"]') as HTMLElement;
     firstRow.focus();
     await user.keyboard(" ");
     await waitFor(() => expect(screen.getByText("Prior question")).toBeInTheDocument());
@@ -382,7 +382,7 @@ describe("chat page", () => {
     installChatFetch(routes);
     await renderChat();
 
-    const firstRow = screen.getByText("First chat").closest('[role="button"]')!;
+    const firstRow = (await screen.findByText("First chat")).closest('[role="button"]')!;
     await user.click(within(firstRow as HTMLElement).getByRole("button", { name: "Star" }));
     await waitFor(() => expect(patches).toContainEqual({ starred: 1 }));
     await waitFor(() =>
@@ -415,7 +415,7 @@ describe("chat page", () => {
       ])
     );
     await renderChat();
-    await user.click(screen.getByText("First chat"));
+    await user.click(await screen.findByText("First chat"));
     await waitFor(() => expect(screen.getByText("Hello")).toBeInTheDocument());
 
     expect(screen.getByRole("button", { name: /ollama\/llama3\.2/ })).toBeInTheDocument();
@@ -446,7 +446,7 @@ describe("chat page", () => {
       ])
     );
     await renderChat();
-    await user.click(screen.getByText("First chat"));
+    await user.click(await screen.findByText("First chat"));
     await waitFor(() => expect(screen.getByText("Turn 0")).toBeInTheDocument());
 
     await user.click(screen.getByRole("button", { name: "Clear chat" }));
@@ -464,7 +464,7 @@ describe("chat page", () => {
         { match: /\/api\/conversations\/c1\/compact$/, body: { compacted: true, dropped: 4 } },
       ])
     );
-    await user.click(screen.getByText("First chat"));
+    await user.click(await screen.findByText("First chat"));
     await waitFor(() => expect(screen.getByRole("button", { name: "Compact chat" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Compact chat" }));
     expect(screen.getByRole("alertdialog")).toHaveAccessibleName("Compact this chat?");
@@ -541,7 +541,7 @@ describe("chat page", () => {
 
     try {
       await renderChat();
-      await user.click(screen.getByText("First chat"));
+      await user.click(await screen.findByText("First chat"));
       await waitFor(() => expect(screen.getByPlaceholderText("Message Sora…")).toBeInTheDocument());
 
       await user.type(screen.getByPlaceholderText("Message Sora…"), "Ping");
@@ -596,7 +596,7 @@ describe("chat page", () => {
       ])
     );
     await renderChat();
-    await user.click(screen.getByText("First chat"));
+    await user.click(await screen.findByText("First chat"));
     await waitFor(() => expect(screen.getByText("Repeated tool calls")).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: /Resume/ }));
     await waitFor(() => {

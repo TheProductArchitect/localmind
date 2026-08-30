@@ -139,9 +139,7 @@ describe("models page", () => {
       { match: "/api/settings", body: { ok: true } },
     ]);
     renderPage();
-    await waitFor(() => expect(screen.getByText("qwen2.5-coder:7b")).toBeInTheDocument());
-
-    await user.click(screen.getByRole("button", { name: /Set active/ }));
+    await user.click(await screen.findByRole("button", { name: /Set active/ }));
     await waitFor(() =>
       expect(calls.some((c) => c.url.includes("/api/settings") && c.init?.method === "PATCH")).toBe(true)
     );
