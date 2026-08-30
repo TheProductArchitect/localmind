@@ -25,7 +25,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import QRCode from "qrcode";
 import { openPairingWindow, encodePayload } from "@/lib/fleet/pairing";
-import { activeFleetPort, isRunning, listenerDownMessage } from "@/lib/fleet/server";
+import { activeFleetPort, ensureFleetListener, listenerDownMessage } from "@/lib/fleet/server";
 import os from "os";
 
 export const runtime = "nodejs";
@@ -52,7 +52,10 @@ function detectPrimaryAddr(): string {
 }
 
 export async function POST(req: NextRequest) {
-  if (!isRunning()) {
+  // Start on demand — a listener that failed at boot for a transient reason
+  // (stale cert, port since freed) should not require an app restart.
+  const listener = await ensureFleetListener();
+  if (!listener.ok) {
     return NextResponse.json({ error: listenerDownMessage() }, { status: 503 });
   }
 

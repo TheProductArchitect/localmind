@@ -128,3 +128,65 @@ describe("fleet listener failure reporting", () => {
     expect(msg).not.toMatch(/openssl/i);
   });
 });
+
+/**
+ * Pairing brings the listener up on demand, so a boot-time failure that has
+ * since cleared (stale cert regenerated, port freed) no longer requires an
+ * app restart before the user can pair.
+ */
+describe("ensureFleetListener", () => {
+  beforeEach(() => {
+    opensslAvailable.mockReturnValue(true);
+    listen.mockReset();
+    listen.mockImplementation((_p: number, _h: string, cb: () => void) => cb());
+  });
+
+  afterEach(() => {
+    delete (globalThis as Record<symbol, unknown>)[Symbol.for("localmind.fleet.server")];
+  });
+
+  it("starts a listener that was not running", async () => {
+    const m = await freshServerModule();
+    expect(m.isRunning()).toBe(false);
+
+    await expect(m.ensureFleetListener()).resolves.toEqual({ ok: true });
+    expect(m.isRunning()).toBe(true);
+  });
+
+  it("is a no-op when the listener is already up", async () => {
+    const m = await freshServerModule();
+    await m.ensureFleetListener();
+    const port = m.activeFleetPort();
+    listen.mockClear();
+
+    await expect(m.ensureFleetListener()).resolves.toEqual({ ok: true });
+
+    expect(listen).not.toHaveBeenCalled();
+    expect(m.activeFleetPort()).toBe(port);
+  });
+
+  it("returns the real reason instead of throwing", async () => {
+    opensslAvailable.mockReturnValue(false);
+    const m = await freshServerModule();
+
+    const r = await m.ensureFleetListener();
+
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/openssl is not installed/i);
+    // The same reason must reach the message pairing shows the user.
+    expect(m.listenerDownMessage()).toMatch(/openssl is not installed/i);
+  });
+
+  it("reports a busy port without leaving a half-open listener", async () => {
+    listen.mockImplementation(() => {
+      throw Object.assign(new Error("listen EADDRINUSE"), { code: "EADDRINUSE" });
+    });
+    const m = await freshServerModule();
+
+    const r = await m.ensureFleetListener();
+
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/already in use/i);
+    expect(m.isRunning()).toBe(false);
+  });
+});

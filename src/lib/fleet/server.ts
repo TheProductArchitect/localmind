@@ -364,6 +364,26 @@ export function fleetListenerStatus(): FleetListenerStatus {
 }
 
 /**
+ * Bring the listener up if it isn't already, and report the outcome.
+ *
+ * Pairing is the one flow where a down listener is fatal but recoverable: the
+ * instrumentation hook may have failed for a transient reason (a stale cert, a
+ * port that has since freed up), and the user is standing right there. Try
+ * once, and keep the failure reason so callers can explain themselves.
+ */
+export async function ensureFleetListener(): Promise<{ ok: boolean; error?: string }> {
+  if (isRunning()) return { ok: true };
+  try {
+    await startFleetServer();
+    return { ok: true };
+  } catch (e) {
+    // startFleetServer already recorded the reason via recordStartFailure;
+    // returning it too keeps callers from having to re-read global state.
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+/**
  * One explanation for "the listener is down", used by every caller that needs
  * to refuse. Names the real cause when we know it instead of guessing.
  */
