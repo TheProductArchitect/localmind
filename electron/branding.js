@@ -19,9 +19,6 @@ let mainWinRef = null;
 /** @type {(() => import('electron').BrowserWindow | null) | null} */
 let codingWinGetter = null;
 
-/** mtime of the JSON mirror at last read, so the 4s poll can skip no-ops. */
-let mirrorStamp = -1;
-
 /**
  * @param {{ mirrorOnly?: boolean }} [opts] When mirrorOnly, never fall back to
  *   the sqlite probe — that spawns a Node subprocess, which must not happen on
@@ -33,8 +30,10 @@ function readAssistantNameFromDb(opts) {
     // Prefer a lightweight JSON mirror written by the Next settings API —
     // avoids loading better-sqlite3 inside Electron's ABI.
     const mirror = path.join(dataDir, "branding.json");
+    // One read, no stat-then-read window: checking the file and then opening it
+    // is a race, and the mirror is rewritten by the settings API at any time.
+    // A missing or half-written file simply fails this parse and falls through.
     try {
-      mirrorStamp = fs.statSync(mirror).mtimeMs;
       const j = JSON.parse(fs.readFileSync(mirror, "utf8"));
       const name = j?.assistant_name && String(j.assistant_name).trim();
       if (name) return name;
@@ -139,15 +138,10 @@ async function initBranding(opts) {
   warmOrbIcons().catch(() => {});
 
   // Re-read the name periodically so Settings blur-saves show up without IPC.
-  // Only when the mirror actually changed, and never via the sqlite subprocess.
-  const mirrorPath = path.join(
-    process.env.LOCALMIND_DATA_DIR || path.join(os.homedir(), ".localmind"),
-    "branding.json"
-  );
+  // mirrorOnly keeps this off the sqlite fallback, which spawns a subprocess —
+  // unacceptable on a 4s timer. Reading the tiny JSON mirror each tick is
+  // cheap, and applyName already no-ops when the name is unchanged.
   const nameTimer = setInterval(() => {
-    let stamp = -1;
-    try { stamp = fs.statSync(mirrorPath).mtimeMs; } catch { return; }
-    if (stamp === mirrorStamp) return;
     const n = readAssistantNameFromDb({ mirrorOnly: true });
     if (n && sanitizeName(n) !== currentName) applyName(n);
   }, 4000);
