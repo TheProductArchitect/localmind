@@ -118,15 +118,24 @@ export function getIdentity(): { identity: NodeIdentity; privKey: KeyObject; pub
 
   const privPem = fs.readFileSync(identity.privkey_path, "utf8");
   const privKey = createPrivateKey({ key: privPem, format: "pem" });
-  const pubKey = createPublicKey({ key: identity.pubkey_pem, format: "pem" });
-
-  // Defence in depth: confirm the loaded key matches the recorded fingerprint.
+  const pubKey = createPublicKey(privKey);
+  const pubPem = pubKey.export({ type: "spki", format: "pem" }) as string;
   const fp = fingerprint(pubKey);
-  if (fp !== identity.node_id) {
-    throw new Error(
-      `Node identity mismatch: recorded ${identity.node_id} but key on disk produces ${fp}. ` +
-        `Restore the correct key or reset.`
+
+  // If DB public key/node_id doesn't match the private key on disk, synchronize them.
+  if (fp !== identity.node_id || identity.pubkey_pem.trim() !== pubPem.trim()) {
+    console.warn(
+      `[fleet.identity] Node identity mismatch between DB and private key (DB=${identity.node_id}, key=${fp}) — syncing DB to private key`
     );
+    getConfigDb()
+      .prepare("UPDATE node_identity SET node_id = ?, pubkey_pem = ? WHERE id = 1")
+      .run(fp, pubPem);
+    writeKeyFiles(privPem, pubPem);
+    identity = {
+      ...identity,
+      node_id: fp,
+      pubkey_pem: pubPem,
+    };
   }
 
   cached = { identity, privKey, pubKey };
