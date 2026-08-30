@@ -486,7 +486,7 @@ Dependency-aware; implement in this sequence unless blocked:
 - WAN mesh → still out of scope
 - Unipile / MindStudio → **v4 D2/D3** opt-in stubs shipped
 - Context Graph GraphQL phase / `user_context` tool (still Sora v2 follow-ups)
-- Remote confirmation propagation across mesh (**v4 M5** — still open)
+- Remote confirmation propagation across mesh (**v4 M5** — shipped)
 
 ---
 

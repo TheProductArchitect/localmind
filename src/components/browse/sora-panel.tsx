@@ -150,7 +150,7 @@ export function BrowseSoraPanel({ browseSessionId, onBrowseAction, onHide }: Pro
           disabled={!conversationId || streaming}
           className="resize-none min-h-[2.5rem]"
         />
-        <Button size="icon" onClick={send} disabled={!input.trim() || streaming}>
+        <Button size="icon" onClick={send} disabled={!input.trim() || streaming} aria-label="Send message" title="Send">
           <Send className="h-4 w-4" />
         </Button>
       </div>

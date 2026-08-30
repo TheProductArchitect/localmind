@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { compileSpawnIntent, wantsParallelProse, wantsSequentialProse } from "../src/lib/agent/spawn-intent";
+import {
+  compileSpawnIntent,
+  spawnToolTimeoutMs,
+  wantsParallelProse,
+  wantsSequentialProse,
+} from "../src/lib/agent/spawn-intent";
 
 describe("compileSpawnIntent", () => {
   it("maps a single goal to single mode", () => {
@@ -40,5 +45,57 @@ describe("compileSpawnIntent", () => {
       { userText: "please do this one at a time" }
     );
     expect(intent.mode).toBe("sequential");
+  });
+
+  it("inherits top-level timeout/tools/persona onto batch items", () => {
+    const intent = compileSpawnIntent({
+      allowed_tools: ["web_search"],
+      timeout_seconds: 300,
+      persona_id: "persona-general",
+      mode: "sequential",
+      batch: [
+        { goal: "LinkedIn", persona_id: "persona-researcher" },
+        { goal: "Indeed" },
+      ],
+    });
+    expect(intent.batch[0]).toMatchObject({
+      persona_id: "persona-researcher",
+      allowed_tools: ["web_search"],
+      timeout_seconds: 300,
+    });
+    expect(intent.batch[1]).toMatchObject({
+      persona_id: "persona-general",
+      allowed_tools: ["web_search"],
+      timeout_seconds: 300,
+    });
+  });
+
+  it("sizes outer spawn timeout from sequential child budgets (not 30s)", () => {
+    const ms = spawnToolTimeoutMs({
+      mode: "sequential",
+      timeout_seconds: 300,
+      batch: [
+        { goal: "a" },
+        { goal: "b" },
+        { goal: "c" },
+        { goal: "d" },
+      ],
+    });
+    // 4 × 300s + overhead — must clear the engine's old 30s ceiling.
+    expect(ms).toBeGreaterThan(30_000);
+    expect(ms).toBeGreaterThanOrEqual(4 * 300 * 1000);
+    expect(ms).toBeLessThanOrEqual(20 * 60 * 1000);
+  });
+
+  it("uses max child timeout for parallel batches", () => {
+    const ms = spawnToolTimeoutMs({
+      mode: "parallel",
+      batch: [
+        { goal: "a", timeout_seconds: 60 },
+        { goal: "b", timeout_seconds: 120 },
+      ],
+    });
+    expect(ms).toBeGreaterThanOrEqual(120_000);
+    expect(ms).toBeLessThan(4 * 60_000);
   });
 });

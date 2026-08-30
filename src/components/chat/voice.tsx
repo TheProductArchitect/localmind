@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Mic, Volume2, MicOff, Loader2, Radio, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fetchVoiceReady } from "@/lib/client/voice-ready";
+import { speak, type SpeakHandle } from "@/components/chat/tts";
 
 /**
  * MicButton — local speech-to-text with two modes:
@@ -27,8 +29,7 @@ export function MicButton({ onText }: { onText: (t: string, opts?: { append?: bo
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/voice/stt")
-      .then((r) => r.json())
+    fetchVoiceReady()
       .then((j) => {
         if (cancelled) return;
         setAvailable(!!j.ready);
@@ -177,67 +178,22 @@ export function MicButton({ onText }: { onText: (t: string, opts?: { append?: bo
         "Start recording (shift-click for continuous)"
       }
       className={cn(
-        "inline-flex h-9 w-9 items-center justify-center rounded-md border",
+        "inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04]",
         state === "recording" && "bg-destructive text-destructive-foreground animate-pulse",
         state === "streaming" && "bg-primary text-primary-foreground animate-pulse",
         state === "transcribing" && "bg-accent text-accent-foreground",
-        state === "idle" && "hover:bg-accent"
+        state === "idle" && "hover:bg-white/[0.08]"
       )}
     >
       {state === "transcribing" ? (
-        <Loader2 className="h-4 w-4 animate-spin" />
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
       ) : state === "recording" ? (
-        <MicOff className="h-4 w-4" />
+        <MicOff className="h-3.5 w-3.5" />
       ) : state === "streaming" ? (
-        <Radio className="h-4 w-4" />
+        <Radio className="h-3.5 w-3.5" />
       ) : (
-        <Mic className="h-4 w-4" />
+        <Mic className="h-3.5 w-3.5" />
       )}
-    </button>
-  );
-}
-
-/**
- * Text-to-speech via the browser's built-in Speech Synthesis API — uses
- * the user's system voices and renders in-browser, no network.
- *
- * Returns a handle the caller can await/cancel. Conversation mode uses the
- * `done` promise to know when Sora has finished speaking so it can re-open
- * the mic without having the assistant transcribe itself.
- */
-export type SpeakHandle = {
-  done: Promise<void>;
-  cancel: () => void;
-};
-
-export function speak(text: string, opts?: { onEnd?: () => void }): SpeakHandle {
-  if (typeof window === "undefined" || !window.speechSynthesis) {
-    opts?.onEnd?.();
-    return { done: Promise.resolve(), cancel: () => {} };
-  }
-  const u = new SpeechSynthesisUtterance(text.slice(0, 4000));
-  let resolve: () => void = () => {};
-  const done = new Promise<void>((r) => { resolve = r; });
-  const finish = () => { try { opts?.onEnd?.(); } catch { /* ignore */ } resolve(); };
-  u.onend = finish;
-  u.onerror = finish;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(u);
-  return {
-    done,
-    cancel: () => { try { window.speechSynthesis.cancel(); } catch { /* ignore */ } finish(); },
-  };
-}
-
-export function SpeakerButton({ text }: { text: string }) {
-  return (
-    <button
-      type="button"
-      title="Read aloud"
-      onClick={() => speak(text)}
-      className="text-muted-foreground hover:text-foreground"
-    >
-      <Volume2 className="h-3.5 w-3.5" />
     </button>
   );
 }
@@ -302,7 +258,7 @@ export function ConversationButton({
   // MicButton. If STT isn't installed, the button hides.
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/voice/stt").then((r) => r.json()).then((j) => {
+    fetchVoiceReady().then((j) => {
       if (!cancelled) setAvailable(!!j.ready);
     }).catch(() => { if (!cancelled) setAvailable(false); });
     return () => { cancelled = true; };
@@ -438,31 +394,31 @@ export function ConversationButton({
   const label =
     state === "listening" ? "Listening…" :
     state === "thinking"  ? "Thinking…"  :
-    state === "speaking"  ? "Speaking…"  : "Start conversation";
+    state === "speaking"  ? "Speaking…"  : "Talk";
 
   return (
     <button
       type="button"
-      title={label}
-      aria-label={label}
+      title={label === "Talk" ? "Start conversation" : label}
+      aria-label={label === "Talk" ? "Start conversation" : label}
       onClick={onClick}
       data-pulse-action={active ? "destructive" : "send"}
       className={cn(
-        "inline-flex h-9 items-center gap-2 px-3 rounded-md border text-[12px] tracking-[-0.005em]",
-        state === "off"       && "border-white/10 bg-white/[0.04] text-white/85 hover:bg-white/[0.07]",
+        "inline-flex h-7 items-center gap-1.5 px-2 rounded-md border text-[11px] tracking-[-0.005em]",
+        state === "off"       && "border-white/10 bg-transparent text-white/70 hover:bg-white/[0.06]",
         state === "listening" && "border-white/25 bg-white/[0.10] text-white animate-pulse",
         state === "thinking"  && "border-white/15 bg-white/[0.06] text-white/85",
         state === "speaking"  && "border-white/30 bg-white/[0.12] text-white",
       )}
     >
       {state === "thinking" ? (
-        <Loader2 className="h-4 w-4 animate-spin" />
+        <Loader2 className="h-3 w-3 animate-spin" />
       ) : state === "speaking" ? (
-        <Volume2 className="h-4 w-4" />
+        <Volume2 className="h-3 w-3" />
       ) : state === "listening" ? (
-        <Radio className="h-4 w-4" />
+        <Radio className="h-3 w-3" />
       ) : (
-        <MessageCircle className="h-4 w-4" />
+        <MessageCircle className="h-3 w-3" />
       )}
       <span className="hidden sm:inline">{label}</span>
     </button>

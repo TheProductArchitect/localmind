@@ -19,10 +19,11 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { spawn, spawnSync } from "child_process";
+import { spawn } from "child_process";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { which } from "@/lib/sys/which";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -30,29 +31,48 @@ export const maxDuration = 600;
 const MAX_BODY_BYTES = 500 * 1024 * 1024; // 500 MiB
 const BATCH_TIMEOUT_MS = 5 * 60_000;
 
-function which(cmd: string): string | null {
-  const r = spawnSync("/usr/bin/env", ["bash", "-c", `command -v ${cmd}`], { encoding: "utf8" });
-  const out = (r.stdout || "").trim();
-  return out || null;
-}
+type Gpu = { available: boolean; detail: string };
 
-function detectGpu(): { available: boolean; detail: string } {
-  // Quick torch.cuda probe — non-zero exit means no GPU OR torch missing,
-  // both of which we want to surface as "available=false."
-  const r = spawnSync(
-    "python3",
-    ["-c", "import torch; print('cuda' if torch.cuda.is_available() else 'cpu')"],
-    { encoding: "utf8", timeout: 5000 }
-  );
-  if (r.status !== 0) return { available: false, detail: "torch not importable" };
-  const out = (r.stdout || "").trim();
-  return { available: out === "cuda", detail: out || "unknown" };
+// `import torch` costs seconds of CPU. Run it out-of-band (never spawnSync,
+// which would freeze the event loop for the whole import) and remember the
+// answer — CUDA availability does not change while the server is up.
+let gpuCache: Gpu | null = null;
+
+function detectGpu(): Promise<Gpu> {
+  if (gpuCache) return Promise.resolve(gpuCache);
+  return new Promise<Gpu>((resolve) => {
+    let done = false;
+    const finish = (g: Gpu) => {
+      if (done) return;
+      done = true;
+      gpuCache = g;
+      resolve(g);
+    };
+    try {
+      const p = spawn(
+        "python3",
+        ["-c", "import torch; print('cuda' if torch.cuda.is_available() else 'cpu')"],
+        { stdio: ["ignore", "pipe", "ignore"] }
+      );
+      let out = "";
+      p.stdout.on("data", (d) => { out += String(d); });
+      const timer = setTimeout(() => { try { p.kill("SIGKILL"); } catch {} }, 10_000);
+      p.on("error", () => { clearTimeout(timer); finish({ available: false, detail: "torch not importable" }); });
+      p.on("close", (code) => {
+        clearTimeout(timer);
+        if (code !== 0) return finish({ available: false, detail: "torch not importable" });
+        const v = out.trim();
+        finish({ available: v === "cuda", detail: v || "unknown" });
+      });
+    } catch {
+      finish({ available: false, detail: "torch not importable" });
+    }
+  });
 }
 
 export async function GET() {
-  const whisperBin = which("whisper");
-  const ffmpeg = which("ffmpeg");
-  const gpu = whisperBin ? detectGpu() : { available: false, detail: "whisper not installed" };
+  const [whisperBin, ffmpeg] = await Promise.all([which("whisper"), which("ffmpeg")]);
+  const gpu = whisperBin ? await detectGpu() : { available: false, detail: "whisper not installed" };
   const ready = !!(whisperBin && ffmpeg);
   return NextResponse.json({
     ready,
@@ -68,8 +88,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const whisperBin = which("whisper");
-  const ffmpeg = which("ffmpeg");
+  const [whisperBin, ffmpeg] = await Promise.all([which("whisper"), which("ffmpeg")]);
   if (!whisperBin) {
     return NextResponse.json(
       { error: "openai/whisper not on PATH. Install with `pip3 install --user openai-whisper`." },

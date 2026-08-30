@@ -21,6 +21,7 @@ const PatchBody = z
         advertise_capabilities: z.boolean().optional(),
         accept_chat_relay: z.boolean().optional(),
         accept_workspace_relay: z.boolean().optional(),
+        accept_tool_relay: z.boolean().optional(),
         chat_relay_rate_per_min: z.number().int().min(1).max(600).optional(),
         sync_conversations: z.boolean().optional(),
       })

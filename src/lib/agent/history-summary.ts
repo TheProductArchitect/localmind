@@ -17,20 +17,22 @@ const SUMMARY_SYSTEM =
 export async function ensureConversationSummary(
   conversationId: string,
   older: HistoryMsg[],
-  opts: { model: string; signal?: AbortSignal; contextWindow: number }
+  opts: { model: string; signal?: AbortSignal; contextWindow: number; force?: boolean }
 ): Promise<string | null> {
   const stored = getConversationSummary(conversationId);
   const covered = stored?.covered_count ?? 0;
   if (older.length === 0) return stored?.summary ?? null;
-  if (stored && covered >= older.length) return stored.summary; // already current
+  if (!opts.force && stored && covered >= older.length) return stored.summary; // already current
 
-  const fresh = older.slice(covered);
+  const fresh = opts.force ? older : older.slice(covered);
   if (fresh.length === 0) return stored?.summary ?? null;
 
   const transcript = fresh
     .map((m) => `${m.role}: ${String(m.content ?? "").slice(0, 1500)}`)
     .join("\n");
-  const userContent = (stored?.summary ? `Current summary:\n${stored.summary}\n\n` : "") + `New turns:\n${transcript}`;
+  const userContent = opts.force
+    ? `Summarize this conversation:\n${transcript}`
+    : (stored?.summary ? `Current summary:\n${stored.summary}\n\n` : "") + `New turns:\n${transcript}`;
 
   try {
     let summary = "";

@@ -28,6 +28,9 @@ import {
 import { resolveWorkspaceRelayPeer } from "../fleet/workspace-route";
 import { relayWorkspaceToolToPeer } from "../fleet/workspace-relay-initiator";
 import { mirrorRemoteCodingSession } from "../fleet/workspace-session-mirror";
+import { getToolHome, isToolRelayInbound } from "../fleet/tool-relay-context";
+import { TOOL_RELAY_TOOLS } from "../fleet/handlers/tool-relay";
+import { relayToolToPeer } from "../fleet/tool-relay-initiator";
 
 const MAX_CACHE_OUTPUT_BYTES = 64 * 1024;
 const CACHE_HIT_PREFIX = "[cache-hit] ";
@@ -44,6 +47,42 @@ export async function executeWithCache(
   ctx: ToolContext
 ): Promise<CachedToolResult> {
   const toolName = tool.definition.name;
+
+  // Tool home = initiator: when the model is running here on behalf of a peer
+  // (inbound chat-relay whose tool_home points back at the initiator), run
+  // allowlisted personal-assistant tools on THEIR device instead of ours.
+  const toolHome = getToolHome();
+  if (toolHome && !isToolRelayInbound()) {
+    // Under tool-home=initiator, shell must not silently run on the compute
+    // hub — it is intentionally excluded from TOOL_RELAY_TOOLS. Fail closed
+    // with a clear message rather than executing on the wrong machine.
+    if (toolName === "shell") {
+      return {
+        ok: false,
+        output:
+          "shell is not available when Tools are set to run on the initiating device. Use filesystem / browser / calendar / email (or switch Tools to the compute peer).",
+        summary: "shell blocked under tool-home=initiator",
+      };
+    }
+    if (TOOL_RELAY_TOOLS.has(toolName)) {
+      const relayed = await relayToolToPeer({
+        peer_node_id: toolHome.initiatorNodeId,
+        tool: toolName,
+        input,
+        // Prefer the initiator's conversation id (ALS) over the executor twin.
+        conversation_id: toolHome.conversationId ?? ctx.conversationId,
+      });
+      if (!relayed.ok) {
+        return {
+          ok: false,
+          output: relayed.output || relayed.reason || "Tool relay to your device failed.",
+          summary: "tool-relay failed",
+        };
+      }
+      return { ok: true, output: relayed.output, summary: relayed.summary };
+    }
+  }
+
   const workspacePeer = resolveWorkspaceRelayPeer(toolName, input, ctx);
   if (workspacePeer) {
     // Force remote start_session without nested SWE on the workspace host —
@@ -100,7 +139,13 @@ export async function executeWithCache(
   }
 
   const toolVersion = tool.version ?? "1";
-  const inputHash = computeToolInputHash(input);
+  // Scope cache entries to the conversation so identical recall/memory/search
+  // inputs cannot leak another user's or thread's results.
+  const inputHash = computeToolInputHash({
+    input,
+    conversationId: ctx.conversationId,
+    codingSessionId: ctx.codingSessionId ?? null,
+  });
 
   const cached = lookup(toolName, toolVersion, inputHash);
   if (cached && cached.status === "ok") {

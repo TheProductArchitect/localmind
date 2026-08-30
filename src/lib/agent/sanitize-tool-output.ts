@@ -40,20 +40,23 @@ const MAX_BYTES_DEFAULT = 64 * 1024; // 64 KiB per tool call — generous, still
  * Tools that return content from sources we don't control. Anything in this
  * set is sanitized before its output is appended to the conversation.
  *
- * MCP tools are matched separately via name prefix (`mcp:`) since they're
+ * MCP tools are matched separately via name prefix (`mcp_` / `mcp:`) since they're
  * registered dynamically.
  */
 export const UNTRUSTED_TOOL_NAMES: ReadonlySet<string> = new Set([
   "web_search",     // search-engine results — title/snippet/URL all attacker-controlled
   "browser",        // fetched web pages — fully attacker-controlled
+  "web_research",   // search + page bodies — attacker-controlled
+  "browse_session", // live page snapshots from the Electron browser
+  "read_secure_webpage", // page bodies (sanitized upstream, still untrusted data)
   "email",          // body of received email — sender-controlled
   "peer_knowledge", // content from paired peers — semi-trusted, treat as untrusted
 ]);
 
 export function isUntrustedTool(toolName: string): boolean {
   if (UNTRUSTED_TOOL_NAMES.has(toolName)) return true;
-  // Any MCP server output is by definition external code we don't author.
-  if (toolName.startsWith("mcp:")) return true;
+  // MCP tools are registered as mcp_<server>_<tool> (and historically mcp:…).
+  if (toolName.startsWith("mcp:") || toolName.startsWith("mcp_")) return true;
   // Filesystem reads of files OUTSIDE the project's own source tree are
   // untrusted too — those files may have been written by anything. We
   // can't tell the dir from the tool name alone, so the engine flags this

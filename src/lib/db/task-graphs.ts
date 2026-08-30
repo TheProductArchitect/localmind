@@ -194,6 +194,26 @@ export function listGraphs(ownerUserId?: string | null, limit = 50): TaskGraph[]
   return rows.map(rowToGraph);
 }
 
+/**
+ * Count of in-flight graphs, for the pulse heartbeat. The row-returning
+ * listGraphs() parsed JSON cost columns for up to 100 graphs per poll just to
+ * derive this number.
+ */
+export function countRunningGraphs(ownerUserId?: string | null): number {
+  const row = (
+    ownerUserId
+      ? getConfigDb()
+          .prepare(
+            "SELECT COUNT(*) AS n FROM task_graphs WHERE status IN ('running','pending') AND (owner_user_id IS NULL OR owner_user_id=?)"
+          )
+          .get(ownerUserId)
+      : getConfigDb()
+          .prepare("SELECT COUNT(*) AS n FROM task_graphs WHERE status IN ('running','pending')")
+          .get()
+  ) as { n?: number } | undefined;
+  return row?.n ?? 0;
+}
+
 export function setGraphStatus(graphId: string, status: TaskGraphStatus): void {
   const completedAt = status === "running" || status === "pending" ? null : readNow();
   getConfigDb()

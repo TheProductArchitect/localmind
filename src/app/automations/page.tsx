@@ -92,17 +92,29 @@ function TasksTab() {
         />
       )}
       {tasks.map((t) => (
-        <div key={t.id} className="lm-panel flex items-center gap-2">
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium truncate">{t.name}</p>
-            <p className="text-xs" style={{ color: "hsl(0 0% 100% / 0.45)" }}>
-              {t.schedule} → {t.delivery_channel}
-              {t.last_run_at ? ` · last ran ${new Date(t.last_run_at).toLocaleString()}` : " · not run yet"}
-            </p>
+        <div key={t.id} className="lm-panel space-y-2">
+          <div className="flex items-center gap-2">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">{t.name}</p>
+              <p className="text-xs" style={{ color: "hsl(0 0% 100% / 0.45)" }}>
+                {t.schedule} → {t.delivery_channel}
+                {t.last_run_at ? ` · last ran ${new Date(t.last_run_at).toLocaleString()}` : " · not run yet"}
+              </p>
+            </div>
+            <Badge variant={t.enabled ? "success" : "outline"}>{t.enabled ? "on" : "off"}</Badge>
+            <Button size="sm" variant="outline" onClick={() => toggle(t.id, !t.enabled)}>{t.enabled ? "Disable" : "Enable"}</Button>
+            <Button size="sm" variant="ghost" onClick={() => del(t.id)}>Delete</Button>
           </div>
-          <Badge variant={t.enabled ? "success" : "outline"}>{t.enabled ? "on" : "off"}</Badge>
-          <Button size="sm" variant="outline" onClick={() => toggle(t.id, !t.enabled)}>{t.enabled ? "Disable" : "Enable"}</Button>
-          <Button size="sm" variant="ghost" onClick={() => del(t.id)}>Delete</Button>
+          {t.last_output && (
+            <details className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+              <summary className="cursor-pointer text-xs text-white/65">
+                Latest result
+              </summary>
+              <pre className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-white/80">
+                {t.last_output}
+              </pre>
+            </details>
+          )}
         </div>
       ))}
     </div>

@@ -1,6 +1,6 @@
 // In-memory store of pending tool-call confirmations.
 type Pending = {
-  resolve: (decision: "allow" | "deny") => void;
+  resolve: (decision: "allow" | "deny" | "timeout") => void;
   decided: boolean;
   requiresPin: boolean;
   channelKey?: string;
@@ -12,12 +12,14 @@ const pending = new Map<string, Pending>();
 /** Channel-scoped pending confirmation (latest per channel user). */
 const channelLatest = new Map<string, string>();
 
+export type ConfirmationOutcome = "allow" | "deny" | "timeout";
+
 export function awaitConfirmation(
   toolCallId: string,
   timeoutMs: number,
   requiresPin: boolean,
   extras?: { channelKey?: string; preview?: string }
-): Promise<"allow" | "deny"> {
+): Promise<ConfirmationOutcome> {
   return new Promise((resolve) => {
     const entry: Pending = {
       decided: false,
@@ -34,7 +36,7 @@ export function awaitConfirmation(
     };
     pending.set(toolCallId, entry);
     if (extras?.channelKey) channelLatest.set(extras.channelKey, toolCallId);
-    setTimeout(() => entry.resolve("deny"), timeoutMs);
+    setTimeout(() => entry.resolve("timeout"), timeoutMs);
   });
 }
 
@@ -67,6 +69,11 @@ export function tryChannelConfirmation(
   if (AFFIRMATIVE.test(trimmed)) {
     const entry = pending.get(toolCallId);
     const preview = entry?.preview;
+    // Plaintext channels cannot prove a PIN. Never let YES unlock pin-tier work.
+    if (entry?.requiresPin) {
+      submitConfirmation(toolCallId, "deny");
+      return { handled: true, decision: "deny", preview };
+    }
     submitConfirmation(toolCallId, "allow");
     return { handled: true, decision: "allow", preview };
   }

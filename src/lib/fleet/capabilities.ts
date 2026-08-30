@@ -11,6 +11,7 @@
  * a single broken probe doesn't blank the whole capability set.
  */
 
+import { networkInterfaces } from "os";
 import { getNodeIdentity } from "./identity";
 import { getTlsMaterial } from "./tls";
 import { PLATFORM, PLATFORM_CAPS, describePlatform } from "../platform";
@@ -44,8 +45,32 @@ export type Capability = {
   accepts_chat_relay: boolean;
   /** True when at least one trusted peer may run workspace/git ops on this node. */
   accepts_workspace_relay: boolean;
+  /** True when at least one trusted peer may run PA tools on this node. */
+  accepts_tool_relay: boolean;
+  /**
+   * Best-guess LAN address (host:port) other peers can reach us on. Advertised
+   * so a DHCP renumber refreshes `fleet_peers.primary_addr` without re-pairing.
+   */
+  primary_addr?: string;
   generated_at: number;
 };
+
+/** Best-effort reachable LAN address for this node's fleet listener. */
+function detectPrimaryAddr(): string | undefined {
+  try {
+    const port = Number(process.env.LOCALMIND_FLEET_PORT || 9443);
+    const ifaces = networkInterfaces();
+    for (const list of Object.values(ifaces)) {
+      if (!list) continue;
+      for (const a of list) {
+        if (a.family === "IPv4" && !a.internal) return `${a.address}:${port}`;
+      }
+    }
+  } catch {
+    /* no network info — omit */
+  }
+  return undefined;
+}
 
 async function fetchModels(): Promise<ModelCapability[]> {
   try {
@@ -100,6 +125,7 @@ export async function snapshotCapability(): Promise<Capability> {
 
   let acceptsChatRelay = false;
   let acceptsWorkspaceRelay = false;
+  let acceptsToolRelay = false;
   try {
     const peers = listPeers();
     acceptsChatRelay = peers.some(
@@ -108,9 +134,13 @@ export async function snapshotCapability(): Promise<Capability> {
     acceptsWorkspaceRelay = peers.some(
       (p) => p.trusted === 1 && parsePeerPolicy(p).accept_workspace_relay
     );
+    acceptsToolRelay = peers.some(
+      (p) => p.trusted === 1 && parsePeerPolicy(p).accept_tool_relay
+    );
   } catch {
     acceptsChatRelay = false;
     acceptsWorkspaceRelay = false;
+    acceptsToolRelay = false;
   }
 
   return {
@@ -128,6 +158,8 @@ export async function snapshotCapability(): Promise<Capability> {
     pairing_open: false,
     accepts_chat_relay: acceptsChatRelay,
     accepts_workspace_relay: acceptsWorkspaceRelay,
+    accepts_tool_relay: acceptsToolRelay,
+    primary_addr: detectPrimaryAddr(),
     generated_at: Date.now(),
   };
 }

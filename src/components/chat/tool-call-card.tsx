@@ -94,24 +94,24 @@ export function ToolCallCard({ tc }: { tc: ToolCallState }) {
   }, [deepOpen, meta?.conversation_id, childTools]);
 
   return (
-    <div className={cn("my-2 rounded-md border text-sm", failed && "border-destructive")}>
+    <div className={cn("my-1.5 rounded-md border text-[13px]", failed && "border-destructive")}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left"
       >
-        <ChevronRight className={cn("h-4 w-4 shrink-0 transition-transform", open && "rotate-90")} />
+        <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-90")} />
         {isSpawn ? (
-          <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         ) : (
-          <Wrench className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <Wrench className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         )}
         <span className="font-medium truncate">{label}</span>
-        <span className={cn("ml-auto text-xs shrink-0", failed ? "text-destructive" : "text-muted-foreground")}>
+        <span className={cn("ml-auto text-[11px] shrink-0", failed ? "text-destructive" : "text-muted-foreground")}>
           {tc.result ? tc.result.status : tc.status}
         </span>
       </button>
       {open && (
-        <div className="border-t px-3 py-2 space-y-2 bg-muted/30">
+        <div className="border-t px-2.5 py-1.5 space-y-1.5 bg-muted/30">
           {isSpawn && meta && (
             <div className="text-xs space-y-1">
               <p>

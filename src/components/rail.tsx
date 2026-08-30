@@ -24,9 +24,12 @@ import {
   BookOpen,         // Knowledge (incl. the "About you" context graph)
   Wifi,             // Fleet
   SlidersHorizontal,// Settings
+  Flag,             // Report improvement
 } from "lucide-react";
-import { Orb, type OrbState } from "@/components/orb";
+import { Orb } from "@/components/orb";
 import { cn } from "@/lib/utils";
+import { subscribePulse, type Pulse } from "@/lib/client/pulse-store";
+import { openReportImprovement } from "@/lib/client/report-improvement";
 
 type Dest = {
   href: string;
@@ -51,24 +54,15 @@ function isActive(path: string, dest: Dest): boolean {
   return dest.matches.some((m) => path === m || path.startsWith(m + "/"));
 }
 
-type Pulse = { state: OrbState; processes: number; graphs: number; subagents: number; suspended: boolean };
-
 function usePulse(): Pulse {
-  const [pulse, setPulse] = useState<Pulse>({ state: "idle", processes: 0, graphs: 0, subagents: 0, suspended: false });
-  useEffect(() => {
-    let alive = true;
-    const tick = async () => {
-      try {
-        const r = await fetch("/api/pulse", { cache: "no-store" });
-        if (!r.ok) return;
-        const j = (await r.json()) as Pulse;
-        if (alive) setPulse(j);
-      } catch { /* ignore */ }
-    };
-    tick();
-    const t = setInterval(tick, 4_000);
-    return () => { alive = false; clearInterval(t); };
-  }, []);
+  const [pulse, setPulse] = useState<Pulse>({
+    state: "idle",
+    processes: 0,
+    graphs: 0,
+    subagents: 0,
+    suspended: false,
+  });
+  useEffect(() => subscribePulse(setPulse), []);
   return pulse;
 }
 
@@ -92,13 +86,11 @@ export function Rail() {
     <>
       {/* Desktop — vertical rail */}
       <aside
-        className="hidden md:flex shrink-0 flex-col items-center justify-between py-5 z-30"
+        className="hidden md:flex shrink-0 flex-col items-center justify-between py-5 z-30 overflow-visible"
         style={{
           width: 56,
           borderRight: "1px solid hsl(0 0% 100% / 0.06)",
-          background: "hsl(234 22% 4% / 0.6)",
-          backdropFilter: "blur(20px) saturate(140%)",
-          WebkitBackdropFilter: "blur(20px) saturate(140%)",
+          background: "hsl(234 22% 5%)",
         }}
       >
         <Link
@@ -106,6 +98,7 @@ export function Rail() {
           className="lm-micro select-none"
           style={{ writingMode: "vertical-rl", letterSpacing: "0.25em", color: "hsl(0 0% 100% / 0.5)" }}
           data-pulse="true"
+          data-pulse-style="rail"
           aria-label="LocalMind home"
         >
           LM
@@ -120,6 +113,7 @@ export function Rail() {
                 href={d.href}
                 aria-label={d.label}
                 data-pulse="true"
+                data-pulse-style="rail"
                 className={cn("lm-rail-link", active && "is-active")}
               >
                 <d.Icon className="h-[18px] w-[18px]" />
@@ -129,24 +123,37 @@ export function Rail() {
           })}
         </nav>
 
-        <div title={pulseLabel(pulse)} aria-label={pulseLabel(pulse)}>
-          <Orb
-            state={pulse.state}
-            size={28}
-            satellites={Math.max(1, Math.min(pulse.subagents || 3, 6))}
-            ariaLabel={pulseLabel(pulse)}
-          />
+        <div className="flex flex-col items-center gap-2">
+          <button
+            type="button"
+            onClick={() => openReportImprovement()}
+            aria-label="Report improvement"
+            title="Report improvement (⌘⇧F)"
+            data-pulse="true"
+            data-pulse-style="rail"
+            className="lm-rail-link"
+          >
+            <Flag className="h-[16px] w-[16px]" />
+            <span className="lm-rail-tip">Report</span>
+          </button>
+          <div title={pulseLabel(pulse)} aria-label={pulseLabel(pulse)}>
+            <Orb
+              state={pulse.state}
+              size={28}
+              satellites={Math.max(1, Math.min(pulse.subagents || 3, 6))}
+              ariaLabel={pulseLabel(pulse)}
+            />
+          </div>
         </div>
       </aside>
 
       {/* Mobile — horizontal bottom rail */}
       <nav
-        className="md:hidden fixed bottom-0 left-0 right-0 z-30 flex items-center justify-between px-3 py-2"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-30 flex items-center justify-between gap-0.5 px-2 py-1.5"
         style={{
           borderTop: "1px solid hsl(0 0% 100% / 0.08)",
-          background: "hsl(234 22% 4% / 0.7)",
-          backdropFilter: "blur(20px) saturate(140%)",
-          WebkitBackdropFilter: "blur(20px) saturate(140%)",
+          background: "hsl(234 22% 5%)",
+          paddingBottom: "max(0.375rem, env(safe-area-inset-bottom, 0px))",
         }}
       >
         {DESTS.map((d) => {
@@ -157,13 +164,14 @@ export function Rail() {
               href={d.href}
               aria-label={d.label}
               data-pulse="true"
+              data-pulse-style="rail"
               className={cn("lm-rail-link", active && "is-active")}
             >
               <d.Icon className="h-[18px] w-[18px]" />
             </Link>
           );
         })}
-        <div className="px-2" title={pulseLabel(pulse)}>
+        <div className="px-1" title={pulseLabel(pulse)}>
           <Orb
             state={pulse.state}
             size={24}
@@ -172,64 +180,6 @@ export function Rail() {
           />
         </div>
       </nav>
-
-      <style jsx>{`
-        .lm-rail-link {
-          position: relative;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 38px;
-          height: 38px;
-          border-radius: 12px;
-          color: hsl(0 0% 100% / 0.45);
-          transition: background var(--lm-dur-micro) var(--lm-ease-micro),
-                      color      var(--lm-dur-micro) var(--lm-ease-micro);
-        }
-        .lm-rail-link:hover {
-          color: hsl(0 0% 100% / 0.92);
-          background: hsl(0 0% 100% / 0.05);
-        }
-        .lm-rail-link.is-active {
-          color: hsl(0 0% 100%);
-          background: hsl(0 0% 100% / 0.08);
-          box-shadow: 0 0 0 1px hsl(0 0% 100% / 0.10) inset;
-        }
-        /* Active accent line — vertical on desktop, hidden on mobile */
-        @media (min-width: 768px) {
-          .lm-rail-link.is-active::before {
-            content: "";
-            position: absolute;
-            left: -10px;
-            top: 50%;
-            width: 2px;
-            height: 18px;
-            background: white;
-            border-radius: 2px;
-            transform: translateY(-50%);
-            box-shadow: 0 0 10px hsl(0 0% 100% / 0.7);
-          }
-        }
-        .lm-rail-tip {
-          position: absolute;
-          left: 50px;
-          top: 50%;
-          transform: translateY(-50%);
-          padding: 4px 10px;
-          font-size: 12px;
-          letter-spacing: -0.005em;
-          color: hsl(0 0% 100% / 0.92);
-          background: hsl(234 18% 8% / 0.85);
-          border: 1px solid hsl(0 0% 100% / 0.10);
-          border-radius: 8px;
-          white-space: nowrap;
-          opacity: 0;
-          pointer-events: none;
-          backdrop-filter: blur(12px);
-          transition: opacity var(--lm-dur-micro) var(--lm-ease-micro);
-        }
-        .lm-rail-link:hover .lm-rail-tip { opacity: 1; }
-      `}</style>
     </>
   );
 }

@@ -234,7 +234,7 @@ export default function RoutingPage() {
                   />
                   Enabled
                 </label>
-                <Button size="sm" variant="ghost" onClick={() => removeRule(r.rule_id)}>
+                <Button size="sm" variant="ghost" onClick={() => removeRule(r.rule_id)} aria-label="Remove routing rule" title="Remove rule">
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </li>

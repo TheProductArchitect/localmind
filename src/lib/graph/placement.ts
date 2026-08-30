@@ -86,10 +86,29 @@ function loadOf(caps: Partial<Capability>): number {
   return caps.current_load?.active_processes ?? 0;
 }
 
+function hasGpu(caps: Partial<Capability>): boolean {
+  return caps.gpu_available === true;
+}
+
+/** True when the node advertises a large (roughly 20B+) local model. */
+function hasLargeModel(caps: Partial<Capability>): boolean {
+  return (caps.models ?? []).some((m) => /(70b|72b|405b|34b|32b|30b|27b|26b|22b|20b)/i.test(m.name));
+}
+
+export type PlacementOpts = {
+  /**
+   * Chat / LLM-heavy work: prefer a GPU-backed peer with big models over an
+   * idle-but-weak node. Used by chat Auto so a DGX-class hub wins over a
+   * laptop that merely has fewer active processes.
+   */
+  preferGpu?: boolean;
+};
+
 export function decidePlacement(
   placement: Placement,
   localCaps: Capability,
-  peers: PeerCandidate[]
+  peers: PeerCandidate[],
+  opts?: PlacementOpts
 ): PlacementDecision {
   const considered: PlacementDecision["considered"] = [];
 
@@ -134,9 +153,16 @@ export function decidePlacement(
     reason: localMatches ? undefined : "local missing required tools/model",
   });
 
-  type Sortable = { isLocal: boolean; node_id: string; load: number };
+  type Sortable = { isLocal: boolean; node_id: string; load: number; gpu: boolean; large: boolean };
   const matched: Sortable[] = [];
-  if (localMatches) matched.push({ isLocal: true, node_id: localCaps.node_id, load: loadOf(localCaps) });
+  if (localMatches)
+    matched.push({
+      isLocal: true,
+      node_id: localCaps.node_id,
+      load: loadOf(localCaps),
+      gpu: hasGpu(localCaps),
+      large: hasLargeModel(localCaps),
+    });
 
   for (const peer of peers) {
     if (peer.node_id === localCaps.node_id) continue; // loopback paths in self-tests
@@ -151,10 +177,16 @@ export function decidePlacement(
       matched: ok,
       reason: ok ? undefined : !fresh ? "stale heartbeat" : !toolsOk ? "missing tools" : "missing model class",
     });
-    if (ok) matched.push({ isLocal: false, node_id: peer.node_id, load: loadOf(peer.capabilities) });
+    if (ok)
+      matched.push({
+        isLocal: false,
+        node_id: peer.node_id,
+        load: loadOf(peer.capabilities),
+        gpu: hasGpu(peer.capabilities),
+        large: hasLargeModel(peer.capabilities),
+      });
   }
 
-  // Step 3: pick lowest load; tie-break to local.
   if (matched.length === 0) {
     return {
       target: { kind: "local" },
@@ -162,6 +194,31 @@ export function decidePlacement(
       considered,
     };
   }
+
+  // Step 3 (GPU-aware, chat/LLM work): a fresh GPU peer with big models beats
+  // an idle-but-weak node. Rank by GPU, then large-model presence, then load;
+  // tie-break to local to avoid a needless hop.
+  if (opts?.preferGpu) {
+    const score = (c: Sortable) => (c.gpu ? 4 : 0) + (c.large ? 2 : 0);
+    matched.sort((a, b) => {
+      const sa = score(a);
+      const sb = score(b);
+      if (sa !== sb) return sb - sa;
+      if (a.load !== b.load) return a.load - b.load;
+      return a.isLocal ? -1 : 1;
+    });
+    const winner = matched[0];
+    const why = winner.gpu
+      ? `GPU peer${winner.large ? " with large model" : ""} (load ${winner.load})`
+      : `lowest load (${winner.load} active processes)`;
+    return {
+      target: winner.isLocal ? { kind: "local" } : { kind: "peer", peer_node_id: winner.node_id },
+      reason: why,
+      considered,
+    };
+  }
+
+  // Default: pick lowest load; tie-break to local.
   matched.sort((a, b) => (a.load !== b.load ? a.load - b.load : a.isLocal ? -1 : 1));
   const winner = matched[0];
   return {

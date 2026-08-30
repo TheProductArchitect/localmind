@@ -3,8 +3,9 @@
  */
 
 import { getCodingSession } from "../db/coding";
+import { getPeer } from "../db/fleet";
 import { getNodeIdentity } from "./identity";
-import { resolveWorkspacePin } from "./placement-pins";
+import { resolveWorkspacePin, peerAcceptsWorkspaceRelay } from "./placement-pins";
 import { WORKSPACE_RELAY_TOOLS } from "./handlers/workspace-relay";
 import { isWorkspaceRelayInbound } from "./workspace-relay-context";
 import type { ToolContext } from "../tools/types";
@@ -17,6 +18,13 @@ function isRemotePeerId(id: string | null | undefined): id is string {
     /* identity may be unavailable in unit tests */
   }
   return true;
+}
+
+/** Session/pin targets must still be a trusted peer that accepts workspace relay. */
+function isEligibleWorkspacePeer(id: string): boolean {
+  const peer = getPeer(id);
+  if (!peer || peer.trusted !== 1) return false;
+  return peerAcceptsWorkspaceRelay(id);
 }
 
 /**
@@ -41,8 +49,9 @@ export function resolveWorkspaceRelayPeer(
 
   if (sessionId) {
     const session = getCodingSession(sessionId);
-    if (session && isRemotePeerId(session.workspace_peer_id ?? null)) {
-      return session.workspace_peer_id!;
+    const peerId = session?.workspace_peer_id ?? null;
+    if (isRemotePeerId(peerId) && isEligibleWorkspacePeer(peerId)) {
+      return peerId;
     }
   }
 
@@ -57,7 +66,9 @@ export function resolveWorkspaceRelayPeer(
       op === "list_sessions"
     ) {
       const ws = resolveWorkspacePin();
-      if (ws.kind === "peer" && isRemotePeerId(ws.peer_node_id)) return ws.peer_node_id;
+      if (ws.kind === "peer" && isRemotePeerId(ws.peer_node_id) && isEligibleWorkspacePeer(ws.peer_node_id)) {
+        return ws.peer_node_id;
+      }
     }
   }
 

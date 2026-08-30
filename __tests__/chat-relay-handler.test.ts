@@ -57,10 +57,14 @@ vi.mock("../src/lib/db", () => ({
       get: vi.fn(() => undefined),
       run: vi.fn(() => ({ changes: 1 })),
     }),
+    transaction: (fn: () => unknown) => fn,
   }),
 }));
 
 vi.mock("../src/lib/agent/engine", () => ({
+  runAgent: async function* (_convId: string, message: string) {
+    yield { type: "text_chunk", delta: `Echo: ${message}` };
+  },
   runAgentCollect: vi.fn(async (_convId: string, message: string) => `Echo: ${message}`),
 }));
 

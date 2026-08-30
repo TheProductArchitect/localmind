@@ -29,34 +29,85 @@ export function parseWhen(schedule: string): { runAt?: number; cron?: string } {
   if (isCronExpr(t)) return { cron: t };
 
   // Relative one-shot: "in 4 minutes", "in 2 hours", "in 1 day".
-  const rel = t.match(/\bin\s+(\d+)\s*(minute|min|hour|hr|day)s?\b/);
+  const rel = t.match(/\bin\s+(\d+)\s*(minute|min|hour|hr|day|week)s?\b/);
   if (rel) {
     const n = Number(rel[1]);
     const u = rel[2];
-    const mult = u.startsWith("hour") || u.startsWith("hr") ? 3_600_000 : u.startsWith("day") ? 86_400_000 : 60_000;
+    const mult =
+      u.startsWith("hour") || u.startsWith("hr")
+        ? 3_600_000
+        : u.startsWith("day")
+          ? 86_400_000
+          : u.startsWith("week")
+            ? 7 * 86_400_000
+            : 60_000;
     return { runAt: Date.now() + n * mult };
   }
 
   // Near-term absolute one-shot: "tomorrow at 9", "tonight", "today at 5pm".
   if (/\btomorrow\b|\btonight\b|\btoday\b/.test(t)) {
     const d = new Date();
-    const tm = t.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
-    let hour = /tonight/.test(t) ? 20 : 9;
-    let min = 0;
-    if (tm) {
-      hour = Number(tm[1]);
-      min = tm[2] ? Number(tm[2]) : 0;
-      if (tm[3] === "pm" && hour < 12) hour += 12;
-      if (tm[3] === "am" && hour === 12) hour = 0;
-    }
+    const clock = parseClock(t, /tonight/.test(t) ? 20 : 9);
     if (/tomorrow/.test(t)) d.setDate(d.getDate() + 1);
-    d.setHours(hour, min, 0, 0);
+    d.setHours(clock.hour, clock.minute, 0, 0);
     if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+    return { runAt: d.getTime() };
+  }
+
+  // Explicit recurrence stays cron. A named weekday without "every" means the
+  // next occurrence once — "remind me Friday" should not repeat forever.
+  if (/\b(every|daily|weekly|weekdays?|weekends?|hourly)\b/.test(t)) {
+    return { cron: nlToCron(t) };
+  }
+
+  const weekdays: Record<string, number> = {
+    sunday: 0,
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
+  };
+  const weekday = Object.keys(weekdays).find((name) =>
+    new RegExp(`\\b(?:this\\s+|next\\s+|on\\s+)?${name}\\b`).test(t)
+  );
+  if (weekday) {
+    const now = new Date();
+    const d = new Date(now);
+    const clock = parseClock(t, 9);
+    d.setHours(clock.hour, clock.minute, 0, 0);
+    let days = (weekdays[weekday] - now.getDay() + 7) % 7;
+    if (days === 0 && d.getTime() <= now.getTime()) days = 7;
+    if (/\bnext\s+/.test(t) && days === 0) days = 7;
+    d.setDate(d.getDate() + days);
+    return { runAt: d.getTime() };
+  }
+
+  // A bare clock time is a one-shot at the next occurrence.
+  if (/\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/.test(t)) {
+    const now = new Date();
+    const d = new Date(now);
+    const clock = parseClock(t, 9);
+    d.setHours(clock.hour, clock.minute, 0, 0);
+    if (d.getTime() <= now.getTime()) d.setDate(d.getDate() + 1);
     return { runAt: d.getTime() };
   }
 
   // Recurring.
   return { cron: nlToCron(t) };
+}
+
+function parseClock(text: string, defaultHour: number): { hour: number; minute: number } {
+  const match =
+    text.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/) ||
+    text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/);
+  if (!match) return { hour: defaultHour, minute: 0 };
+  let hour = Number(match[1]);
+  const minute = match[2] ? Number(match[2]) : 0;
+  if (match[3] === "pm" && hour < 12) hour += 12;
+  if (match[3] === "am" && hour === 12) hour = 0;
+  return { hour, minute };
 }
 
 /** Human description of when a task runs (one-shot or recurring). */
@@ -68,7 +119,10 @@ export function describeWhen(task: Pick<ScheduledTask, "cron" | "run_at">): stri
 // Delivery channels a task may use. "browser" is always available; the rest
 // must be enabled in Settings → Channels.
 function allowedDeliveryChannels(): string[] {
-  const enabled = listChannels().filter((c) => c.enabled).map((c) => c.type);
+  const implemented = new Set(["telegram", "email"]);
+  const enabled = listChannels()
+    .filter((c) => c.enabled && implemented.has(c.type))
+    .map((c) => c.type);
   return ["browser", ...enabled];
 }
 
@@ -166,7 +220,7 @@ export const scheduleTool: Tool = {
         const allowed = allowedDeliveryChannels();
         let channelNote = "";
         if (!allowed.includes(channel)) {
-          channelNote = ` (${channel} isn't connected, so this surfaces in-app; connect it in Settings → Channels)`;
+          channelNote = ` (${channel} isn't available for scheduled delivery, so this surfaces in-app; use browser, Telegram, or email)`;
           channel = "browser";
         }
 
@@ -189,14 +243,19 @@ export const scheduleTool: Tool = {
       if (op === "update") {
         const id = String(input.id || "");
         if (!getTask(id)) return { ok: false, output: `No task with id ${id}` };
-        const patch: { name?: string; cron?: string; prompt?: string; delivery_channel?: string } = {};
+        const patch: {
+          name?: string;
+          cron?: string;
+          prompt?: string;
+          delivery_channel?: string;
+          run_at?: number | null;
+        } = {};
         if (input.name != null) patch.name = String(input.name);
         if (input.prompt != null) patch.prompt = String(input.prompt);
         if (input.schedule != null) {
           const w = parseWhen(String(input.schedule));
           patch.cron = w.cron ?? "@once";
-          // Note: switching to/from one-shot via update keeps it simple —
-          // recurring only here; one-shot changes should recreate.
+          patch.run_at = w.runAt ?? null;
         }
         if (input.delivery_channel != null) {
           const channel = String(input.delivery_channel);

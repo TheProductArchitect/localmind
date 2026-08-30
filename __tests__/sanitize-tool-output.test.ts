@@ -25,6 +25,13 @@ describe("sanitizeToolOutput", () => {
       expect(isUntrustedTool("mcp:literally-anything")).toBe(true);
     });
 
+    it("treats registered mcp_ tools and web page readers as untrusted", () => {
+      expect(isUntrustedTool("mcp_github_list_issues")).toBe(true);
+      expect(isUntrustedTool("web_research")).toBe(true);
+      expect(isUntrustedTool("browse_session")).toBe(true);
+      expect(isUntrustedTool("read_secure_webpage")).toBe(true);
+    });
+
     it("does not auto-trust unknown tool names", () => {
       expect(isUntrustedTool("memory")).toBe(false);
       expect(isUntrustedTool("filesystem")).toBe(false);

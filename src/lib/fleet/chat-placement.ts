@@ -48,7 +48,9 @@ export async function pickChatExecutor(): Promise<ChatExecutor> {
       last_seen_at: p.last_seen_at,
     }));
 
-  const decision = decidePlacement({}, localCaps, peers);
+  // Chat is LLM-heavy: prefer a GPU-backed hub (e.g. DGX Spark) over an idle
+  // but weaker node, instead of ranking purely by active_processes.
+  const decision = decidePlacement({}, localCaps, peers, { preferGpu: true });
   if (decision.target.kind === "local") {
     return { kind: "local", reason: decision.reason };
   }

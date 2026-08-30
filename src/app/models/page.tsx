@@ -3,11 +3,26 @@ import { useEffect, useState } from "react";
 import { Button, Badge, EmptyState } from "@/components/ui";
 import { PageHeader, PageShell } from "@/components/page-header";
 import { useConfirm } from "@/components/confirm-dialog";
-import { CURATED_MODELS } from "@/lib/curated-models";
+import { CURATED_MODELS, modelTagsMatch } from "@/lib/curated-models";
 import { Download, Trash2, Check, ExternalLink } from "lucide-react";
 import { toast } from "@/components/toast";
+import { patchSettingsCache } from "@/lib/client/settings-cache";
 
-type Model = { name: string; family?: string; size?: number; modified?: string; path?: string };
+type ModelFit = {
+  verdict: "fits" | "tight" | "too_large" | "impossible";
+  required_gb: number;
+  available_gb: number;
+  total_gb: number;
+  message: string;
+};
+type Model = {
+  name: string;
+  family?: string;
+  size?: number;
+  modified?: string;
+  path?: string;
+  fit?: ModelFit;
+};
 type HfCatalogueEntry = {
   repo: string;
   file: string;
@@ -89,6 +104,18 @@ export default function ModelsPage() {
   useEffect(() => { load(provider); }, [provider]);
 
   async function setActiveModel(name: string) {
+    // A model that cannot fit in memory does not fail — it thrashes and the
+    // chat hangs. Make that a decision rather than a surprise.
+    const fit = models.find((m) => m.name === name)?.fit;
+    if (fit && (fit.verdict === "too_large" || fit.verdict === "impossible")) {
+      const ok = await confirm({
+        title: "This model will not fit in memory",
+        message: `${fit.message} Chats using it are likely to hang instead of replying.`,
+        confirmLabel: "Use it anyway",
+        destructive: true,
+      });
+      if (!ok) return;
+    }
     const chatProvider = chatProviderForTab(provider);
     const r = await fetch("/api/settings", {
       method: "PATCH",
@@ -103,6 +130,10 @@ export default function ModelsPage() {
       setErr(j.error || `Could not set active model (HTTP ${r.status})`);
       return;
     }
+    patchSettingsCache({
+      active_model: name,
+      ...(chatProvider ? { provider: chatProvider } : {}),
+    });
     setActive(name);
     if (chatProvider) setActiveProvider(chatProvider);
   }
@@ -295,11 +326,24 @@ export default function ModelsPage() {
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-sm">{m.name}</span>
                   {isActive(m.name) && <Badge variant="success">Active</Badge>}
+                  {m.fit && m.fit.verdict !== "fits" && (
+                    <Badge
+                      variant={m.fit.verdict === "tight" ? "warning" : "destructive"}
+                      title={m.fit.message}
+                    >
+                      {m.fit.verdict === "tight" ? "Tight fit" : "Won't fit"}
+                    </Badge>
+                  )}
                 </div>
                 <p className="text-xs" style={{ color: "hsl(0 0% 100% / 0.45)" }}>
                   {m.family || "model"} · {fmtSize(m.size)}
                   {m.path ? <> · <code className="text-[10px]">{m.path}</code></> : null}
                 </p>
+                {m.fit && m.fit.verdict !== "fits" && (
+                  <p className="text-xs mt-1" style={{ color: "hsl(38 92% 62%)" }}>
+                    {m.fit.message}
+                  </p>
+                )}
               </div>
               {!isActive(m.name) && (
                 <Button size="sm" variant="outline" onClick={() => setActiveModel(m.name)}>
@@ -307,7 +351,7 @@ export default function ModelsPage() {
                 </Button>
               )}
               {!CLOUD_IDS.has(provider) && (
-                <Button size="sm" variant="ghost" onClick={() => del(m.name)}>
+                <Button size="sm" variant="ghost" onClick={() => del(m.name)} aria-label={`Delete ${m.name}`} title="Delete model">
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               )}
@@ -334,7 +378,7 @@ export default function ModelsPage() {
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             {CURATED_MODELS.map((m) => {
-              const installed = models.some((x) => x.name === m.name);
+              const installed = models.some((x) => modelTagsMatch(x.name, m.name));
               return (
                 <div key={m.name} className="lm-panel">
                   <div className="flex items-start justify-between gap-2">

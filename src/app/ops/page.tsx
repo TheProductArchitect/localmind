@@ -336,7 +336,7 @@ export default function OpsPage() {
           <div className="flex items-center gap-2">
             <Button size="sm" variant={groupByPillar ? "outline" : "default"} onClick={() => setGrouping(false)}>Kanban</Button>
             <Button size="sm" variant={groupByPillar ? "default" : "outline"} onClick={() => setGrouping(true)}>By pillar</Button>
-            <Button size="sm" variant="outline" onClick={refresh}><RefreshCw className="h-3.5 w-3.5" /></Button>
+            <Button size="sm" variant="outline" onClick={refresh} aria-label="Refresh board" title="Refresh"><RefreshCw className="h-3.5 w-3.5" /></Button>
           </div>
         </div>
 

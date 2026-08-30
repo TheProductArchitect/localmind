@@ -67,4 +67,9 @@ describe("PATCH /api/settings allow-list (CRITICAL)", () => {
       workspace_placement: "peer-xyz",
     });
   });
+
+  it("persists tool_home_placement (DGX PA tools on this device)", async () => {
+    await PATCH(patchReq({ tool_home_placement: "initiator" }));
+    expect(updateSettings).toHaveBeenCalledWith({ tool_home_placement: "initiator" });
+  });
 });

@@ -13,6 +13,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -61,6 +62,18 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
       return null;
     });
   }, []);
+
+  // Escape cancels — same result as clicking the backdrop.
+  useEffect(() => {
+    if (!pending) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      finish(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pending, finish]);
 
   const value = useMemo(() => confirm, [confirm]);
 

@@ -19,8 +19,21 @@ export const runtime = "nodejs";
 
 const Body = z.object({
   conversation_id: z.string().min(1),
-  message: z.string().min(1).max(64 * 1024),
+  message: z.string().max(64 * 1024).default(""),
   persona_id: z.string().optional(),
+  tool_home: z.enum(["initiator", "executor"]).optional(),
+  images: z
+    .array(
+      z.object({
+        name: z.string().optional(),
+        mime: z.string().min(1),
+        data: z.string().min(1),
+      })
+    )
+    .max(4)
+    .optional(),
+}).refine((b) => b.message.trim().length > 0 || (b.images && b.images.length > 0), {
+  message: "message or images required",
 });
 
 export async function POST(
@@ -64,12 +77,33 @@ export async function POST(
         const result = await relayChatToPeer({
           peer_node_id: params.id,
           conversation_id: parsed.data.conversation_id,
-          message: parsed.data.message,
+          message: parsed.data.message || "(attached image)",
           persona_id: parsed.data.persona_id,
+          tool_home: parsed.data.tool_home,
+          images: parsed.data.images,
           stream_tokens: true,
           onToken: (text) => {
             write({ type: "status", phase: "receiving", peer_label: peerLabel });
             write({ type: "token", text });
+          },
+          onControl: (frame) => {
+            // Remote confirmation gate (M5): surface it to the browser so the
+            // user can approve/deny; the decision is POSTed to …/confirm.
+            if (frame.type === "confirm") {
+              write({
+                type: "confirm",
+                tool_call_id: frame.tool_call_id,
+                action_type: frame.action_type,
+                preview: frame.preview,
+                timeout_seconds: frame.timeout_seconds,
+                requires_pin: frame.requires_pin,
+                peer_label: peerLabel,
+              });
+            } else if (frame.type === "confirm_timeout") {
+              write({ type: "confirm_timeout", tool_call_id: frame.tool_call_id });
+            } else if (frame.type === "confirm_denied") {
+              write({ type: "confirm_denied", tool_call_id: frame.tool_call_id });
+            }
           },
         });
         if (!result.ok) {

@@ -21,13 +21,52 @@ export async function POST(req: NextRequest) {
     return new Response("conversationId and message are required", { status: 400 });
   }
 
-  // Multimodal image attachments: { name?, mime, data(base64) }. Capped in
-  // count and size so a stray upload can't blow up the request or the DB.
-  const attachments = Array.isArray(images)
+  // Attachments: images (vision) and documents (text-extracted). Capped so a
+  // stray upload can't blow up the request or the DB.
+  const rawAttachments = Array.isArray(images)
     ? images
-        .filter((a: any) => a && typeof a.data === "string" && typeof a.mime === "string" && a.mime.startsWith("image/"))
+        .filter((a: any) => a && typeof a.data === "string" && typeof a.mime === "string")
         .slice(0, 6)
-        .map((a: any) => ({ name: typeof a.name === "string" ? a.name.slice(0, 200) : undefined, mime: a.mime, data: a.data }))
+        .map((a: any) => ({
+          name: typeof a.name === "string" ? a.name.slice(0, 200) : "file",
+          mime: a.mime,
+          data: a.data,
+        }))
+    : [];
+
+  const imageAttachments = rawAttachments.filter((a) => a.mime.startsWith("image/"));
+  const docAttachments = rawAttachments.filter(
+    (a) =>
+      !a.mime.startsWith("image/") &&
+      (a.mime === "application/pdf" ||
+        a.mime.includes("wordprocessingml") ||
+        a.mime === "text/plain" ||
+        a.mime === "text/markdown" ||
+        /\.(pdf|docx|txt|md)$/i.test(a.name || ""))
+  );
+
+  let messageText = typeof message === "string" ? message : "";
+  if (docAttachments.length) {
+    try {
+      const { extractDocumentText } = await import("@/lib/knowledge/parsers");
+      const parts: string[] = [];
+      for (const doc of docAttachments) {
+        const text = await extractDocumentText(doc.name || "doc.pdf", doc.data, true);
+        const clipped = text.slice(0, 80_000);
+        parts.push(`--- Attached: ${doc.name} ---\n${clipped}${text.length > 80_000 ? "\n…[truncated]" : ""}`);
+      }
+      if (parts.length) {
+        messageText = (messageText ? messageText + "\n\n" : "") + parts.join("\n\n");
+      }
+    } catch (e: any) {
+      messageText =
+        (messageText ? messageText + "\n\n" : "") +
+        `[Could not extract text from attached document(s): ${e?.message || "parse error"}]`;
+    }
+  }
+
+  const attachments = imageAttachments.length
+    ? imageAttachments.map((a) => ({ name: a.name, mime: a.mime, data: a.data }))
     : undefined;
 
   const browseId =
@@ -118,7 +157,7 @@ export async function POST(req: NextRequest) {
         }
         const systemPrefix = [browsePrefix, devpmPrefix].filter(Boolean).join("\n\n") || undefined;
 
-        for await (const ev of runAgent(conversationId, message || "", controller.signal, {
+        for await (const ev of runAgent(conversationId, messageText || "", controller.signal, {
           regenerate: !!regenerate,
           systemPrefix,
           images: attachments,

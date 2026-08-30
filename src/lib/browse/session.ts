@@ -8,15 +8,30 @@ import { nanoid } from "nanoid";
 import "@/lib/playwright-path";
 import { getBrowser } from "../tools/browser";
 import { checkWebAccess, auditPageRead } from "../agent/web-guard";
+import { glidePointerTo, showAgentCue } from "./agent-overlay";
+import { clearAgentActivity, recordAgentActivity } from "./agent-activity";
 
 export const BROWSE_VIEWPORT = { width: 1280, height: 800 };
 const IDLE_TTL_MS = 45 * 60 * 1000;
+
+/** One interactive element the agent can address by index. */
+export type BrowseElement = {
+  index: number;
+  tag: string;
+  type: string;
+  label: string;
+  x: number;
+  y: number;
+  box: { x: number; y: number; width: number; height: number };
+};
 
 type BrowseSession = {
   id: string;
   page: Page;
   lastUsed: number;
   linkedConversations: Set<string>;
+  /** Last element map handed to the agent, addressed by `click_index`. */
+  elements?: BrowseElement[];
   /**
    * "headless" — a page we launched; closing the session closes the page.
    * "apptab"   — a live tab in the Electron shell attached over CDP; the
@@ -103,10 +118,14 @@ export async function closeBrowseSession(id: string): Promise<void> {
   const s = sessions.get(id);
   if (!s) return;
   for (const cid of s.linkedConversations) conversationLinks.delete(cid);
-  // App tabs belong to the user — detach only, never close their tab.
-  if (s.kind === "headless") {
+  // App tabs belong to the user — detach only, never close their tab. Take the
+  // agent's overlay with us so a revoked tab shows no lingering Sora pointer.
+  if (s.kind === "apptab") {
+    await showAgentCue(s.page, { kind: "clear" });
+  } else {
     try { await s.page.close(); } catch {}
   }
+  clearAgentActivity(id);
   sessions.delete(id);
 }
 
@@ -121,22 +140,118 @@ export async function browseNavigate(sessionId: string, url: string): Promise<{ 
   if (!access.ok) return { ok: false, error: access.reason };
   auditPageRead("browse_session", u);
 
+  let host = u;
+  try { host = new URL(u).host; } catch { /* keep full url */ }
+  await showAgentCue(s.page, { kind: "status", label: `opening ${host}` });
+
   try {
     await s.page.goto(u, { waitUntil: "domcontentloaded", timeout: 60_000 });
     touch(s);
+    s.elements = undefined;
+    recordAgentActivity({ sessionId: sessionId, action: "navigate", detail: host, ok: true });
+    await showAgentCue(s.page, { kind: "status", label: `opened ${host}` });
     return { ok: true };
   } catch (e: any) {
+    recordAgentActivity({ sessionId, action: "navigate", detail: host, ok: false });
     return { ok: false, error: e?.message || "Navigation failed." };
   }
 }
 
 export type BrowseAction =
   | { type: "click"; x: number; y: number }
+  | { type: "click_index"; index: number }
+  | { type: "click_text"; text: string }
   | { type: "type"; text: string }
   | { type: "scroll"; deltaY: number }
   | { type: "back" }
   | { type: "forward" }
   | { type: "press"; key: string };
+
+const ELEMENT_SCAN_SCRIPT = `() => {
+  const selector = [
+    "a[href]", "button", "input", "select", "textarea",
+    "[role=button]", "[role=link]", "[role=textbox]", "[role=checkbox]",
+    "[contenteditable=true]", "[onclick]"
+  ].join(",");
+  const out = [];
+  for (const el of document.querySelectorAll(selector)) {
+    const r = el.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4) continue;
+    if (r.bottom < 0 || r.right < 0) continue;
+    if (r.top > window.innerHeight || r.left > window.innerWidth) continue;
+    const cs = window.getComputedStyle(el);
+    if (cs.visibility === "hidden" || cs.display === "none" || Number(cs.opacity) === 0) continue;
+    const raw =
+      el.getAttribute("aria-label") ||
+      (el.innerText || "") ||
+      el.value ||
+      el.getAttribute("placeholder") ||
+      el.getAttribute("title") ||
+      el.getAttribute("name") ||
+      "";
+    out.push({
+      tag: el.tagName.toLowerCase(),
+      type: el.getAttribute("type") || "",
+      label: String(raw).replace(/\\s+/g, " ").trim().slice(0, 80),
+      x: Math.round(r.x + r.width / 2),
+      y: Math.round(r.y + r.height / 2),
+      box: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) },
+    });
+    if (out.length >= 60) break;
+  }
+  return out;
+}`;
+
+/**
+ * Index the interactive elements currently in view. Coordinate guessing is the
+ * main reason agents misclick, so the agent gets a numbered list it can act on
+ * via `click_index`.
+ */
+export async function browseElements(sessionId: string): Promise<BrowseElement[]> {
+  const s = sessions.get(sessionId);
+  if (!s) return [];
+  const url = s.page.url();
+  if (url && url !== "about:blank") {
+    const access = checkWebAccess(url);
+    if (!access.ok) return [];
+  }
+  const raw = await s.page
+    .evaluate(ELEMENT_SCAN_SCRIPT)
+    .catch(() => [] as Omit<BrowseElement, "index">[]);
+  const list = (raw as Omit<BrowseElement, "index">[]).map((e, i) => ({ ...e, index: i + 1 }));
+  s.elements = list;
+  touch(s);
+  return list;
+}
+
+/** Human-readable element map for the agent's tool output. */
+export function formatBrowseElements(list: BrowseElement[]): string {
+  if (list.length === 0) return "No interactive elements found in view.";
+  return list
+    .map((e) => {
+      const kind = e.type ? `${e.tag}:${e.type}` : e.tag;
+      return `[${e.index}] ${kind} "${e.label || "(no label)"}" @ ${e.x},${e.y}`;
+    })
+    .join("\n");
+}
+
+/** Pick the element the agent means by visible text (exact wins over partial). */
+export function matchElementByText(
+  list: BrowseElement[],
+  text: string
+): BrowseElement | null {
+  const needle = text.trim().toLowerCase();
+  if (!needle) return null;
+  const exact = list.find((e) => e.label.toLowerCase() === needle);
+  if (exact) return exact;
+  const starts = list.find((e) => e.label.toLowerCase().startsWith(needle));
+  if (starts) return starts;
+  return list.find((e) => e.label.toLowerCase().includes(needle)) ?? null;
+}
+
+function describeElement(e: BrowseElement): string {
+  return e.label || `${e.tag} at ${e.x},${e.y}`;
+}
 
 export async function browseAction(sessionId: string, action: BrowseAction): Promise<{ ok: boolean; error?: string }> {
   const s = sessions.get(sessionId);
@@ -151,24 +266,68 @@ export async function browseAction(sessionId: string, action: BrowseAction): Pro
     if (!access.ok) return { ok: false, error: access.reason };
   }
 
+  /** Show, then do: the user sees the pointer land before the page reacts. */
+  const clickAt = async (x: number, y: number, label: string, target?: BrowseElement) => {
+    if (target) {
+      await showAgentCue(page, { ...target.box, kind: "box", label: `clicking ${label}` });
+    }
+    await showAgentCue(page, { kind: "move", x, y, label: `clicking ${label}` });
+    await glidePointerTo(page, x, y);
+    await showAgentCue(page, { kind: "click", x, y, label: `clicking ${label}` });
+    await page.mouse.click(x, y);
+  };
+
   try {
+    let detail = "";
     switch (action.type) {
       case "click":
-        await page.mouse.click(action.x, action.y);
+        detail = `${action.x},${action.y}`;
+        await clickAt(action.x, action.y, detail);
         break;
+      case "click_index": {
+        const list = s.elements?.length ? s.elements : await browseElements(sessionId);
+        const target = list.find((e) => e.index === action.index);
+        if (!target) {
+          return {
+            ok: false,
+            error: `No element [${action.index}] in view. Run the elements operation again — the page may have changed.`,
+          };
+        }
+        detail = describeElement(target);
+        await clickAt(target.x, target.y, detail, target);
+        break;
+      }
+      case "click_text": {
+        const list = s.elements?.length ? s.elements : await browseElements(sessionId);
+        const target = matchElementByText(list, action.text);
+        if (!target) {
+          return { ok: false, error: `No clickable element matching "${action.text}" in view.` };
+        }
+        detail = describeElement(target);
+        await clickAt(target.x, target.y, detail, target);
+        break;
+      }
       case "type":
+        detail = `${action.text.length} chars`;
+        await showAgentCue(page, { kind: "status", label: "typing" });
         await page.keyboard.type(action.text);
         break;
       case "scroll":
+        detail = `${action.deltaY}px`;
+        await showAgentCue(page, { kind: "status", label: "scrolling" });
         await page.mouse.wheel(0, action.deltaY);
         break;
       case "back":
+        await showAgentCue(page, { kind: "status", label: "going back" });
         await page.goBack({ waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
         break;
       case "forward":
+        await showAgentCue(page, { kind: "status", label: "going forward" });
         await page.goForward({ waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
         break;
       case "press":
+        detail = action.key;
+        await showAgentCue(page, { kind: "status", label: `pressing ${action.key}` });
         await page.keyboard.press(action.key);
         break;
     }
@@ -178,8 +337,12 @@ export async function browseAction(sessionId: string, action: BrowseAction): Pro
       if (!access.ok) return { ok: false, error: access.reason };
     }
     touch(s);
+    // The DOM moved under any coordinates we handed out; force a rescan.
+    if (action.type !== "type") s.elements = undefined;
+    recordAgentActivity({ sessionId, action: action.type, detail, ok: true });
     return { ok: true };
   } catch (e: any) {
+    recordAgentActivity({ sessionId, action: action.type, detail: "", ok: false });
     return { ok: false, error: e?.message || "Action failed." };
   }
 }
@@ -247,7 +410,10 @@ export async function buildBrowseContextPrefix(sessionId: string): Promise<strin
   const excerpt = snap.text.trim().slice(0, 2500);
   return `## Browse context
 The user is browsing in LocalMind's interactive view (live Chromium). Session: \`${sessionId}\`.
-Use \`browse_session\` to navigate, click, type, or snapshot this page when they ask you to act on what they see.
+Use \`browse_session\` to act on this page when they ask. To click something, call
+\`elements\` first for a numbered list of the controls in view, then \`click_index\`;
+fall back to \`click_text\` or raw \`click\` coordinates only if that fails. The user
+watches your pointer and clicks on the page, so act one step at a time.
 Current URL: ${snap.url}
 Title: ${snap.title || "(untitled)"}
 Visible text:

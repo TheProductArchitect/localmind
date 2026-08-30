@@ -14,13 +14,25 @@ export async function POST(req: NextRequest) {
   const task = getTask(taskId);
   if (!task || !task.enabled) return NextResponse.json({ skipped: true });
 
-  const convId = createConversation().id;
-  const output = await runAgentCollect(convId, task.prompt, {
-    systemPrefix: `You are running a scheduled task named "${task.name}". Produce the requested output directly.`,
-  });
-  recordTaskRun(task.id, output);
-  if (task.delivery_channel !== "log") {
-    await deliver(task.delivery_channel, `[${task.name}]\n\n${output}`);
+  try {
+    const convId = createConversation(
+      undefined,
+      task.creator_user_id || undefined
+    ).id;
+    const output = await runAgentCollect(convId, task.prompt, {
+      systemPrefix: `You are running a scheduled task named "${task.name}". Produce the requested output directly.`,
+      processDisplayName: `Scheduled: ${task.name}`,
+      processMetadata: { kind: "scheduled_task", task_id: task.id },
+    });
+    recordTaskRun(task.id, output);
+    if (task.delivery_channel !== "log") {
+      await deliver(task.delivery_channel, `[${task.name}]\n\n${output}`);
+    }
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return NextResponse.json(
+      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      { status: 500 }
+    );
   }
-  return NextResponse.json({ ok: true });
 }

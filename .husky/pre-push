@@ -1,0 +1,14 @@
+#!/usr/bin/env sh
+# Nothing reaches a remote without passing the full suite.
+#
+# Runs:
+#   1. the audits    → every button named, every modal escapable, every API
+#                      route mapped to a role (fails on whole classes of bug)
+#   2. the full suite → backend logic + UI workflow tests
+#   3. tsc --noEmit  → cross-file type regressions
+#
+# To skip in an emergency: git push --no-verify (please don't make this a habit).
+
+npm run test:audit
+npx --no-install vitest run
+npx --no-install tsc --noEmit

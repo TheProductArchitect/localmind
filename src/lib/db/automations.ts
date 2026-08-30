@@ -54,17 +54,26 @@ export function setTaskEnabled(id: string, enabled: boolean) {
 }
 export function updateTask(
   id: string,
-  patch: { name?: string; cron?: string; prompt?: string; delivery_channel?: string }
+  patch: {
+    name?: string;
+    cron?: string;
+    prompt?: string;
+    delivery_channel?: string;
+    run_at?: number | null;
+  }
 ): ScheduledTask | null {
   const cur = getTask(id);
   if (!cur) return null;
   getConfigDb()
-    .prepare("UPDATE scheduled_tasks SET name=?, cron=?, prompt=?, delivery_channel=? WHERE id=?")
+    .prepare(
+      "UPDATE scheduled_tasks SET name=?, cron=?, prompt=?, delivery_channel=?, run_at=? WHERE id=?"
+    )
     .run(
       patch.name ?? cur.name,
       patch.cron ?? cur.cron,
       patch.prompt ?? cur.prompt,
       patch.delivery_channel ?? cur.delivery_channel,
+      patch.run_at !== undefined ? patch.run_at : cur.run_at,
       id
     );
   return getTask(id);

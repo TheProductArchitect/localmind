@@ -19,17 +19,28 @@ let mainWinRef = null;
 /** @type {(() => import('electron').BrowserWindow | null) | null} */
 let codingWinGetter = null;
 
-function readAssistantNameFromDb() {
+/**
+ * @param {{ mirrorOnly?: boolean }} [opts] When mirrorOnly, never fall back to
+ *   the sqlite probe — that spawns a Node subprocess, which must not happen on
+ *   a recurring timer in the main process.
+ */
+function readAssistantNameFromDb(opts) {
   try {
     const dataDir = process.env.LOCALMIND_DATA_DIR || path.join(os.homedir(), ".localmind");
     // Prefer a lightweight JSON mirror written by the Next settings API —
     // avoids loading better-sqlite3 inside Electron's ABI.
     const mirror = path.join(dataDir, "branding.json");
-    if (fs.existsSync(mirror)) {
+    // One read, no stat-then-read window: checking the file and then opening it
+    // is a race, and the mirror is rewritten by the settings API at any time.
+    // A missing or half-written file simply fails this parse and falls through.
+    try {
       const j = JSON.parse(fs.readFileSync(mirror, "utf8"));
       const name = j?.assistant_name && String(j.assistant_name).trim();
       if (name) return name;
+    } catch {
+      /* mirror missing or unreadable — fall through */
     }
+    if (opts?.mirrorOnly) return null;
     const dbPath = path.join(dataDir, "config.db");
     if (!fs.existsSync(dbPath)) return null;
     // Query with system Node (project's better-sqlite3), not Electron's Node.
@@ -126,11 +137,15 @@ async function initBranding(opts) {
   applyIcon("idle").catch(() => {});
   warmOrbIcons().catch(() => {});
 
-  // Re-read name periodically so Settings blur-saves show up without IPC.
-  setInterval(() => {
-    const n = readAssistantNameFromDb();
+  // Re-read the name periodically so Settings blur-saves show up without IPC.
+  // mirrorOnly keeps this off the sqlite fallback, which spawns a subprocess —
+  // unacceptable on a 4s timer. Reading the tiny JSON mirror each tick is
+  // cheap, and applyName already no-ops when the name is unchanged.
+  const nameTimer = setInterval(() => {
+    const n = readAssistantNameFromDb({ mirrorOnly: true });
     if (n && sanitizeName(n) !== currentName) applyName(n);
   }, 4000);
+  nameTimer.unref?.();
 }
 
 /**

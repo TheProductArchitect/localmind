@@ -24,7 +24,6 @@
 
 import { spawnSync } from "child_process";
 import crypto, { X509Certificate } from "crypto";
-import https from "https";
 import fs from "fs";
 import { ensureDataDir, KEYS_DIR, NODE_PRIVKEY_FILE, TLS_CERT_FILE, TLS_FINGERPRINT_FILE } from "../paths";
 import { getNodeIdentity } from "./identity";
@@ -121,11 +120,15 @@ export function getTlsMaterial(): TlsMaterial {
     const certPem = fs.readFileSync(TLS_CERT_FILE, "utf8");
     const keyPem = fs.readFileSync(NODE_PRIVKEY_FILE, "utf8");
 
-    // Validate that the certificate matches the current private key
+    // A cert that doesn't match node.key makes https.createServer throw, which
+    // killed the fleet listener at boot with the reason buried in a log file.
+    // Detect it here and regenerate. checkPrivateKey is the purpose-built API —
+    // it avoids allocating a throwaway server just to validate the pair.
     try {
       const cert = new X509Certificate(certPem);
-      const testServer = https.createServer({ cert: certPem, key: keyPem });
-      testServer.close();
+      if (!cert.checkPrivateKey(crypto.createPrivateKey(keyPem))) {
+        throw new Error("certificate public key does not match node.key");
+      }
 
       const fingerprint = computeFingerprint(certPem);
 
@@ -146,7 +149,13 @@ export function getTlsMaterial(): TlsMaterial {
       };
       return cached;
     } catch (e) {
-      console.warn("[fleet.tls] Existing certificate does not match private key, regenerating...", (e as Error).message);
+      console.warn(
+        "[fleet.tls] existing certificate is unusable, regenerating:",
+        (e as Error).message
+      );
+      // The pin changes, so already-paired peers must re-pair. That is
+      // unavoidable once the key no longer matches, and strictly better than a
+      // listener that refuses to start.
       if (fs.existsSync(TLS_CERT_FILE)) fs.unlinkSync(TLS_CERT_FILE);
       if (fs.existsSync(TLS_FINGERPRINT_FILE)) fs.unlinkSync(TLS_FINGERPRINT_FILE);
     }

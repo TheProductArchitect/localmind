@@ -31,7 +31,7 @@ import { setTimeout as delay } from "timers/promises";
 import { getTlsMaterial, opensslAvailable } from "./tls";
 import { getNodeIdentity } from "./identity";
 import { verify, sign, type SignedEnvelope, type EnvelopeKind } from "./envelope";
-import { getPeer, pairPeer, recordCapabilities, markPeerSeen, parsePeerPolicy } from "../db/fleet";
+import { getPeer, pairPeer, recordCapabilities, markPeerSeen, parsePeerPolicy, updatePeerPrimaryAddr } from "../db/fleet";
 import { snapshotCapability } from "./capabilities";
 import { consumeToken } from "./pairing";
 import { parsePeerPublicKey, fingerprintOfPubkey } from "./identity";
@@ -46,7 +46,18 @@ const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1 MiB — capability/heartbeat envelo
 type GlobalFleet = {
   server: https.Server | null;
   port: number | null;
+  /**
+   * Handlers live in global state so a route compiled in a different module
+   * context still sees registrations made by the instrumentation hook.
+   */
   handlers: Map<EnvelopeKind, Handler<unknown, unknown>>;
+  /**
+   * Why the listener is down. Without this the reason only ever reached the
+   * log file, so pairing could report nothing better than "not running" —
+   * leaving the user to guess between missing openssl, a taken port, and an
+   * app that never booted.
+   */
+  lastError: { message: string; at: number } | null;
 };
 const GLOBAL_KEY = Symbol.for("localmind.fleet.server");
 const globalSlot = globalThis as unknown as Record<symbol, GlobalFleet>;
@@ -55,9 +66,13 @@ if (!globalSlot[GLOBAL_KEY]) {
     server: null,
     port: null,
     handlers: new Map<EnvelopeKind, Handler<unknown, unknown>>(),
+    lastError: null,
   };
 }
 const fleetState: GlobalFleet = globalSlot[GLOBAL_KEY];
+// A slot created by an older module instance may predate either field.
+if (!fleetState.handlers) fleetState.handlers = new Map();
+if (fleetState.lastError === undefined) fleetState.lastError = null;
 
 export type HandlerCtx<P> = {
   envelope: SignedEnvelope<P>;
@@ -190,17 +205,51 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse): Pr
       const writeLine = (obj: unknown) => {
         res.write(Buffer.from(JSON.stringify(obj) + "\n", "utf8"));
       };
-      const { handleChatRelay } = await import("./handlers/chat-relay");
-      const payload = await handleChatRelay({
-        envelope: envelope as SignedEnvelope<import("./handlers/chat-relay").ChatRelayRequest>,
-        senderNodeId: envelope.sender,
-        onToken: (text) => {
-          writeLine({ type: "token", text });
-        },
-      });
-      const resultEnv = sign(`${kind}-result` as EnvelopeKind, envelope.sender, payload);
-      writeLine({ type: "result", envelope: resultEnv });
-      res.end();
+      // Keep the initiator's idle socket timeout alive during long confirms /
+      // tool waits that emit no tokens.
+      const heartbeat = setInterval(() => {
+        try {
+          writeLine({ type: "ping", ts: Date.now() });
+        } catch {
+          /* socket already closed */
+        }
+      }, 15_000);
+      if (typeof (heartbeat as NodeJS.Timeout).unref === "function") {
+        (heartbeat as NodeJS.Timeout).unref();
+      }
+      try {
+        const { handleChatRelay } = await import("./handlers/chat-relay");
+        const payload = await handleChatRelay({
+          envelope: envelope as SignedEnvelope<import("./handlers/chat-relay").ChatRelayRequest>,
+          senderNodeId: envelope.sender,
+          onToken: (text) => {
+            writeLine({ type: "token", text });
+          },
+          onEvent: (evt) => {
+            // Forward confirmation gates over the stream so the initiator can
+            // approve/deny; keys mirror the local engine event shape.
+            if (evt.type === "confirmation_required") {
+              writeLine({
+                type: "confirm",
+                tool_call_id: evt.toolCallId,
+                action_type: evt.actionType,
+                preview: evt.preview,
+                timeout_seconds: evt.timeoutSeconds,
+                requires_pin: evt.requiresPin,
+              });
+            } else if (evt.type === "confirmation_timeout") {
+              writeLine({ type: "confirm_timeout", tool_call_id: evt.toolCallId });
+            } else if (evt.type === "confirmation_denied") {
+              writeLine({ type: "confirm_denied", tool_call_id: evt.toolCallId });
+            }
+          },
+        });
+        const resultEnv = sign(`${kind}-result` as EnvelopeKind, envelope.sender, payload);
+        writeLine({ type: "result", envelope: resultEnv });
+        res.end();
+      } finally {
+        clearInterval(heartbeat);
+      }
       return;
     }
 
@@ -222,10 +271,19 @@ export async function startFleetServer(opts: { port?: number; host?: string } = 
     return { port: fleetState.port, cert_fingerprint: getTlsMaterial().fingerprint_sha256 };
   }
   if (!opensslAvailable()) {
-    throw new Error("openssl not available — fleet server cannot start. Install openssl and restart.");
+    throw recordStartFailure(
+      new Error("openssl is not installed, so the fleet TLS certificate cannot be generated. Install openssl and restart the app.")
+    );
   }
 
-  const tls = getTlsMaterial();
+  let tls: ReturnType<typeof getTlsMaterial>;
+  try {
+    tls = getTlsMaterial();
+  } catch (e) {
+    throw recordStartFailure(
+      new Error(`Could not load or generate the fleet TLS certificate: ${(e as Error).message}`)
+    );
+  }
   const port = opts.port ?? DEFAULT_FLEET_PORT;
   const host = opts.host ?? FLEET_BIND_HOST;
 
@@ -245,15 +303,38 @@ export async function startFleetServer(opts: { port?: number; host?: string } = 
     }
   );
 
-  await new Promise<void>((resolve, reject) => {
-    fleetState.server!.once("error", reject);
-    fleetState.server!.listen(port, host, () => {
-      fleetState.server!.off("error", reject);
-      resolve();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      fleetState.server!.once("error", reject);
+      fleetState.server!.listen(port, host, () => {
+        fleetState.server!.off("error", reject);
+        resolve();
+      });
     });
-  });
+  } catch (e) {
+    // A failed bind used to leave `server` non-null with `port` unset, so
+    // isRunning() reported a listener that was not listening.
+    try { fleetState.server?.close(); } catch { /* never listened */ }
+    fleetState.server = null;
+    fleetState.port = null;
+    const err = e as NodeJS.ErrnoException;
+    const detail =
+      err.code === "EADDRINUSE"
+        ? `port ${port} is already in use — another LocalMind instance or service holds it. Set LOCALMIND_FLEET_PORT to a free port and restart.`
+        : err.code === "EACCES"
+          ? `permission denied binding port ${port}. Use a port above 1024 via LOCALMIND_FLEET_PORT.`
+          : err.message;
+    throw recordStartFailure(new Error(`Fleet listener could not bind: ${detail}`));
+  }
   fleetState.port = port;
+  fleetState.lastError = null;
   return { port, cert_fingerprint: tls.fingerprint_sha256 };
+}
+
+/** Remember why startup failed, then hand the error back for throwing. */
+function recordStartFailure(err: Error): Error {
+  fleetState.lastError = { message: err.message, at: Date.now() };
+  return err;
 }
 
 /** Stop the listener (graceful, waits up to 2s for in-flight). */
@@ -270,11 +351,59 @@ export async function stopFleetServer(): Promise<void> {
 }
 
 export function isRunning(): boolean {
-  return fleetState.server !== null;
+  // Both must hold: a bind failure clears them together.
+  return fleetState.server !== null && fleetState.port !== null;
 }
 
 export function activeFleetPort(): number | null {
   return fleetState.port;
+}
+
+export type FleetListenerStatus = {
+  running: boolean;
+  port: number | null;
+  last_error: { message: string; at: number } | null;
+};
+
+export function fleetListenerStatus(): FleetListenerStatus {
+  return {
+    running: isRunning(),
+    port: fleetState.port,
+    last_error: fleetState.lastError,
+  };
+}
+
+/**
+ * Bring the listener up if it isn't already, and report the outcome.
+ *
+ * Pairing is the one flow where a down listener is fatal but recoverable: the
+ * instrumentation hook may have failed for a transient reason (a stale cert, a
+ * port that has since freed up), and the user is standing right there. Try
+ * once, and keep the failure reason so callers can explain themselves.
+ */
+export async function ensureFleetListener(): Promise<{ ok: boolean; error?: string }> {
+  if (isRunning()) return { ok: true };
+  try {
+    await startFleetServer();
+    return { ok: true };
+  } catch (e) {
+    // startFleetServer already recorded the reason via recordStartFailure;
+    // returning it too keeps callers from having to re-read global state.
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+/**
+ * One explanation for "the listener is down", used by every caller that needs
+ * to refuse. Names the real cause when we know it instead of guessing.
+ */
+export function listenerDownMessage(): string {
+  const { last_error } = fleetListenerStatus();
+  if (last_error) return `Fleet listener is not running: ${last_error.message}`;
+  return (
+    "Fleet listener is not running on this device, and no startup error was recorded — " +
+    "the app may still be starting. Restart LocalMind and check Fleet again."
+  );
 }
 
 // -------------------------------------------------------------------------
@@ -293,6 +422,9 @@ function registerBuiltinHandlers(): void {
           // Receive but don't store — the peer opted out of cap exchange.
         } else {
           recordCapabilities(senderNodeId, envelope.payload);
+          // Keep the reachable address fresh across DHCP renumbers.
+          const addr = (envelope.payload as { primary_addr?: string })?.primary_addr;
+          if (addr) updatePeerPrimaryAddr(senderNodeId, addr);
         }
       }
       return { ack: true, node_id: getNodeIdentity().node_id };
@@ -480,5 +612,27 @@ function registerBuiltinHandlers(): void {
   >("workspace-relay", async ({ envelope, senderNodeId }) => {
     const { handleWorkspaceRelay } = await import("./handlers/workspace-relay");
     return handleWorkspaceRelay({ envelope, senderNodeId });
+  });
+
+  // tool-relay — a peer running the model elsewhere (e.g. DGX hub) asks us to
+  // run an allowlisted personal-assistant tool on our own device (tool home =
+  // initiator). Capability gated (accept_tool_relay), allowlisted, audited.
+  registerHandler<
+    import("./handlers/tool-relay").ToolRelayRequest,
+    import("./handlers/tool-relay").ToolRelayResponse
+  >("tool-relay", async ({ envelope, senderNodeId }) => {
+    const { handleToolRelay } = await import("./handlers/tool-relay");
+    return handleToolRelay({ envelope, senderNodeId });
+  });
+
+  // confirm-decision — initiator answers an ask/pin confirmation the executor
+  // raised mid chat-relay (M5 remote confirmations). Resolves the blocked
+  // awaitConfirmation on this node so the relayed turn can continue.
+  registerHandler<
+    import("./handlers/confirm-decision").ConfirmDecisionRequest,
+    import("./handlers/confirm-decision").ConfirmDecisionResponse
+  >("confirm-decision", async ({ envelope, senderNodeId }) => {
+    const { handleConfirmDecision } = await import("./handlers/confirm-decision");
+    return handleConfirmDecision({ envelope, senderNodeId });
   });
 }

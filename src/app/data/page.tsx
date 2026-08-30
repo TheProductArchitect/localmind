@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { Button, Card, Badge } from "@/components/ui";
+import { onActivate } from "@/lib/client/keyboard";
 import { Database, FileSpreadsheet, RefreshCw, Download, ExternalLink } from "lucide-react";
 
 type Table = { table_name: string; schema_json: string; row_count: number; updated_at: number };
@@ -85,7 +86,15 @@ export default function DataPage() {
         ) : (
           <div className="grid gap-2 sm:grid-cols-2">
             {tables.map((t) => (
-              <Card key={t.table_name} className="p-3 cursor-pointer hover:bg-accent/40" onClick={() => openTable(t.table_name)}>
+              <Card
+                key={t.table_name}
+                className="p-3 cursor-pointer hover:bg-accent/40"
+                onClick={() => openTable(t.table_name)}
+                onKeyDown={onActivate(() => openTable(t.table_name))}
+                role="button"
+                tabIndex={0}
+                aria-current={activeTable === t.table_name || undefined}
+              >
                 <div className="flex items-center gap-2">
                   <p className="font-medium text-sm flex-1">{t.table_name}</p>
                   <Badge variant="outline">{t.row_count} rows</Badge>
@@ -132,8 +141,12 @@ export default function DataPage() {
                   <Button size="sm" variant="outline" onClick={() => openSheet(s.path)}>
                     Open
                   </Button>
-                  <a href={`/api/data/spreadsheets/${encodeURIComponent(token)}?download=1`}>
-                    <Button size="sm" variant="ghost"><Download className="h-3.5 w-3.5" /></Button>
+                  <a
+                    href={`/api/data/spreadsheets/${encodeURIComponent(token)}?download=1`}
+                    aria-label={`Download ${s.path}`}
+                    title="Download spreadsheet"
+                  >
+                    <Button size="sm" variant="ghost" aria-hidden tabIndex={-1}><Download className="h-3.5 w-3.5" /></Button>
                   </a>
                 </Card>
               );

@@ -305,7 +305,7 @@ export async function pullConversationsFromPeers(sinceMs?: number): Promise<{ pe
         peer.peer_node_id,
         "conversation-sync",
         { since_ms: since },
-        { timeoutMs: 20_000 }
+        { timeoutMs: 5_000 }
       );
       if (!r.ok || !r.envelope.payload?.ok) return;
       const applied = applySyncedConversations(

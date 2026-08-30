@@ -39,6 +39,12 @@ describe("always-on planInstall", () => {
     expect(plan.contents).toMatch(/Restart=always/);
   });
 
+  it("starts the in-process scheduler when always-on runs without worker.js", () => {
+    const plan = planInstall();
+    if (plan.platform === "unsupported") return;
+    expect(plan.contents).toContain("LOCALMIND_IN_PROCESS_SCHEDULER");
+  });
+
   it("activate commands reference the same service path the plan declares", () => {
     const plan = planInstall();
     if (plan.platform === "unsupported") return;

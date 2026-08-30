@@ -35,3 +35,7 @@ export function upsertConversationSummary(conversationId: string, summary: strin
     )
     .run(conversationId, summary, coveredCount, Date.now());
 }
+
+export function deleteConversationSummary(conversationId: string): void {
+  getConvDb().prepare("DELETE FROM conversation_summaries WHERE conversation_id=?").run(conversationId);
+}

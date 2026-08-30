@@ -59,6 +59,12 @@ export type FleetPeerPolicy = {
   // Whether this peer may drive coding/git/worktree ops on our disk (workspace host).
   // Default OFF — grant explicitly per peer.
   accept_workspace_relay: boolean;
+  // Whether this peer (running the LLM/agent elsewhere, e.g. a DGX hub) may run
+  // allowlisted personal-assistant tools (filesystem, calendar, email,
+  // reminders, contacts, browser, mac automation) back on OUR device. Lets the
+  // model think on the hub while actions happen on the user's own PC.
+  // Default OFF — grant explicitly per peer. Never includes shell.
+  accept_tool_relay: boolean;
   // Maximum inbound chat-relay messages per minute from this peer.
   // Defends against a compromised peer flooding our local model.
   chat_relay_rate_per_min: number;
@@ -75,6 +81,7 @@ export const DEFAULT_PEER_POLICY: FleetPeerPolicy = {
   advertise_capabilities: true,
   accept_chat_relay: false,
   accept_workspace_relay: false,
+  accept_tool_relay: false,
   chat_relay_rate_per_min: 30,
   sync_conversations: true,
 };
@@ -168,6 +175,20 @@ export function recordCapabilities(peerNodeId: string, capabilities: Record<stri
 
 export function markPeerSeen(peerNodeId: string): void {
   getConfigDb().prepare("UPDATE fleet_peers SET last_seen_at=? WHERE peer_node_id=?").run(readNow(), peerNodeId);
+}
+
+/**
+ * Refresh a peer's reachable address from its heartbeat so a DHCP renumber or
+ * NIC change doesn't brick the mesh until re-pairing. No-op when unchanged or
+ * when the advertised value is empty/loopback.
+ */
+export function updatePeerPrimaryAddr(peerNodeId: string, primaryAddr: string | null | undefined): void {
+  if (!primaryAddr || primaryAddr.startsWith("127.") || primaryAddr.startsWith("localhost")) return;
+  const peer = getPeer(peerNodeId);
+  if (!peer || peer.primary_addr === primaryAddr) return;
+  getConfigDb()
+    .prepare("UPDATE fleet_peers SET primary_addr=? WHERE peer_node_id=?")
+    .run(primaryAddr, peerNodeId);
 }
 
 export function parsePeerPolicy(peer: FleetPeer): FleetPeerPolicy {

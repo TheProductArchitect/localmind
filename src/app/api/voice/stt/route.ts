@@ -23,10 +23,11 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { spawn, spawnSync } from "child_process";
+import { spawn } from "child_process";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { which } from "@/lib/sys/which";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -37,21 +38,26 @@ const MODEL_PATH =
   process.env.LOCALMIND_WHISPER_MODEL ||
   path.join(process.env.HOME || os.homedir(), ".localmind", "models", "ggml-base.en.bin");
 
-function which(cmd: string): string | null {
-  const r = spawnSync("/usr/bin/env", ["bash", "-c", `command -v ${cmd}`], { encoding: "utf8" });
-  const out = (r.stdout || "").trim();
-  return out || null;
-}
+type SttReadyPayload = {
+  ready: boolean;
+  whisper_path: string | null;
+  ffmpeg_path: string | null;
+  model_path: string;
+  model_present: boolean;
+  hint: string;
+};
 
-export async function GET() {
-  // Capability probe — used by the MicButton on mount to decide whether to
-  // surface itself at all.
-  const whisper = which("whisper-cli");
-  const ffmpeg = which("ffmpeg");
+let readyCache: { at: number; payload: SttReadyPayload } | null = null;
+const READY_TTL_MS = 5 * 60_000;
+
+async function probeReady(): Promise<SttReadyPayload> {
+  const now = Date.now();
+  if (readyCache && now - readyCache.at < READY_TTL_MS) return readyCache.payload;
+  const [whisper, ffmpeg] = await Promise.all([which("whisper-cli"), which("ffmpeg")]);
   let modelExists = false;
   try { await fs.access(MODEL_PATH); modelExists = true; } catch { /* missing */ }
   const ready = !!(whisper && ffmpeg && modelExists);
-  return NextResponse.json({
+  const payload: SttReadyPayload = {
     ready,
     whisper_path: whisper,
     ffmpeg_path: ffmpeg,
@@ -64,12 +70,19 @@ export async function GET() {
         : !ffmpeg
           ? "Install ffmpeg: `brew install ffmpeg` on macOS, `apt-get install -y ffmpeg` on Ubuntu/Debian."
           : `Download the model: \`curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin -o ${MODEL_PATH}\``,
-  });
+  };
+  readyCache = { at: now, payload };
+  return payload;
+}
+
+export async function GET() {
+  // Capability probe — used by the MicButton on mount to decide whether to
+  // surface itself at all. Cached so dual Mic + Conversation probes are cheap.
+  return NextResponse.json(await probeReady());
 }
 
 export async function POST(req: NextRequest) {
-  const whisper = which("whisper-cli");
-  const ffmpeg = which("ffmpeg");
+  const [whisper, ffmpeg] = await Promise.all([which("whisper-cli"), which("ffmpeg")]);
   if (!whisper) {
     return NextResponse.json(
       { error: "whisper-cli not on PATH. Install whisper.cpp and restart LocalMind." },

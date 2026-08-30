@@ -1,7 +1,20 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Card, Input } from "@/components/ui";
-import { CURATED_MODELS } from "@/lib/curated-models";
+import {
+  CURATED_MODELS,
+  isLikelyEmbeddingModel,
+  modelTagsMatch,
+  pickPreferredOllamaModel,
+} from "@/lib/curated-models";
+import { patchSettingsCache } from "@/lib/client/settings-cache";
+
+type InstalledModel = { name: string; family?: string; size?: number; modified?: string };
+
+function fmtSize(n?: number) {
+  if (!n) return null;
+  return (n / 1e9).toFixed(1) + " GB";
+}
 
 export default function Onboarding() {
   const [step, setStep] = useState(1);
@@ -11,13 +24,72 @@ export default function Onboarding() {
   const [pulling, setPulling] = useState<{ pct: number; status: string } | null>(null);
   const [installed, setInstalled] = useState(false);
   const [pin, setPin] = useState("");
+  const [existingModels, setExistingModels] = useState<InstalledModel[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [ollamaError, setOllamaError] = useState<string | null>(null);
 
   async function patch(p: any) {
-    await fetch("/api/settings", {
+    const response = await fetch("/api/settings", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(p),
     });
+    if (!response.ok) throw new Error(`settings ${response.status}`);
+    patchSettingsCache(p);
+  }
+
+  // Discover already-installed Ollama models when entering the model step.
+  useEffect(() => {
+    if (step !== 3) return;
+    let cancelled = false;
+    (async () => {
+      setLoadingModels(true);
+      setOllamaError(null);
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          const r = await fetch("/api/models?provider=ollama");
+          const j = await r.json();
+          if (cancelled) return;
+          const chat = ((j.models || []) as InstalledModel[]).filter((m) => !isLikelyEmbeddingModel(m));
+          if (j.error && chat.length === 0) {
+            setOllamaError(j.error);
+            await new Promise((res) => setTimeout(res, 800));
+            continue;
+          }
+          setExistingModels(chat);
+          setOllamaError(null);
+          if (chat.length) {
+            const pref = pickPreferredOllamaModel(chat);
+            if (pref) {
+              setModel(pref);
+              setInstalled(true);
+            }
+          }
+          setLoadingModels(false);
+          return;
+        } catch {
+          await new Promise((res) => setTimeout(res, 800));
+        }
+      }
+      if (!cancelled) {
+        setLoadingModels(false);
+        setOllamaError("Could not reach Ollama. Is it running?");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [step]);
+
+  function selectExisting(name: string) {
+    setModel(name);
+    setInstalled(true);
+  }
+
+  function selectCurated(name: string) {
+    setModel(name);
+    const already = existingModels.some((m) => modelTagsMatch(m.name, name));
+    setInstalled(already);
   }
 
   async function pull() {
@@ -42,10 +114,26 @@ export default function Onboarding() {
         if (!line) continue;
         const o = JSON.parse(line.slice(6));
         if (o.type === "progress") setPulling({ pct: o.pct, status: o.status });
-        if (o.type === "done") { setPulling(null); setInstalled(true); await patch({ active_model: model }); }
-        if (o.type === "error") { setPulling(null); alert(o.message); }
+        if (o.type === "done") {
+          setPulling(null);
+          setInstalled(true);
+          setExistingModels((prev) =>
+            prev.some((m) => modelTagsMatch(m.name, model)) ? prev : [...prev, { name: model }]
+          );
+          await patch({ active_model: model, provider: "ollama" });
+        }
+        if (o.type === "error") {
+          setPulling(null);
+          alert(o.message);
+        }
       }
     }
+  }
+
+  async function continueWithModel() {
+    if (!model) return;
+    await patch({ active_model: model, provider: "ollama" });
+    setStep(4);
   }
 
   async function finish() {
@@ -60,6 +148,9 @@ export default function Onboarding() {
     }).catch(() => {});
     window.location.href = "/";
   }
+
+  const curatedNeedsDownload =
+    !!model && !existingModels.some((m) => modelTagsMatch(m.name, model));
 
   return (
     <div className="h-full flex items-center justify-center p-6 bg-muted/20">
@@ -97,20 +188,63 @@ export default function Onboarding() {
 
         {step === 3 && (
           <>
-            <h1 className="text-lg font-semibold mb-3">Pull your first model</h1>
+            <h1 className="text-lg font-semibold mb-3">
+              {existingModels.length > 0 ? "Choose a model" : "Pull your first model"}
+            </h1>
+
+            {loadingModels && (
+              <p className="text-xs text-muted-foreground mb-3">Looking for models already on this machine…</p>
+            )}
+            {ollamaError && !loadingModels && (
+              <p className="text-xs text-destructive mb-3">{ollamaError}</p>
+            )}
+
+            {existingModels.length > 0 && (
+              <>
+                <p className="text-xs text-muted-foreground mb-2">Already installed on this machine</p>
+                <div className="space-y-2 mb-4">
+                  {existingModels.map((m) => (
+                    <button
+                      key={m.name}
+                      type="button"
+                      onClick={() => selectExisting(m.name)}
+                      className={`w-full text-left rounded-md border p-2 text-sm ${
+                        model === m.name ? "border-primary bg-accent" : ""
+                      }`}
+                    >
+                      <p className="font-medium">{m.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {[m.family || "model", fmtSize(m.size)].filter(Boolean).join(" · ")}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground mb-2">Or pull another</p>
+              </>
+            )}
+
             <div className="space-y-2 mb-3">
-              {CURATED_MODELS.map((m) => (
-                <button
-                  key={m.name}
-                  onClick={() => setModel(m.name)}
-                  className={`w-full text-left rounded-md border p-2 text-sm ${
-                    model === m.name ? "border-primary bg-accent" : ""
-                  }`}
-                >
-                  <p className="font-medium">{m.name}</p>
-                  <p className="text-xs text-muted-foreground">{m.description} · {m.size}</p>
-                </button>
-              ))}
+              {CURATED_MODELS.map((m) => {
+                const already = existingModels.some((x) => modelTagsMatch(x.name, m.name));
+                return (
+                  <button
+                    key={m.name}
+                    type="button"
+                    onClick={() => selectCurated(m.name)}
+                    className={`w-full text-left rounded-md border p-2 text-sm ${
+                      model === m.name ? "border-primary bg-accent" : ""
+                    }`}
+                  >
+                    <p className="font-medium">
+                      {m.name}
+                      {already ? (
+                        <span className="ml-2 text-xs font-normal text-muted-foreground">Installed</span>
+                      ) : null}
+                    </p>
+                    <p className="text-xs text-muted-foreground">{m.description} · {m.size}</p>
+                  </button>
+                );
+              })}
             </div>
             {pulling && (
               <div className="mb-3">
@@ -122,10 +256,12 @@ export default function Onboarding() {
             )}
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => setStep(2)}>Back</Button>
-              {!installed ? (
-                <Button disabled={!model || !!pulling} onClick={pull}>Download</Button>
+              {installed && model ? (
+                <Button disabled={!!pulling} onClick={continueWithModel}>Continue</Button>
               ) : (
-                <Button onClick={() => setStep(4)}>Continue</Button>
+                <Button disabled={!model || !!pulling || !curatedNeedsDownload} onClick={pull}>
+                  Download
+                </Button>
               )}
             </div>
           </>

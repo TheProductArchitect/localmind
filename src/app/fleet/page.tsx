@@ -38,6 +38,7 @@ type Peer = {
     advertise_capabilities: boolean;
     accept_chat_relay?: boolean;
     accept_workspace_relay?: boolean;
+    accept_tool_relay?: boolean;
     sync_conversations?: boolean;
   };
   capabilities: PeerCapabilities;
@@ -48,6 +49,12 @@ type PairingStart = {
   payload_json: string;
   qr_svg: string;
   window: { token_short: string; issued_at: number; expires_at: number; ttl_ms: number };
+};
+
+type ListenerStatus = {
+  running: boolean;
+  port: number | null;
+  last_error: { message: string; at: number } | null;
 };
 
 function ageOf(ms: number | null): string {
@@ -69,12 +76,14 @@ export default function FleetPage() {
   const [acceptPayload, setAcceptPayload] = useState("");
   const [acceptLabel, setAcceptLabel] = useState("");
   const [accepting, setAccepting] = useState(false);
+  const [listener, setListener] = useState<ListenerStatus | null>(null);
   const expiryRef = useRef<HTMLSpanElement>(null);
 
   const load = useCallback(async () => {
     const r = await fetch("/api/fleet/peers");
-    const j = (await r.json()) as { peers: Peer[] };
+    const j = (await r.json()) as { peers: Peer[]; listener?: ListenerStatus };
     setPeers(j.peers || []);
+    setListener(j.listener ?? null);
     setLoaded(true);
   }, []);
 
@@ -170,6 +179,15 @@ export default function FleetPage() {
             devices (you&apos;ll still see which machine each message came from), and
             compute can land where load is lightest.
           </p>
+          <p className="lm-body mt-3 max-w-xl" style={{ color: "hsl(0 0% 100% / 0.45)" }}>
+            Hub tip: put a powerful box (e.g. DGX) on the same Wi‑Fi, open{" "}
+            <code>:9443</code>, pair it, enable <em>Accept chat relay</em> on the hub
+            and <em>Accept tool relay</em> on this PC. In chat, set Run on to the hub
+            (or Auto) and leave Tools on this device — the model thinks on the hub
+            while files / calendar / mail run here. If peers can&apos;t reach{" "}
+            <code>:9443</code>, disable Wi‑Fi client isolation (see{" "}
+            <code>docs/dgx-hub-wifi.md</code>).
+          </p>
           <div className="lm-transport mt-5 max-w-xl" data-open={transportOpen}>
             <button
               onClick={() => setTransportOpen((o) => !o)}
@@ -190,8 +208,15 @@ export default function FleetPage() {
             {transportOpen && (
             <ul className="lm-transport__list">
               <li>
+                <b>Fleet port <code>:9443</code>.</b> Pairing, heartbeats, chat-relay,
+                and tool-relay use the dedicated fleet listener (override with{" "}
+                <code>LOCALMIND_FLEET_PORT</code>). Direct LAN only — if you see{" "}
+                <code>EHOSTUNREACH</code>, turn off AP/client isolation or put both
+                machines on Ethernet / a VPN.
+              </li>
+              <li>
                 <b>Direct over the local network.</b> Same Wi-Fi or Ethernet — the two
-                machines talk to each other&apos;s IPs (e.g. <code>192.168.x.x:5000</code>).
+                machines talk to each other&apos;s IPs (e.g. <code>192.168.x.x:9443</code>).
                 No cloud, no relay, no broker.
               </li>
               <li>
@@ -228,6 +253,23 @@ export default function FleetPage() {
           <RefreshCw className="h-3.5 w-3.5" />
         </button>
       </header>
+
+      {/* Pairing silently depends on this listener, so say when it's down. */}
+      {listener && !listener.running && (
+        <div
+          role="alert"
+          className="lm-surface-1 mb-8 p-4"
+          style={{ borderRadius: 14, borderColor: "hsl(0 90% 64% / 0.4)" }}
+        >
+          <p className="lm-body" style={{ color: "hsl(0 100% 82%)" }}>
+            Pairing is unavailable — the fleet listener is not running on this device.
+          </p>
+          <p className="lm-body mt-2" style={{ color: "hsl(0 0% 100% / 0.7)" }}>
+            {listener.last_error?.message ??
+              "No startup error was recorded, so the app may still be starting. Restart LocalMind and refresh."}
+          </p>
+        </div>
+      )}
 
       {/* Peers section */}
       <section className="mb-16">
@@ -390,6 +432,14 @@ export default function FleetPage() {
                           type="checkbox"
                           checked={!!p.policy.accept_workspace_relay}
                           onChange={(e) => togglePolicy(p, "accept_workspace_relay", e.target.checked)}
+                        />
+                      </label>
+                      <label className="lm-toggle">
+                        <span>Accept tool relay (this peer&apos;s model can run files / calendar / mail / browser actions on this machine)</span>
+                        <input
+                          type="checkbox"
+                          checked={!!p.policy.accept_tool_relay}
+                          onChange={(e) => togglePolicy(p, "accept_tool_relay", e.target.checked)}
                         />
                       </label>
                     </div>

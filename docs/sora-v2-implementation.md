@@ -55,7 +55,7 @@ tests**. Typecheck clean.
   (`token` events). Attachment sync caps at 256 KiB of validated `image/*`
   JSON per conversation pack. Workspace RPC + compute/workspace pins: see
   [`PRD-mesh-depth-v4.md`](./PRD-mesh-depth-v4.md). Remote `ask` confirmations
-  still fail-closed (M5).
+  propagate to the initiator (M5).
 - **Spawn** — prefer `spawn_agents`; legacy triad remains for back-compat.
 - **Coding** — agents push feature branches + open PRs only; never main. Discard
   session = full undo. `coding_session_id` binds `pi_code` / `filesystem` / `git`

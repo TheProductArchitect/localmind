@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { listPeers, parsePeerPolicy } from "@/lib/db/fleet";
 import { heartbeatStatus } from "@/lib/fleet/heartbeat";
+import { fleetListenerStatus } from "@/lib/fleet/server";
 
 export const runtime = "nodejs";
 
@@ -23,5 +24,11 @@ export async function GET() {
       capabilities: safeCaps,
     };
   });
-  return NextResponse.json({ peers, heartbeat: heartbeatStatus() });
+  // Pairing silently requires the local listener, so the page that offers
+  // pairing needs to be able to say when it is down, and why.
+  return NextResponse.json({
+    peers,
+    heartbeat: heartbeatStatus(),
+    listener: fleetListenerStatus(),
+  });
 }

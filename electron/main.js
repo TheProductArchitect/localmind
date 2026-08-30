@@ -22,11 +22,12 @@
  *   2. An already-running server on :3000 (PM2 users)
  *   3. Spawn `next start -p 3000` ourselves and wait for it.
  */
-const { app, BrowserWindow, WebContentsView, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, WebContentsView, ipcMain, shell, Menu } = require("electron");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const http = require("node:http");
 const fs = require("node:fs");
+const os = require("node:os");
 const { initBranding, updateBranding, getBranding, readAssistantNameFromDb } = require("./branding");
 
 const ROOT = path.join(__dirname, "..");
@@ -52,6 +53,8 @@ let win = null;
 let codingWin = null;
 let serverProc = null;
 let codingWatchTimer = null;
+/** Origin the LocalMind UI is served from; anything else is web content. */
+let appOrigin = null;
 
 // ---------------------------------------------------------------- server ---
 
@@ -193,6 +196,48 @@ function withTab(id, fn) {
   if (t) fn(t.view.webContents);
 }
 
+// ------------------------------------------------------- link escape hatch ---
+
+/** True when a URL belongs to the LocalMind app itself (safe to navigate to). */
+function isAppUrl(target) {
+  if (!appOrigin) return false;
+  try {
+    return new URL(target).origin === appOrigin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Web links clicked inside the LocalMind UI must never replace the chrome —
+ * that used to strand the user with no way back except quitting. They open as
+ * a real tab in our own browser instead, and the UI is told to show /browse.
+ */
+function openLinkInAppBrowser(target) {
+  if (!/^https?:/i.test(target)) {
+    if (/^(mailto|tel):/i.test(target)) shell.openExternal(target).catch(() => {});
+    return null;
+  }
+  const id = createTab(target);
+  if (win && !win.isDestroyed()) {
+    win.webContents.send("browser:opened-tab", { tabId: id, url: target });
+  }
+  return id;
+}
+
+/** Keep the chrome window on the app; hand every outside link to the browser. */
+function wireChromeNavigationPolicy(wc) {
+  wc.setWindowOpenHandler(({ url: target }) => {
+    openLinkInAppBrowser(target);
+    return { action: "deny" };
+  });
+  wc.on("will-navigate", (event, target) => {
+    if (isAppUrl(target)) return;
+    event.preventDefault();
+    openLinkInAppBrowser(target);
+  });
+}
+
 function wireIpc() {
   ipcMain.handle("browser:new-tab", (_e, url) => createTab(typeof url === "string" && url ? url : "about:blank"));
   ipcMain.handle("browser:close-tab", (_e, id) => {
@@ -239,17 +284,31 @@ function wireIpc() {
 
   ipcMain.handle("branding:get", () => getBranding());
   ipcMain.handle("branding:set", (_e, patch) => updateBranding(patch || {}));
+
+  // Explicit "open in my system browser" for links the user wants outside.
+  ipcMain.handle("shell:open-external", async (_e, url) => {
+    if (typeof url !== "string" || !/^https?:/i.test(url)) return false;
+    try {
+      await shell.openExternal(url);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 // ------------------------------------------------------------------- boot ---
 
 async function boot() {
-  const url = await ensureServer();
   wireIpc();
 
+  // Show a window immediately so cold `next start` / build doesn't feel hung.
+  const orbIconPath = path.join(process.env.LOCALMIND_DATA_DIR || path.join(os.homedir(), ".localmind"), "branding", "orb-idle.png");
   win = new BrowserWindow({
     width: 1440,
     height: 900,
+    show: false,
+    icon: fs.existsSync(orbIconPath) ? orbIconPath : undefined,
     title: readAssistantNameFromDb() || "Assistant",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -260,6 +319,31 @@ async function boot() {
   });
   win.on("resize", layout);
   win.on("closed", () => { win = null; });
+  win.once("ready-to-show", () => {
+    if (win && !win.isDestroyed()) win.show();
+  });
+
+  // Lightweight splash while the Next server comes up.
+  await win.loadURL(
+    "data:text/html," +
+      encodeURIComponent(
+        `<!doctype html><html><head><meta charset="utf-8"><title>LocalMind</title>
+<style>html,body{height:100%;margin:0;background:#07080f;color:#c8c9d4;font:15px/1.4 system-ui,sans-serif}
+main{min-height:100%;display:grid;place-items:center;letter-spacing:.02em}
+.dot{display:inline-block;width:.55rem;height:.55rem;border-radius:50%;background:#7aa2ff;margin-right:.55rem;animation:p 1.1s ease-in-out infinite}
+@keyframes p{0%,100%{opacity:.35}50%{opacity:1}}</style></head>
+<body><main><div><span class="dot"></span>Starting LocalMind…</div></main></body></html>`
+      )
+  );
+  if (win && !win.isDestroyed()) win.show();
+
+  const url = await ensureServer();
+  try {
+    appOrigin = new URL(url).origin;
+  } catch {
+    appOrigin = null;
+  }
+  wireChromeNavigationPolicy(win.webContents);
 
   await initBranding({
     mainWindow: win,
@@ -267,6 +351,65 @@ async function boot() {
   });
 
   await win.loadURL(url);
+
+  const sendReport = () => {
+    if (win && !win.isDestroyed()) win.webContents.send("app:report-improvement");
+  };
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      ...(process.platform === "darwin"
+        ? [{
+            label: app.name,
+            submenu: [
+              { role: "about" },
+              { type: "separator" },
+              { role: "services" },
+              { type: "separator" },
+              { role: "hide" },
+              { role: "hideOthers" },
+              { role: "unhide" },
+              { type: "separator" },
+              { role: "quit" },
+            ],
+          }]
+        : []),
+      {
+        label: "Edit",
+        submenu: [
+          { role: "undo" },
+          { role: "redo" },
+          { type: "separator" },
+          { role: "cut" },
+          { role: "copy" },
+          { role: "paste" },
+          { role: "selectAll" },
+        ],
+      },
+      {
+        label: "View",
+        submenu: [
+          { role: "reload" },
+          { role: "toggleDevTools" },
+          { type: "separator" },
+          { role: "resetZoom" },
+          { role: "zoomIn" },
+          { role: "zoomOut" },
+          { type: "separator" },
+          { role: "togglefullscreen" },
+        ],
+      },
+      {
+        label: "Help",
+        submenu: [
+          {
+            label: "Report improvement…",
+            accelerator: "CommandOrControl+Shift+F",
+            click: () => sendReport(),
+          },
+        ],
+      },
+    ])
+  );
 
   // Secondary "coding browser" — opens when the app writes open-coding-window.json
   const dataDir = process.env.LOCALMIND_DATA_DIR || path.join(require("os").homedir(), ".localmind");

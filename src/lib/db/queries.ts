@@ -40,6 +40,8 @@ export type Settings = {
   code_server_enabled?: number;
   /** Local code-server base URL (default http://127.0.0.1:8080) */
   code_server_url?: string;
+  /** When compute is on a peer: initiator = tools on this device, executor = on peer */
+  tool_home_placement?: string;
 };
 
 export type WebSearchProvider = "auto" | "brave" | "you" | "duckduckgo";
@@ -303,6 +305,56 @@ export function deleteTrailingTurn(conversationId: string) {
   for (const m of toDelete) stmt.run(m.id);
 }
 
+/** Wipe every message in a conversation (keeps the conversation row). */
+export function clearConversationMessages(conversationId: string): number {
+  const db = getConvDb();
+  const info = db.prepare("DELETE FROM messages WHERE conversation_id=?").run(conversationId);
+  db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(Date.now(), conversationId);
+  return info.changes;
+}
+
+/** Replace message list: delete all, then insert the provided rows in order. */
+export function replaceConversationMessages(
+  conversationId: string,
+  rows: {
+    role: Message["role"];
+    content: string;
+    token_count?: number | null;
+    parent_message_id?: string | null;
+    attachments?: string | null;
+    origin_node_id?: string | null;
+    origin_label?: string | null;
+  }[]
+): void {
+  const db = getConvDb();
+  const now = Date.now();
+  const meta = localNodeMeta();
+  const tx = db.transaction(() => {
+    db.prepare("DELETE FROM messages WHERE conversation_id=?").run(conversationId);
+    const insert = db.prepare(
+      "INSERT INTO messages (id, conversation_id, role, content, created_at, token_count, parent_message_id, attachments, origin_node_id, origin_label) VALUES (?,?,?,?,?,?,?,?,?,?)"
+    );
+    let t = now - rows.length;
+    for (const m of rows) {
+      t += 1;
+      insert.run(
+        nanoid(12),
+        conversationId,
+        m.role,
+        m.content,
+        t,
+        m.token_count ?? 0,
+        m.parent_message_id ?? null,
+        m.attachments ?? null,
+        m.origin_node_id ?? meta.node_id,
+        m.origin_label ?? meta.label
+      );
+    }
+    db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(now, conversationId);
+  });
+  tx();
+}
+
 export function getLastUserMessage(conversationId: string): string | null {
   const msgs = getMessages(conversationId);
   for (let i = msgs.length - 1; i >= 0; i--) {
@@ -317,6 +369,71 @@ export function searchMessages(query: string): { conversation_id: string; snippe
       "SELECT conversation_id, substr(content,1,120) AS snippet FROM messages WHERE content LIKE ? LIMIT 50"
     )
     .all(`%${query}%`) as any[];
+}
+
+export type ConversationHistoryMatch = {
+  conversation_id: string;
+  conversation_title: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: number;
+};
+
+/**
+ * Search prior user/assistant turns across conversations.
+ *
+ * Results are owner-scoped when the active conversation has an owner. A null
+ * owner is the local single-user workspace and may search other null-owner
+ * conversations. Deleted conversations are excluded.
+ */
+export function searchConversationHistory(
+  query: string,
+  opts: { ownerUserId?: string | null; excludeConversationId?: string; limit?: number } = {}
+): ConversationHistoryMatch[] {
+  const terms = Array.from(
+    new Set(
+      query
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((term) => term.length > 2)
+    )
+  ).slice(0, 8);
+  if (terms.length === 0) return [];
+
+  const clauses = terms.map(() => "LOWER(m.content) LIKE ?").join(" OR ");
+  const params: unknown[] = terms.map((term) => `%${term}%`);
+  let ownerClause = "c.owner_user_id IS NULL";
+  if (opts.ownerUserId) {
+    ownerClause = "c.owner_user_id = ?";
+    params.push(opts.ownerUserId);
+  }
+  let excludeClause = "";
+  if (opts.excludeConversationId) {
+    excludeClause = "AND c.id <> ?";
+    params.push(opts.excludeConversationId);
+  }
+  params.push(Math.max(1, Math.min(opts.limit ?? 100, 200)));
+
+  return getConvDb()
+    .prepare(
+      `SELECT
+         m.conversation_id,
+         c.title AS conversation_title,
+         m.role,
+         m.content,
+         m.created_at
+       FROM messages m
+       JOIN conversations c ON c.id = m.conversation_id
+       WHERE c.deleted_at IS NULL
+         AND ${ownerClause}
+         ${excludeClause}
+         AND m.role IN ('user', 'assistant')
+         AND (${clauses})
+       ORDER BY m.created_at DESC
+       LIMIT ?`
+    )
+    .all(...params) as ConversationHistoryMatch[];
 }
 
 // ---------------- Audit Log ----------------

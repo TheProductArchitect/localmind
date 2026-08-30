@@ -171,5 +171,5 @@ flowchart LR
 - **Attribution** — chat UI shows `from …` / `via …` per turn.
 - **Compute vs workspace pins** — independent `compute_placement` / `workspace_placement` (conversation + settings). Workspace host runs allowlisted `git` / `coding_project` / `filesystem` via `workspace-relay` RPC (never full-repo sync). See [`PRD-mesh-depth-v4.md`](./PRD-mesh-depth-v4.md).
 - **Compute** — chat **Run on** persists `compute_placement`; **Auto** uses `/api/fleet/chat-placement?conversation_id=…`. Task-graph collect path uses `createPlacementRunner` (local fallback when alone).
-- **Remote drive** — chat-relay streams live tokens over fleet NDJSON → initiator SSE (`token` events); `accept_chat_relay` required on the executor. Remote `ask` confirmations still fail-closed (M5 follow-up).
+- **Remote drive** — chat-relay streams live tokens over fleet NDJSON → initiator SSE (`token` events); `accept_chat_relay` required on the executor. Remote `ask`/`pin` gates stream as `confirm` frames; the initiator answers via `confirm-decision` (M5). Optional `tool_home=initiator` relays allowlisted PA tools back to the client PC.
 - **WAN** — not supported; LAN paired devices only.

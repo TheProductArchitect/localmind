@@ -23,6 +23,9 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   // --- Inbound channel webhooks (carry their own HMAC/token) ---
   { path: "/api/channels", methods: ["GET"], role: "authenticated" },
   { path: "/api/channels", methods: ["POST"], role: "owner" },
+  // Not a webhook: this reports whether Unipile is configured, so it must sit
+  // above the wildcard that lets self-signed webhooks through unauthenticated.
+  { path: "/api/channels/unipile/status", methods: ["GET"], role: "authenticated" },
   { path: "/api/channels/*", methods: "ALL", role: "public" },
   { path: "/api/webhooks/*", methods: "ALL", role: "public" },
   { path: "/api/internal/*", methods: "ALL", role: "public" },
@@ -38,6 +41,7 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
 
   // --- Models ---
   { path: "/api/models", methods: ["GET"], role: "authenticated" },
+  { path: "/api/models/capabilities", methods: ["GET"], role: "authenticated" },
   { path: "/api/models/pull", methods: ["POST"], role: "member" },
   { path: "/api/models/*", methods: ["DELETE"], role: "owner" },
 
@@ -157,6 +161,10 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   { path: "/api/ops/proposals/*", methods: ["POST"], role: "owner" },
   { path: "/api/ops/self-checks", methods: ["GET"], role: "authenticated" },
   { path: "/api/ops/meta", methods: ["GET"], role: "authenticated" },
+
+  // --- In-app improvement reports (local LLM analysis) ---
+  { path: "/api/reports/improvement", methods: ["GET", "POST"], role: "authenticated" },
+
   { path: "/api/coding/projects", methods: ["GET"], role: "authenticated" },
   { path: "/api/coding/projects", methods: ["POST"], role: "owner" },
   { path: "/api/coding/open-window", methods: ["POST"], role: "authenticated" },
@@ -238,6 +246,8 @@ export const ROUTE_MAP: readonly RouteEntry[] = [
   // this node should be able to drive their own peer chats; the peer's
   // accept_chat_relay flag is the trust gate, not user role on this side.
   { path: "/api/fleet/peers/*/chat", methods: ["POST"], role: "authenticated" },
+  // Remote confirmation decisions ride the same per-user trust model as chat.
+  { path: "/api/fleet/peers/*/confirm", methods: ["POST"], role: "authenticated" },
 ];
 
 // User roles include `guest` (not a RouteRole); guest satisfies `authenticated`.
