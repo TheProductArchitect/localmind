@@ -119,7 +119,7 @@ describe("schedule_task tool", () => {
     );
     expect(res.ok).toBe(true);
     expect(createTask.mock.calls[0][0].delivery_channel).toBe("browser");
-    expect(res.output).toMatch(/isn't connected/);
+    expect(res.output).toMatch(/isn't available for scheduled delivery/);
   });
 
   it("allows an enabled delivery channel", async () => {
@@ -129,6 +129,23 @@ describe("schedule_task tool", () => {
       ctx
     );
     expect(res.ok).toBe(true);
+  });
+
+  it("does not claim delivery through an enabled channel the runtime cannot send to", async () => {
+    enabledChannels = [{ type: "whatsapp", enabled: true }];
+    const res = await scheduleTool.execute(
+      {
+        operation: "create",
+        name: "x",
+        schedule: "daily at 9",
+        prompt: "p",
+        delivery_channel: "whatsapp",
+      },
+      ctx
+    );
+    expect(res.ok).toBe(true);
+    expect(createTask.mock.calls[0][0].delivery_channel).toBe("browser");
+    expect(res.output).toMatch(/isn't available for scheduled delivery/);
   });
 
   it("browser channel is always available even with no channels enabled", async () => {
@@ -171,6 +188,37 @@ describe("schedule_task tool", () => {
     const res = await scheduleTool.execute({ operation: "update", id: "task1", schedule: "every hour" }, ctx);
     expect(res.ok).toBe(true);
     expect(store[0].cron).toBe("0 * * * *");
+    expect(store[0].run_at).toBeNull();
+  });
+
+  it("moves an existing task to the new one-shot time", async () => {
+    await scheduleTool.execute(
+      { operation: "create", name: "N", schedule: "0 3 * * *", prompt: "run" },
+      ctx
+    );
+    const before = Date.now();
+    const res = await scheduleTool.execute(
+      { operation: "update", id: "task1", schedule: "in 2 hours" },
+      ctx
+    );
+    expect(res.ok).toBe(true);
+    expect(store[0].cron).toBe("@once");
+    expect(store[0].run_at).toBeGreaterThanOrEqual(before + 2 * 3_600_000 - 50);
+  });
+
+  it("clears a stale one-shot time when changing to a recurring schedule", async () => {
+    await scheduleTool.execute(
+      { operation: "create", name: "N", schedule: "in 4 minutes", prompt: "run" },
+      ctx
+    );
+    expect(store[0].run_at).not.toBeNull();
+    const res = await scheduleTool.execute(
+      { operation: "update", id: "task1", schedule: "every hour" },
+      ctx
+    );
+    expect(res.ok).toBe(true);
+    expect(store[0].cron).toBe("0 * * * *");
+    expect(store[0].run_at).toBeNull();
   });
 
   it("creates a one-shot reminder from a relative time (fixes 'remind me in 4 minutes')", async () => {
@@ -215,5 +263,31 @@ describe("parseWhen", () => {
     const w = parseWhen("tomorrow at 9");
     expect(w.runAt).toBeGreaterThan(Date.now());
     expect(w.cron).toBeUndefined();
+  });
+
+  it("treats a bare clock time as the next one-shot occurrence", () => {
+    const w = parseWhen("remind me at 5pm");
+    expect(w.cron).toBeUndefined();
+    expect(w.runAt).toBeGreaterThan(Date.now());
+    expect(new Date(w.runAt!).getHours()).toBe(17);
+  });
+
+  it("treats a weekday without recurrence language as one-shot", () => {
+    const w = parseWhen("Friday at 10am");
+    expect(w.cron).toBeUndefined();
+    expect(w.runAt).toBeGreaterThan(Date.now());
+    expect(new Date(w.runAt!).getDay()).toBe(5);
+    expect(new Date(w.runAt!).getHours()).toBe(10);
+  });
+
+  it("keeps an explicitly recurring weekday as cron", () => {
+    expect(parseWhen("every Friday at 10am")).toEqual({ cron: "0 10 * * 5" });
+  });
+
+  it("supports relative weeks as a one-shot duration", () => {
+    const before = Date.now();
+    const w = parseWhen("in 2 weeks");
+    expect(w.cron).toBeUndefined();
+    expect(w.runAt).toBeGreaterThanOrEqual(before + 14 * 86_400_000 - 50);
   });
 });

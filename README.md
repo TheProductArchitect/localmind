@@ -37,6 +37,11 @@ the chrome, and each tab is a sandboxed Chromium `WebContentsView` — real
 sessions, real JS, real logins, driven from the same app Sora lives in. On
 the web build, `/browse` falls back to the screenshot Live mode + Reader.
 
+**Report improvement** (rail flag, ⌘⇧F, Help menu, or ⌘K → “Report improvement”)
+captures the current route, your note, recent errors, and an optional screenshot,
+then asks the active local model for concrete suggestions. Reports stay in
+`~/.localmind` — nothing is uploaded.
+
 Main process: `electron/main.js` (tab manager, server boot); privileged
 bridge: `electron/preload.js` (chrome window only — tab content is fully
 sandboxed with no preload).

@@ -1,5 +1,7 @@
+import os from "node:os";
 import { NextRequest, NextResponse } from "next/server";
 import { ollamaProvider, getProviderByName, CHAT_PROVIDERS } from "@/lib/providers";
+import { assessModelFit } from "@/lib/models/fit";
 import { listHuggingfaceModels, HUGGINGFACE_CURATED } from "@/lib/providers/huggingface";
 import { listLmStudioModels, detectLmStudio, LMSTUDIO_DOCS_URL } from "@/lib/providers/lmstudio";
 import { getSettings } from "@/lib/db/queries";
@@ -8,6 +10,25 @@ import { getApiKey } from "@/lib/db/apikeys";
 export const runtime = "nodejs";
 
 const CLOUD_PROVIDERS = new Set(["openai", "anthropic", "groq", "openrouter", "gemini", "mindstudio"]);
+
+/**
+ * Annotate locally-served models with whether they actually fit in memory
+ * right now. Selecting one that does not is what makes a chat hang instead of
+ * answering, so the picker needs to say so up front.
+ */
+function withFit<T extends { name: string; size?: number }>(models: T[]) {
+  const availableBytes = os.freemem();
+  const totalBytes = os.totalmem();
+  return models.map((m) => ({
+    ...m,
+    fit: assessModelFit({
+      sizeBytes: m.size,
+      availableBytes,
+      totalBytes,
+      modelName: m.name,
+    }),
+  }));
+}
 
 /**
  * GET /api/models?provider=ollama|huggingface|lmstudio|openai|anthropic|…
@@ -47,7 +68,7 @@ export async function GET(req: NextRequest) {
     const models = await listLmStudioModels();
     return NextResponse.json({
       provider,
-      models,
+      models: withFit(models),
       active,
       active_provider: activeProvider,
       docs_url: LMSTUDIO_DOCS_URL,
@@ -67,7 +88,15 @@ export async function GET(req: NextRequest) {
     }
     try {
       const models = await getProviderByName(provider).getModels();
-      return NextResponse.json({ provider, models, active, active_provider: activeProvider });
+      // Cloud models run on someone else's hardware, so a local memory check
+      // is meaningless there; locally-served ones need it.
+      const isLocal = !CLOUD_PROVIDERS.has(provider);
+      return NextResponse.json({
+        provider,
+        models: isLocal ? withFit(models) : models,
+        active,
+        active_provider: activeProvider,
+      });
     } catch (e: any) {
       return NextResponse.json({
         provider,
@@ -84,7 +113,7 @@ export async function GET(req: NextRequest) {
     const models = await ollamaProvider.getModels();
     return NextResponse.json({
       provider: "ollama",
-      models,
+      models: withFit(models),
       active,
       active_provider: activeProvider,
     });

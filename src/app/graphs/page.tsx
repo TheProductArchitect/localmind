@@ -145,8 +145,12 @@ export default function GraphsPage() {
                   <td className="text-xs text-muted-foreground">{relativeTime(g.created_at)}</td>
                   <td className="text-xs">{durationOf(g)}</td>
                   <td className="text-right pr-3">
-                    <Link href={`/graphs/${g.graph_id}`}>
-                      <Button size="sm" variant="ghost">
+                    <Link
+                      href={`/graphs/${g.graph_id}`}
+                      aria-label={`Open graph ${g.graph_id}`}
+                      title="Open graph"
+                    >
+                      <Button size="sm" variant="ghost" aria-hidden tabIndex={-1}>
                         <ChevronRight className="h-3.5 w-3.5" />
                       </Button>
                     </Link>

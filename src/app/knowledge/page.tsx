@@ -13,6 +13,7 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { onActivate } from "@/lib/client/keyboard";
 import { toast } from "@/components/toast";
 import { useConfirm } from "@/components/confirm-dialog";
 import { NoteGraph } from "@/components/note-graph";
@@ -351,6 +352,10 @@ function NotesTab() {
             <div key={n.id}
               className={`lm-note-item ${active?.id === n.id ? "is-active" : ""}`}
               onClick={() => { setActive(n); setShowGraph(false); }}
+              onKeyDown={onActivate(() => { setActive(n); setShowGraph(false); })}
+              role="button"
+              tabIndex={0}
+              aria-current={active?.id === n.id || undefined}
               data-pulse="true"
             >
               <span className="lm-note-item__title">{n.title}</span>

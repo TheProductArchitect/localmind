@@ -6,6 +6,7 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { onActivate } from "@/lib/client/keyboard";
 import { useConfirm } from "@/components/confirm-dialog";
 import { FolderGit2, Plus, Play, ExternalLink, RotateCcw } from "lucide-react";
 
@@ -277,6 +278,10 @@ function ProjectsPageInner() {
                   background: selectedProject === p.id ? "hsl(0 0% 100% / 0.04)" : "transparent",
                 }}
                 onClick={() => setSelectedProject(p.id)}
+                onKeyDown={onActivate(() => setSelectedProject(p.id))}
+                role="button"
+                tabIndex={0}
+                aria-current={selectedProject === p.id || undefined}
               >
                 <div className="flex-1 min-w-0">
                   <div className="font-medium truncate">{p.name}</div>

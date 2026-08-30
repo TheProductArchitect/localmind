@@ -59,6 +59,8 @@ function macPlistContents(opts: { node: string; npm: string; workingDir: string;
     <string>${path.dirname(opts.node)}:/usr/local/bin:/usr/bin:/bin</string>
     <key>NODE_ENV</key>
     <string>production</string>
+    <key>LOCALMIND_IN_PROCESS_SCHEDULER</key>
+    <string>1</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -81,6 +83,7 @@ After=network-online.target
 [Service]
 WorkingDirectory=${opts.workingDir}
 Environment=NODE_ENV=production
+Environment=LOCALMIND_IN_PROCESS_SCHEDULER=1
 Environment=PATH=${path.dirname(opts.node)}:/usr/local/bin:/usr/bin:/bin
 ExecStart=${opts.npm} start
 Restart=always

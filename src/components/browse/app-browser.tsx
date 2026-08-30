@@ -10,6 +10,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Input } from "@/components/ui";
+import { onActivate } from "@/lib/client/keyboard";
 import { BrowseSoraPanel } from "@/components/browse/sora-panel";
 import { Orb } from "@/components/orb";
 import { toast } from "@/components/toast";
@@ -273,6 +274,10 @@ export function AppBrowser() {
           <div
             key={t.id}
             onClick={() => lm.selectTab(t.id)}
+            onKeyDown={onActivate(() => lm.selectTab(t.id))}
+            role="tab"
+            tabIndex={0}
+            aria-selected={t.id === state.activeTabId}
             className={`group flex items-center gap-1.5 max-w-[200px] rounded-t-md border border-b-0 px-2.5 py-1.5 text-xs cursor-pointer select-none shrink-0 ${
               t.id === state.activeTabId
                 ? "bg-background border-border"

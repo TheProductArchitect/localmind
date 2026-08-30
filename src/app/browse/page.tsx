@@ -179,9 +179,9 @@ function WebBrowsePage() {
           </div>
           {mode === "live" && sessionId && (
             <>
-              <Button size="sm" variant="outline" onClick={() => act({ type: "back" })} disabled={loading}><ArrowLeft className="h-3.5 w-3.5" /></Button>
-              <Button size="sm" variant="outline" onClick={() => act({ type: "forward" })} disabled={loading}><ArrowRight className="h-3.5 w-3.5" /></Button>
-              <Button size="sm" variant="outline" onClick={() => liveNavigate(url)} disabled={loading || !url}><RotateCw className="h-3.5 w-3.5" /></Button>
+              <Button size="sm" variant="outline" onClick={() => act({ type: "back" })} disabled={loading} aria-label="Back" title="Back"><ArrowLeft className="h-3.5 w-3.5" /></Button>
+              <Button size="sm" variant="outline" onClick={() => act({ type: "forward" })} disabled={loading} aria-label="Forward" title="Forward"><ArrowRight className="h-3.5 w-3.5" /></Button>
+              <Button size="sm" variant="outline" onClick={() => liveNavigate(url)} disabled={loading || !url} aria-label="Reload page" title="Reload"><RotateCw className="h-3.5 w-3.5" /></Button>
             </>
           )}
           <Input className="flex-1 min-w-[140px]" placeholder="URL" value={url} onChange={(e) => setUrl(e.target.value)}

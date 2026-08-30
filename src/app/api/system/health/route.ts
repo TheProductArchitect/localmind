@@ -1,15 +1,34 @@
 import { NextResponse } from "next/server";
 import os from "os";
-import { execSync } from "child_process";
+import { statfs } from "node:fs/promises";
 
 export const runtime = "nodejs";
 
-function diskUsage(): { used: number; total: number } {
+// Health is polled every 2s by the System page and every 60s by the disk
+// banner. Both used to pay for a `df` subprocess and a 1.5s Ollama probe on
+// every call, and `execSync` blocked the event loop for the whole spawn —
+// which is what stalled the chat stream and the pulse poll. Serve a short
+// TTL snapshot instead so N concurrent pollers cost one refresh.
+const TTL_MS = 2_000;
+
+type Health = {
+  cpu: number;
+  ram: { used: number; total: number };
+  disk: { used: number; total: number };
+  ollama: string;
+  app: string;
+  timestamp: number;
+};
+
+let cached: { at: number; value: Health } | null = null;
+let inFlight: Promise<Health> | null = null;
+
+async function diskUsage(): Promise<{ used: number; total: number }> {
   try {
-    const out = execSync("df -k / | tail -1", { encoding: "utf8" }).trim().split(/\s+/);
-    const total = Number(out[1]) * 1024;
-    const used = Number(out[2]) * 1024;
-    return { used, total };
+    const s = await statfs("/");
+    const total = Number(s.blocks) * Number(s.bsize);
+    const free = Number(s.bfree) * Number(s.bsize);
+    return { used: total - free, total };
   } catch {
     return { used: 0, total: 0 };
   }
@@ -30,18 +49,38 @@ async function ollamaStatus(): Promise<string> {
   }
 }
 
-export async function GET() {
+async function collect(): Promise<Health> {
   const cpus = os.cpus();
   const loadPct = Math.min(100, Math.round((os.loadavg()[0] / cpus.length) * 100));
   const totalMem = os.totalmem();
   const freeMem = os.freemem();
-  const disk = diskUsage();
-  return NextResponse.json({
+  const [disk, ollama] = await Promise.all([diskUsage(), ollamaStatus()]);
+  return {
     cpu: loadPct,
     ram: { used: totalMem - freeMem, total: totalMem },
     disk,
-    ollama: await ollamaStatus(),
+    ollama,
     app: "running",
     timestamp: Date.now(),
-  });
+  };
+}
+
+async function snapshot(): Promise<Health> {
+  const now = Date.now();
+  if (cached && now - cached.at < TTL_MS) return cached.value;
+  // Collapse concurrent pollers onto one refresh.
+  if (inFlight) return inFlight;
+  inFlight = collect()
+    .then((value) => {
+      cached = { at: Date.now(), value };
+      return value;
+    })
+    .finally(() => {
+      inFlight = null;
+    });
+  return inFlight;
+}
+
+export async function GET() {
+  return NextResponse.json(await snapshot());
 }

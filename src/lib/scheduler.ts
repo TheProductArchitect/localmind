@@ -38,12 +38,15 @@ const inFlight = new Set<string>();
 let tickRunning = false;
 let timer: NodeJS.Timeout | null = null;
 
-async function runTaskOnce(task: import("./db/automations").ScheduledTask): Promise<void> {
-  if (inFlight.has(task.id)) return;
+async function runTaskOnce(task: import("./db/automations").ScheduledTask): Promise<boolean> {
+  if (inFlight.has(task.id)) return false;
   inFlight.add(task.id);
   const t0 = Date.now();
   try {
-    const convId = createConversation().id;
+    // Preserve the task creator on the generated conversation so scheduled
+    // work receives that user's memory/profile context and remains isolated
+    // from other users on a shared LocalMind instance.
+    const convId = createConversation(undefined, task.creator_user_id || undefined).id;
     const output = await runAgentCollect(convId, task.prompt, {
       systemPrefix: `You are running a scheduled task named "${task.name}". Produce the requested output directly.`,
       processDisplayName: `Scheduled: ${task.name}`,
@@ -58,10 +61,12 @@ async function runTaskOnce(task: import("./db/automations").ScheduledTask): Prom
     logger.info("scheduled task complete", {
       task: task.name, duration_ms: Date.now() - t0,
     });
+    return true;
   } catch (e) {
     logger.error("scheduled task failed", {
       task: task.name, error: (e as Error).message,
     });
+    return false;
   } finally {
     inFlight.delete(task.id);
   }
@@ -75,12 +80,18 @@ async function tickOnce(): Promise<void> {
     // One-shot reminders due now — fire once, then disable.
     const oneShots = listDueOneShots(now.getTime());
     for (const t of oneShots) {
-      await runTaskOnce(t);
-      setTaskEnabled(t.id, false);
+      const delivered = await runTaskOnce(t);
+      // A failed one-shot must remain due so the next tick retries it. Disabling
+      // here would silently lose exactly the reminders users rely on most.
+      if (delivered) setTaskEnabled(t.id, false);
     }
     // Recurring cron tasks (run_at NULL).
     const tasks = listTasks().filter((t) => t.enabled && t.run_at == null);
+    const minuteStart = now.getTime() - now.getSeconds() * 1000 - now.getMilliseconds();
     const due = tasks.filter((t) => {
+      // The process may restart or hot-reload inside the same matching minute.
+      // Persisted last_run_at prevents a second send/action after that restart.
+      if (t.last_run_at != null && t.last_run_at >= minuteStart) return false;
       try { return cronMatches(t.cron, now); } catch { return false; }
     });
     if (due.length === 0) return;

@@ -23,10 +23,11 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { spawn, spawnSync } from "child_process";
+import { spawn } from "child_process";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { which } from "@/lib/sys/which";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -36,12 +37,6 @@ const WHISPER_TIMEOUT_MS = 60_000;
 const MODEL_PATH =
   process.env.LOCALMIND_WHISPER_MODEL ||
   path.join(process.env.HOME || os.homedir(), ".localmind", "models", "ggml-base.en.bin");
-
-function which(cmd: string): string | null {
-  const r = spawnSync("/usr/bin/env", ["bash", "-c", `command -v ${cmd}`], { encoding: "utf8" });
-  const out = (r.stdout || "").trim();
-  return out || null;
-}
 
 type SttReadyPayload = {
   ready: boolean;
@@ -58,8 +53,7 @@ const READY_TTL_MS = 5 * 60_000;
 async function probeReady(): Promise<SttReadyPayload> {
   const now = Date.now();
   if (readyCache && now - readyCache.at < READY_TTL_MS) return readyCache.payload;
-  const whisper = which("whisper-cli");
-  const ffmpeg = which("ffmpeg");
+  const [whisper, ffmpeg] = await Promise.all([which("whisper-cli"), which("ffmpeg")]);
   let modelExists = false;
   try { await fs.access(MODEL_PATH); modelExists = true; } catch { /* missing */ }
   const ready = !!(whisper && ffmpeg && modelExists);
@@ -88,8 +82,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const whisper = which("whisper-cli");
-  const ffmpeg = which("ffmpeg");
+  const [whisper, ffmpeg] = await Promise.all([which("whisper-cli"), which("ffmpeg")]);
   if (!whisper) {
     return NextResponse.json(
       { error: "whisper-cli not on PATH. Install whisper.cpp and restart LocalMind." },

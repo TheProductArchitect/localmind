@@ -146,6 +146,30 @@ export function listActive(ownerUserId?: string | null): AgentProcess[] {
     .all() as AgentProcess[];
 }
 
+/**
+ * Counts only — for the 4s pulse poll, which needs totals rather than rows.
+ * Selecting every active row and filtering in JS made a heartbeat scale with
+ * process history; this stays constant-cost.
+ */
+export function countActive(ownerUserId?: string | null): { total: number; subagents: number } {
+  const subagentExpr =
+    "SUM(CASE WHEN LOWER(COALESCE(display_name,'')) LIKE '%subagent%' THEN 1 ELSE 0 END) AS subagents";
+  const row = (
+    ownerUserId
+      ? getConfigDb()
+          .prepare(
+            `SELECT COUNT(*) AS total, ${subagentExpr} FROM agent_processes WHERE completed_at IS NULL AND (owner_user_id IS NULL OR owner_user_id=?)`
+          )
+          .get(ownerUserId)
+      : getConfigDb()
+          .prepare(
+            `SELECT COUNT(*) AS total, ${subagentExpr} FROM agent_processes WHERE completed_at IS NULL`
+          )
+          .get()
+  ) as { total?: number; subagents?: number } | undefined;
+  return { total: row?.total ?? 0, subagents: row?.subagents ?? 0 };
+}
+
 export function listHistory(ownerUserId?: string | null, limit = 50): AgentProcess[] {
   if (ownerUserId) {
     return getConfigDb()

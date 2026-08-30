@@ -59,10 +59,9 @@ try {
   logger.warn("fleet transport init skipped", { error: (e as Error).message });
 }
 
-// Scheduled tasks and monitors are driven exclusively by worker.js (PM2) which
-// POSTs to /api/internal/*. An in-process scheduler here duplicated cron
-// fires and could run tasks twice — do not start it in the Next process.
-// Set LOCALMIND_IN_PROCESS_SCHEDULER=1 only for dev without the worker.
+// PM2 installations use worker.js for schedules. Standalone always-on units
+// set LOCALMIND_IN_PROCESS_SCHEDULER=1 because they run only `next start`;
+// without this, reminders would never fire in that supported install mode.
 try {
   if (process.env.LOCALMIND_IN_PROCESS_SCHEDULER === "1") {
     const { startScheduler } = require("./lib/scheduler") as typeof import("./lib/scheduler");

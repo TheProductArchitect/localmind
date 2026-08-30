@@ -1,4 +1,9 @@
-import { getMessages } from "../db/queries";
+import {
+  getConversation,
+  getMessages,
+  searchConversationHistory,
+  type ConversationHistoryMatch,
+} from "../db/queries";
 import type { Tool } from "./types";
 
 function tokenize(s: string): Set<string> {
@@ -22,18 +27,24 @@ function score(query: string, text: string): number {
 
 export const recallTool: Tool = {
   actionType: "memory_read",
-  version: "1",
+  version: "2",
   cacheable: () => true,
-  preview: (i) => `Recall from this conversation: ${i.query}`,
+  preview: (i) =>
+    `Recall from ${i.scope === "current" ? "this conversation" : "conversation history"}: ${i.query}`,
   definition: {
     name: "recall",
     description:
-      "Search THIS conversation's earlier messages by keyword to pull back specific past turns that are no longer in the recent context window (older history is summarized, not included verbatim). Use when you need a detail from earlier in the conversation.",
+      "Search earlier messages by keyword, including prior conversations. Use for questions like \"what did we decide last week?\" or details no longer in the active context. Defaults to all conversations owned by the current user; set scope=current for this conversation only.",
     parameters: {
       type: "object",
       properties: {
         query: { type: "string", description: "What to look for in earlier messages" },
         limit: { type: "number", description: "Max messages to return (default 5)" },
+        scope: {
+          type: "string",
+          enum: ["all", "current"],
+          description: "Search all owned conversations (default) or only the current conversation",
+        },
       },
       required: ["query"],
     },
@@ -42,24 +53,69 @@ export const recallTool: Tool = {
     const query = String(input.query || "").trim();
     if (!query) return { ok: false, output: "query is required" };
     const limit = Math.max(1, Math.min(Number(input.limit) || 5, 20));
+    const scope = input.scope === "current" ? "current" : "all";
 
-    const msgs = getMessages(ctx.conversationId).filter(
-      (m) => m.role === "user" || m.role === "assistant"
-    );
-    const ranked = msgs
-      .map((m, idx) => ({ idx, role: m.role, content: m.content || "", s: score(query, m.content || "") }))
-      .filter((r) => r.s > 0)
-      .sort((a, b) => b.s - a.s)
+    if (scope === "current") {
+      const msgs = getMessages(ctx.conversationId).filter(
+        (m) => m.role === "user" || m.role === "assistant"
+      );
+      const ranked = msgs
+        .map((m, idx) => ({
+          idx,
+          role: m.role,
+          content: m.content || "",
+          s: score(query, m.content || ""),
+        }))
+        .filter((r) => r.s > 0)
+        .sort((a, b) => b.s - a.s)
+        .slice(0, limit);
+
+      if (ranked.length === 0) {
+        return {
+          ok: true,
+          output: `No earlier messages in this conversation match "${query}".`,
+          summary: "no matches",
+        };
+      }
+      ranked.sort((a, b) => a.idx - b.idx);
+      const output = ranked
+        .map((r) => `[#${r.idx} ${r.role}] ${compact(r.content)}`)
+        .join("\n\n");
+      return { ok: true, output, summary: `recalled ${ranked.length} message(s)` };
+    }
+
+    const ownerUserId = getConversation(ctx.conversationId)?.owner_user_id ?? null;
+    const candidates = searchConversationHistory(query, {
+      ownerUserId,
+      limit: Math.max(limit * 8, 40),
+    });
+    const ranked = candidates
+      .map((match) => ({ match, s: score(query, match.content) }))
+      .filter((row) => row.s > 0)
+      .sort((a, b) => b.s - a.s || b.match.created_at - a.match.created_at)
       .slice(0, limit);
 
     if (ranked.length === 0) {
-      return { ok: true, output: `No earlier messages in this conversation match "${query}".`, summary: "no matches" };
+      return {
+        ok: true,
+        output: `No messages in your conversation history match "${query}".`,
+        summary: "no matches",
+      };
     }
-    // Return in chronological order for readability.
-    ranked.sort((a, b) => a.idx - b.idx);
-    const out = ranked
-      .map((r) => `[#${r.idx} ${r.role}] ${r.content.replace(/\s+/g, " ").slice(0, 600)}`)
-      .join("\n\n");
-    return { ok: true, output: out, summary: `recalled ${ranked.length} message(s)` };
+    const output = ranked.map(({ match }) => renderHistoryMatch(match)).join("\n\n");
+    return {
+      ok: true,
+      output,
+      summary: `recalled ${ranked.length} message(s) across conversation history`,
+    };
   },
 };
+
+function compact(content: string): string {
+  return content.replace(/\s+/g, " ").slice(0, 600);
+}
+
+function renderHistoryMatch(match: ConversationHistoryMatch): string {
+  const when = new Date(match.created_at).toISOString();
+  return `[${when} · ${match.conversation_title} · ${match.role} · conversation:${match.conversation_id}] ${compact(match.content)}`;
+}

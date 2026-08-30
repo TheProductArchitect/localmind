@@ -19,17 +19,29 @@ let mainWinRef = null;
 /** @type {(() => import('electron').BrowserWindow | null) | null} */
 let codingWinGetter = null;
 
-function readAssistantNameFromDb() {
+/** mtime of the JSON mirror at last read, so the 4s poll can skip no-ops. */
+let mirrorStamp = -1;
+
+/**
+ * @param {{ mirrorOnly?: boolean }} [opts] When mirrorOnly, never fall back to
+ *   the sqlite probe — that spawns a Node subprocess, which must not happen on
+ *   a recurring timer in the main process.
+ */
+function readAssistantNameFromDb(opts) {
   try {
     const dataDir = process.env.LOCALMIND_DATA_DIR || path.join(os.homedir(), ".localmind");
     // Prefer a lightweight JSON mirror written by the Next settings API —
     // avoids loading better-sqlite3 inside Electron's ABI.
     const mirror = path.join(dataDir, "branding.json");
-    if (fs.existsSync(mirror)) {
+    try {
+      mirrorStamp = fs.statSync(mirror).mtimeMs;
       const j = JSON.parse(fs.readFileSync(mirror, "utf8"));
       const name = j?.assistant_name && String(j.assistant_name).trim();
       if (name) return name;
+    } catch {
+      /* mirror missing or unreadable — fall through */
     }
+    if (opts?.mirrorOnly) return null;
     const dbPath = path.join(dataDir, "config.db");
     if (!fs.existsSync(dbPath)) return null;
     // Query with system Node (project's better-sqlite3), not Electron's Node.
@@ -126,11 +138,20 @@ async function initBranding(opts) {
   applyIcon("idle").catch(() => {});
   warmOrbIcons().catch(() => {});
 
-  // Re-read name periodically so Settings blur-saves show up without IPC.
-  setInterval(() => {
-    const n = readAssistantNameFromDb();
+  // Re-read the name periodically so Settings blur-saves show up without IPC.
+  // Only when the mirror actually changed, and never via the sqlite subprocess.
+  const mirrorPath = path.join(
+    process.env.LOCALMIND_DATA_DIR || path.join(os.homedir(), ".localmind"),
+    "branding.json"
+  );
+  const nameTimer = setInterval(() => {
+    let stamp = -1;
+    try { stamp = fs.statSync(mirrorPath).mtimeMs; } catch { return; }
+    if (stamp === mirrorStamp) return;
+    const n = readAssistantNameFromDb({ mirrorOnly: true });
     if (n && sanitizeName(n) !== currentName) applyName(n);
   }, 4000);
+  nameTimer.unref?.();
 }
 
 /**

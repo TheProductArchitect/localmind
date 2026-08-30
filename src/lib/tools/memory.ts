@@ -1,4 +1,4 @@
-import { deleteMemory, listMemory, upsertMemory } from "../db/queries";
+import { deleteMemory, getConversation, listMemory, upsertMemory } from "../db/queries";
 import type { Tool } from "./types";
 
 export const memoryTool: Tool = {
@@ -9,15 +9,14 @@ export const memoryTool: Tool = {
     if (i.operation === "delete") return `Forget memory item: ${i.key}`;
     return "Read all memory";
   },
-  version: "1",
-  // Reads are cacheable; writes/deletes mutate state so they must always run.
-  // A cached read goes stale when a subsequent write happens, but LRU
-  // eviction bounds the window and most read sequences are within one turn.
-  cacheable: (i) => i.operation === "read",
+  version: "2",
+  // Never cache memory reads: the user can add/replace a fact during the same
+  // turn, and a personal assistant must observe that write immediately.
+  cacheable: () => false,
   definition: {
     name: "memory",
     description:
-      "Read, write, or delete persistent facts the assistant remembers across conversations. Operations: read, write, delete (list is an alias for read). Use only for durable user facts the user asked you to remember — not for jokes, chat replies, or recalling the current conversation.",
+      "Read, write, or delete durable facts the assistant remembers across conversations. Save explicit remember/forget requests and stable preferences, people, projects, or environment details that will clearly help later. Never store passwords, tokens, sensitive document contents, guesses, or transient chat. Operations: read, write, delete (list is an alias for read).",
     parameters: {
       type: "object",
       properties: {
@@ -39,8 +38,9 @@ export const memoryTool: Tool = {
         : raw === "remove" || raw === "forget"
         ? "delete"
         : raw;
+    const owner = getConversation(ctx.conversationId)?.owner_user_id || undefined;
     if (op === "read") {
-      const items = listMemory();
+      const items = listMemory(owner);
       return {
         ok: true,
         output: items.length
@@ -53,13 +53,11 @@ export const memoryTool: Tool = {
       const key = String(input.key || "").trim();
       const value = String(input.value || "").trim();
       if (!key || !value) return { ok: false, output: "key and value required" };
-      const { getConversation } = require("../db/queries");
-      const owner = getConversation(ctx.conversationId)?.owner_user_id || undefined;
       const item = upsertMemory(key, value, ctx.conversationId, owner);
       return { ok: true, output: `Saved: ${item.key}`, summary: `saved memory "${item.key}"` };
     }
     if (op === "delete") {
-      const items = listMemory();
+      const items = listMemory(owner);
       const match = items.find((i) => i.key === String(input.key || ""));
       if (!match) return { ok: false, output: "Key not found" };
       deleteMemory(match.id);

@@ -56,6 +56,16 @@ export default function PluginsPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Escape dismisses the install confirmation, same as clicking the backdrop.
+  useEffect(() => {
+    if (!confirming) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setConfirming(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirming]);
+
   async function refresh() {
     setBusy("refresh");
     try {
@@ -248,6 +258,9 @@ export default function PluginsPage() {
         <div
           className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
           onClick={() => setConfirming(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="lm-plugin-install-title"
         >
           <div
             className="w-full max-w-lg rounded-lg border bg-card shadow-xl"
@@ -255,7 +268,7 @@ export default function PluginsPage() {
           >
             <div className="border-b px-4 py-3 flex items-center gap-2">
               <ShieldAlert className="h-4 w-4" />
-              <p className="font-medium text-sm flex-1">Install {confirming.name}?</p>
+              <p id="lm-plugin-install-title" className="font-medium text-sm flex-1">Install {confirming.name}?</p>
             </div>
             <div className="p-4 space-y-3 text-sm">
               <p>{confirming.description}</p>

@@ -3,6 +3,11 @@
  * paired peer that has `policy.advertise_capabilities = true`. Failures are
  * logged but never retried mid-tick — the next tick is the retry.
  *
+ * Capability snapshots include `primary_addr` (see `snapshotCapability`).
+ * Peers that receive the envelope call `updatePeerPrimaryAddr` in
+ * `server.ts` so DHCP renumbers refresh `fleet_peers.primary_addr` without
+ * re-pairing.
+ *
  * The 30s cadence was set in §5 of the V6 plan. Tunable via the
  * `LOCALMIND_HEARTBEAT_INTERVAL_MS` env var for tests; never below 5s.
  */

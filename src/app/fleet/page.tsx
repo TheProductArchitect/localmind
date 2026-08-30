@@ -172,10 +172,13 @@ export default function FleetPage() {
             compute can land where load is lightest.
           </p>
           <p className="lm-body mt-3 max-w-xl" style={{ color: "hsl(0 0% 100% / 0.45)" }}>
-            Hub tip: put a powerful box (e.g. DGX) on the same Wi‑Fi, pair it, enable{" "}
-            <em>Accept chat relay</em> there and <em>Accept tool relay</em> on this PC.
-            In chat, set Run on to the hub (or Auto) and leave Tools on this device —
-            the model thinks on the hub while files / calendar / mail run here.
+            Hub tip: put a powerful box (e.g. DGX) on the same Wi‑Fi, open{" "}
+            <code>:9443</code>, pair it, enable <em>Accept chat relay</em> on the hub
+            and <em>Accept tool relay</em> on this PC. In chat, set Run on to the hub
+            (or Auto) and leave Tools on this device — the model thinks on the hub
+            while files / calendar / mail run here. If peers can&apos;t reach{" "}
+            <code>:9443</code>, disable Wi‑Fi client isolation (see{" "}
+            <code>docs/dgx-hub-wifi.md</code>).
           </p>
           <div className="lm-transport mt-5 max-w-xl" data-open={transportOpen}>
             <button
@@ -197,8 +200,15 @@ export default function FleetPage() {
             {transportOpen && (
             <ul className="lm-transport__list">
               <li>
+                <b>Fleet port <code>:9443</code>.</b> Pairing, heartbeats, chat-relay,
+                and tool-relay use the dedicated fleet listener (override with{" "}
+                <code>LOCALMIND_FLEET_PORT</code>). Direct LAN only — if you see{" "}
+                <code>EHOSTUNREACH</code>, turn off AP/client isolation or put both
+                machines on Ethernet / a VPN.
+              </li>
+              <li>
                 <b>Direct over the local network.</b> Same Wi-Fi or Ethernet — the two
-                machines talk to each other&apos;s IPs (e.g. <code>192.168.x.x:5000</code>).
+                machines talk to each other&apos;s IPs (e.g. <code>192.168.x.x:9443</code>).
                 No cloud, no relay, no broker.
               </li>
               <li>

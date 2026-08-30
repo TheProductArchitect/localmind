@@ -22,11 +22,12 @@
  *   2. An already-running server on :3000 (PM2 users)
  *   3. Spawn `next start -p 3000` ourselves and wait for it.
  */
-const { app, BrowserWindow, WebContentsView, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, WebContentsView, ipcMain, shell, Menu } = require("electron");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const http = require("node:http");
 const fs = require("node:fs");
+const os = require("node:os");
 const { initBranding, updateBranding, getBranding, readAssistantNameFromDb } = require("./branding");
 
 const ROOT = path.join(__dirname, "..");
@@ -302,10 +303,12 @@ async function boot() {
   wireIpc();
 
   // Show a window immediately so cold `next start` / build doesn't feel hung.
+  const orbIconPath = path.join(process.env.LOCALMIND_DATA_DIR || path.join(os.homedir(), ".localmind"), "branding", "orb-idle.png");
   win = new BrowserWindow({
     width: 1440,
     height: 900,
     show: false,
+    icon: fs.existsSync(orbIconPath) ? orbIconPath : undefined,
     title: readAssistantNameFromDb() || "Assistant",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -348,6 +351,65 @@ main{min-height:100%;display:grid;place-items:center;letter-spacing:.02em}
   });
 
   await win.loadURL(url);
+
+  const sendReport = () => {
+    if (win && !win.isDestroyed()) win.webContents.send("app:report-improvement");
+  };
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      ...(process.platform === "darwin"
+        ? [{
+            label: app.name,
+            submenu: [
+              { role: "about" },
+              { type: "separator" },
+              { role: "services" },
+              { type: "separator" },
+              { role: "hide" },
+              { role: "hideOthers" },
+              { role: "unhide" },
+              { type: "separator" },
+              { role: "quit" },
+            ],
+          }]
+        : []),
+      {
+        label: "Edit",
+        submenu: [
+          { role: "undo" },
+          { role: "redo" },
+          { type: "separator" },
+          { role: "cut" },
+          { role: "copy" },
+          { role: "paste" },
+          { role: "selectAll" },
+        ],
+      },
+      {
+        label: "View",
+        submenu: [
+          { role: "reload" },
+          { role: "toggleDevTools" },
+          { type: "separator" },
+          { role: "resetZoom" },
+          { role: "zoomIn" },
+          { role: "zoomOut" },
+          { type: "separator" },
+          { role: "togglefullscreen" },
+        ],
+      },
+      {
+        label: "Help",
+        submenu: [
+          {
+            label: "Report improvement…",
+            accelerator: "CommandOrControl+Shift+F",
+            click: () => sendReport(),
+          },
+        ],
+      },
+    ])
+  );
 
   // Secondary "coding browser" — opens when the app writes open-coding-window.json
   const dataDir = process.env.LOCALMIND_DATA_DIR || path.join(require("os").homedir(), ".localmind");

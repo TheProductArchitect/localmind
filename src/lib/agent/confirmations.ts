@@ -69,6 +69,11 @@ export function tryChannelConfirmation(
   if (AFFIRMATIVE.test(trimmed)) {
     const entry = pending.get(toolCallId);
     const preview = entry?.preview;
+    // Plaintext channels cannot prove a PIN. Never let YES unlock pin-tier work.
+    if (entry?.requiresPin) {
+      submitConfirmation(toolCallId, "deny");
+      return { handled: true, decision: "deny", preview };
+    }
     submitConfirmation(toolCallId, "allow");
     return { handled: true, decision: "allow", preview };
   }

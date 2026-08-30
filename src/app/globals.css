@@ -162,18 +162,14 @@
 }
 
 @layer components {
-  /* Glass surface — used on cards, drawers, popovers. */
+  /* Glass-like surfaces without continuous backdrop-filter (GPU-cheap). */
   .lm-surface-1 {
-    background: hsl(0 0% 100% / 0.04);
+    background: hsl(234 18% 8%);
     border: 1px solid hsl(0 0% 100% / 0.08);
-    backdrop-filter: blur(14px) saturate(140%);
-    -webkit-backdrop-filter: blur(14px) saturate(140%);
   }
   .lm-surface-2 {
-    background: hsl(0 0% 100% / 0.07);
+    background: hsl(234 18% 10%);
     border: 1px solid hsl(0 0% 100% / 0.10);
-    backdrop-filter: blur(18px) saturate(140%);
-    -webkit-backdrop-filter: blur(18px) saturate(140%);
   }
 
   /* The one accent: white glow on text. Used very sparingly. */
@@ -347,22 +343,21 @@
 
   /* Confirmation card in chat — mono glass, not amber alert chrome */
   .lm-confirm {
-    margin: 12px 0;
-    padding: 14px 16px;
-    border-radius: 14px;
+    margin: 8px 0;
+    padding: 10px 12px;
+    border-radius: 10px;
     border: 1px solid hsl(0 0% 100% / 0.12);
-    background: hsl(234 18% 9% / 0.88);
+    background: hsl(234 18% 9%);
     box-shadow:
       0 0 0 1px hsl(0 0% 100% / 0.04) inset,
-      0 0 28px hsl(0 0% 100% / 0.06);
-    backdrop-filter: blur(16px) saturate(140%);
+      0 12px 32px hsl(0 0% 0% / 0.35);
   }
   .lm-confirm__head {
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: center; gap: 8px;
   }
   .lm-confirm__timer {
     margin-left: auto;
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     letter-spacing: 0.04em;
     font-variant-numeric: tabular-nums;
     color: hsl(0 0% 100% / 0.45);
@@ -372,31 +367,32 @@
     text-shadow: 0 0 12px hsl(0 0% 100% / 0.35);
   }
   .lm-confirm__pin-note {
-    display: flex; align-items: center; gap: 6px;
-    margin-top: 8px;
-    font-size: 0.75rem;
+    display: flex; align-items: center; gap: 5px;
+    margin-top: 6px;
+    font-size: 0.7rem;
     color: hsl(0 0% 100% / 0.55);
   }
   .lm-confirm__preview {
-    margin-top: 10px;
-    padding: 10px 12px;
-    border-radius: 10px;
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
     border: 1px solid hsl(0 0% 100% / 0.08);
     background: hsl(0 0% 0% / 0.25);
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     white-space: pre-wrap;
     color: hsl(0 0% 100% / 0.78);
-    max-height: 160px;
+    max-height: 140px;
     overflow: auto;
   }
   .lm-confirm__actions {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-    margin-top: 12px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    margin-top: 8px;
   }
   .lm-confirm__pin {
-    width: 9rem;
-    height: 36px;
+    width: 8rem;
+    height: 32px;
   }
+
 
   /* Quiet panel for forms on admin/work surfaces */
   .lm-panel {
@@ -406,6 +402,74 @@
     background: hsl(0 0% 100% / 0.03);
   }
   .lm-panel + .lm-panel { margin-top: 10px; }
+
+  /* === App rail (must be global: next/link does not get styled-jsx hashes) === */
+  .lm-rail-link {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+    color: hsl(0 0% 100% / 0.45);
+    transition: background var(--lm-dur-micro) var(--lm-ease-micro),
+                color      var(--lm-dur-micro) var(--lm-ease-micro);
+    flex-shrink: 0;
+  }
+  .lm-rail-link:hover {
+    color: hsl(0 0% 100% / 0.92);
+    background: hsl(0 0% 100% / 0.05);
+  }
+  .lm-rail-link.is-active {
+    color: hsl(0 0% 100%);
+    background: hsl(0 0% 100% / 0.08);
+    box-shadow: 0 0 0 1px hsl(0 0% 100% / 0.10) inset;
+  }
+  @media (min-width: 768px) {
+    .lm-rail-link.is-active::before {
+      content: "";
+      position: absolute;
+      left: -10px;
+      top: 50%;
+      width: 2px;
+      height: 18px;
+      background: white;
+      border-radius: 2px;
+      transform: translateY(-50%);
+      box-shadow: 0 0 10px hsl(0 0% 100% / 0.7);
+    }
+  }
+  .lm-rail-tip {
+    position: absolute;
+    left: 50px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 40;
+    padding: 4px 10px;
+    font-size: 12px;
+    letter-spacing: -0.005em;
+    color: hsl(0 0% 100% / 0.92);
+    background: hsl(234 18% 9%);
+    border: 1px solid hsl(0 0% 100% / 0.10);
+    border-radius: 8px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--lm-dur-micro) var(--lm-ease-micro);
+  }
+  .lm-rail-link:hover .lm-rail-tip { opacity: 1; }
+
+  /* EdgePulse stroke animation — static keyframes (no per-click style tags) */
+  @keyframes lm-edge-trace {
+    0%   { stroke-dashoffset: var(--lm-edge-from); opacity: 0; }
+    10%  { opacity: var(--lm-edge-op-peak, 0.9); }
+    75%  { opacity: var(--lm-edge-op-mid, 0.55); }
+    100% { stroke-dashoffset: var(--lm-edge-to); opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .lm-edge-stroke { animation: none !important; opacity: 0 !important; }
+  }
 
   /* Soft mount for overlays (⌘K) */
   @keyframes lm-overlay-in {

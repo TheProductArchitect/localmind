@@ -19,7 +19,7 @@ import { splitHistory, recentWindowSize } from "./history-context";
 import { ensureConversationSummary } from "./history-summary";
 import { getConversationSummary } from "../db/conversation-summary";
 import { buildConversationMessages } from "./conversation-messages";
-import { unregisterProcess } from "./process-registry";
+import { registerProcess, unregisterProcess } from "./process-registry";
 import { resolveRoutedModel } from "./routing";
 import { isTrivialUserTurn } from "./trivial-turn";
 import { pickPreferredOllamaModel } from "../curated-models";
@@ -274,6 +274,12 @@ export async function* runAgent(
   const explicitPillar = (opts?.processMetadata as { pillar?: Pillar } | undefined)?.pillar;
   const pillar = explicitPillar ?? classifyPillar(firstUserText, subagentPersonaId);
   let processId = "";
+  // Ops Cancel/Pause talk to this controller. Link the caller's abort signal
+  // so disconnect/user-stop and Ops cancel share one cancellation path.
+  const turnAbort = new AbortController();
+  if (signal.aborted) turnAbort.abort();
+  else signal.addEventListener("abort", () => turnAbort.abort(), { once: true });
+  let isPaused = () => false;
   safeProcessHook(() => {
     processId = startProcess({
       process_type: isSubagent ? "long_running_job" : "chat",
@@ -290,7 +296,9 @@ export async function* runAgent(
         ...(routed.matchedAgent ? { routed_agent: routed.matchedAgent, routing_rule_id: routed.ruleId } : {}),
       },
     });
+    isPaused = registerProcess(processId, turnAbort).paused;
   });
+  const runSignal = turnAbort.signal;
 
   // Intelligent history: use the last stored summary immediately (never block
   // the first token on a full LLM summarize). Refresh the summary in the
@@ -320,7 +328,7 @@ export async function* runAgent(
         if (!stored || (stored.covered_count ?? 0) < older.length) {
           void ensureConversationSummary(conversationId, older, {
             model: activeModel,
-            signal,
+            signal: runSignal,
             contextWindow: ctxWindow,
           }).catch(() => {});
         }
@@ -356,7 +364,12 @@ export async function* runAgent(
     yield { type: "status", phase: "thinking" };
     if (contextCompressed) yield { type: "context_compressed" };
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
-      if (signal.aborted) { processOutcome = "cancelled"; return; }
+      if (runSignal.aborted) { processOutcome = "cancelled"; return; }
+      // Honor Ops pause between iterations without tearing the turn down.
+      while (isPaused() && !runSignal.aborted) {
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      if (runSignal.aborted) { processOutcome = "cancelled"; return; }
       safeProcessHook(() => updateProcess(processId, { current_step: `Iteration ${iter + 1}` }));
 
       let iterText = "";
@@ -366,10 +379,10 @@ export async function* runAgent(
         model: activeModel,
         messages,
         tools: toolDefs,
-        signal,
+        signal: runSignal,
         contextWindow: ctxWindow,
       })) {
-        if (signal.aborted) return;
+        if (runSignal.aborted) return;
         if (delta.type === "text") {
           iterText += delta.delta;
           assistantText += delta.delta;
@@ -407,7 +420,7 @@ export async function* runAgent(
       messages.push({ role: "assistant", content: iterText, tool_calls: toolCalls });
 
       for (const call of toolCalls) {
-        if (signal.aborted) return;
+        if (runSignal.aborted) return;
         // Hard tool-call budget — stops a looping or runaway agent.
         if (toolCallCount >= MAX_TOOL_CALLS) {
           yield {
@@ -461,6 +474,12 @@ export async function* runAgent(
 
         if (tier === "ask" || tier === "pin") {
           if (opts?.channelMode && opts?.channelKey) {
+            // PIN-tier actions must never be approved by a plaintext YES over
+            // Telegram/SMS/etc. Refuse and force the user into the LocalMind app.
+            if (tier === "pin") {
+              allowed = false;
+              approvedBy = "rule";
+            } else {
             safeProcessHook(() => updateProcess(processId, {
               status: "waiting_confirmation",
               current_step: `Waiting for channel confirmation on ${actionType}`,
@@ -496,6 +515,7 @@ export async function* runAgent(
               yield { type: "confirmation_denied", toolCallId: call.id };
             }
             safeProcessHook(() => updateProcess(processId, { status: "running" }));
+            }
           } else if (opts?.channelMode) {
             // No channel key — sensitive actions are refused.
             allowed = false;
@@ -538,7 +558,10 @@ export async function* runAgent(
 
         if (!allowed) {
           logComplete(auditId, "denied", "User denied or confirmation timed out");
-          const msg = `Action denied by the user: ${preview}`;
+          const msg =
+            approvedBy === "rule" && tier === "pin"
+              ? `PIN-protected action cannot be approved over chat. Open LocalMind and confirm: ${preview}`
+              : `Action denied by the user: ${preview}`;
           messages.push({ role: "tool", content: msg, tool_call_id: call.id, name: call.name });
           addMessage({
             conversation_id: conversationId,
@@ -698,8 +721,8 @@ export async function* runAgent(
 
     yield { type: "done", conversationId, title, tokenCount: totalTokens };
   } catch (e: any) {
-    processOutcome = signal.aborted ? "cancelled" : "failed";
-    if (signal.aborted) return;
+    processOutcome = runSignal.aborted ? "cancelled" : "failed";
+    if (runSignal.aborted) return;
     const detail = typeof e?.message === "string" ? e.message.trim() : "";
     // Surface the real provider/tool failure (e.g. "model 'X' not found") so
     // the UI doesn't collapse every crash into a reconnect loop.
@@ -764,10 +787,14 @@ export async function runAgentCollect(
   }
 
   const controller = new AbortController();
+  const channelKey = (opts?.processMetadata as { channel_key?: string } | undefined)?.channel_key;
   let text = "";
   for await (const ev of runAgent(conversationId, message, controller.signal, {
-    channelMode: true,
-    channelKey: (opts?.processMetadata as { channel_key?: string } | undefined)?.channel_key,
+    // Only channel-originated work uses channel confirms. Scheduled tasks and
+    // workflows must use the normal in-app confirmation path (or be refused
+    // when unattended), not a hard deny from channelMode-without-key.
+    channelMode: Boolean(channelKey),
+    channelKey,
     systemPrefix: opts?.systemPrefix,
     processMetadata: opts?.processMetadata,
     processDisplayName: opts?.processDisplayName,

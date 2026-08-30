@@ -25,6 +25,8 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
+import { onActivate } from "@/lib/client/keyboard";
+import "@/styles/chat.css";
 import { Textarea } from "@/components/ui";
 import { ToolCallCard, type ToolCallState } from "@/components/chat/tool-call-card";
 import { ConfirmationCard, type ConfirmationState } from "@/components/chat/confirmation-card";
@@ -1232,6 +1234,10 @@ function ChatInner() {
             <div
               key={c.id}
               onClick={() => openConversation(c.id)}
+              onKeyDown={onActivate(() => openConversation(c.id))}
+              role="button"
+              tabIndex={0}
+              aria-current={activeId === c.id || undefined}
               className={`lm-conv__row ${activeId === c.id ? "is-active" : ""}`}
               data-pulse="true"
             >
@@ -1259,13 +1265,11 @@ function ChatInner() {
       {/* Thread column */}
       <section className="lm-thread">
         <header className="lm-thread__head">
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="lm-micro">Model</span>
+          <div className="lm-thread__controls">
             <button
               type="button"
               onClick={() => (modelPickerOpen ? setModelPickerOpen(false) : openModelPicker())}
-              className="lm-body"
-              style={{ color: "hsl(0 0% 100% / 0.92)", textDecoration: "underline", textUnderlineOffset: 3 }}
+              className="lm-thread__model"
               data-pulse="true"
               title="Pick provider and model for this chat"
             >
@@ -1319,18 +1323,19 @@ function ChatInner() {
               </div>
             )}
             <span className="lm-thread__sep" />
-            <span className="lm-micro">Lead</span>
-            <span className="lm-body" style={{ color: "hsl(0 0% 100% / 0.92)" }}>Sora</span>
-            <a href="/agents" className="lm-micro" style={{ textTransform: "none", letterSpacing: 0, color: "hsl(0 0% 100% / 0.45)" }} data-pulse="true">
-              · agents
+            <a href="/agents" className="lm-thread__link" data-pulse="true">
+              Agents
             </a>
             <button
               onClick={() => setAutoRead((a) => !a)}
               className="lm-thread__toggle"
               data-active={autoRead}
+              title="Read replies aloud"
+              aria-label="Read replies aloud"
+              aria-pressed={autoRead}
             >
               <Volume2 className="h-3 w-3" />
-              <span>Auto-read</span>
+              <span className="lm-thread__toggle-label">Read</span>
             </button>
             <ConversationButton
               isAssistantBusy={streaming}
@@ -1363,11 +1368,11 @@ function ChatInner() {
             </div>
           </div>
           {activeId && (
-            <div className="flex items-center gap-2">
+            <div className="lm-thread__actions">
               {thread.length > 0 && (
                 <>
-                  <span className="lm-micro" style={{ color: "hsl(0 0% 100% / 0.4)", textTransform: "none" }}>
-                    {thread.filter((t) => t.kind === "user" || t.kind === "assistant").length} turns
+                  <span className="lm-thread__meta">
+                    {thread.filter((t) => t.kind === "user" || t.kind === "assistant").length}
                   </span>
                   <button
                     type="button"
@@ -1375,10 +1380,10 @@ function ChatInner() {
                     disabled={streaming || compacting || thread.length < 8}
                     className="lm-thread__export"
                     title="Summarize older turns and free context"
+                    aria-label="Compact chat"
                     data-pulse="true"
                   >
                     <Minimize2 className="h-3.5 w-3.5" />
-                    <span className="lm-micro">{compacting ? "Compacting…" : "Compact"}</span>
                   </button>
                   <button
                     type="button"
@@ -1386,16 +1391,21 @@ function ChatInner() {
                     disabled={streaming}
                     className="lm-thread__export"
                     title="Clear all messages in this chat"
+                    aria-label="Clear chat"
                     data-pulse="true"
                   >
                     <Eraser className="h-3.5 w-3.5" />
-                    <span className="lm-micro">Clear</span>
                   </button>
                 </>
               )}
-              <a href={`/api/conversations/${activeId}/export`} className="lm-thread__export" data-pulse="true">
+              <a
+                href={`/api/conversations/${activeId}/export`}
+                className="lm-thread__export"
+                data-pulse="true"
+                title="Export conversation"
+                aria-label="Export conversation"
+              >
                 <Download className="h-3.5 w-3.5" />
-                <span className="lm-micro">Export</span>
               </a>
             </div>
           )}
@@ -1425,10 +1435,10 @@ function ChatInner() {
           <div className="mx-auto" style={{ maxWidth: 720 }}>
             {thread.length === 0 && (
               <div className="lm-empty">
-                <Orb state="idle" size={120} />
-                <p className="lm-display mt-10">Ask anything.</p>
-                <p className="lm-body mt-2" style={{ color: "hsl(0 0% 100% / 0.5)" }}>
-                  Everything runs on this machine. Nothing leaves the box.
+                <Orb state="idle" size={72} />
+                <p className="lm-empty__title">Ask anything.</p>
+                <p className="lm-empty__sub">
+                  On this machine — nothing leaves the box.
                 </p>
               </div>
             )}
@@ -1446,7 +1456,7 @@ function ChatInner() {
                         <div className="flex flex-wrap gap-2 mb-2 justify-end">
                           {item.images.map((u, k) => (
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img key={k} src={u} alt="attachment" className="h-28 w-28 object-cover rounded-lg border border-black/10" />
+                            <img key={k} src={u} alt="attachment" className="h-20 w-20 object-cover rounded-md border border-black/10" />
                           ))}
                         </div>
                       ) : null}
@@ -1728,7 +1738,7 @@ function ChatInner() {
               ))}
             </div>
           )}
-          <div className="mx-auto flex items-end gap-2" style={{ maxWidth: 720 }}>
+          <div className="mx-auto flex items-end gap-1.5" style={{ maxWidth: 720 }}>
             <input
               ref={fileInputRef}
               type="file"
@@ -1778,11 +1788,9 @@ function ChatInner() {
       {/* Sora rail (right) */}
       <aside className="lm-sora">
         <div className="lm-sora__top">
-          <Orb state={orbState} size={56} satellites={spawnCount} ariaLabel={`Sora ${orbState}`} />
-          <p className="lm-micro mt-4 text-center">Sora</p>
-          <p className="lm-body mt-1 text-center" style={{ color: "hsl(0 0% 100% / 0.5)", fontSize: 11 }}>
-            {orbStateLabel(orbState)}
-          </p>
+          <Orb state={orbState} size={40} satellites={spawnCount} ariaLabel={`Sora ${orbState}`} />
+          <p className="lm-sora__name">Sora</p>
+          <p className="lm-sora__state">{orbStateLabel(orbState)}</p>
         </div>
         {Object.entries(activeTools).length > 0 && (
           <div className="lm-sora__tools">
@@ -1812,413 +1820,6 @@ function ChatInner() {
         )}
       </aside>
 
-      <style jsx>{`
-        .lm-chat {
-          display: grid;
-          grid-template-columns: 240px 1fr 220px;
-          height: 100%;
-          min-height: 0;
-          overflow: hidden;
-        }
-        @media (max-width: 1100px) { .lm-chat { grid-template-columns: 200px 1fr 0; } .lm-sora { display: none; } }
-        /* Tablet/phone: narrow the conversations strip so the thread keeps room.
-           The left Rail becomes a bottom bar under md, freeing its width. */
-        @media (max-width: 680px) { .lm-chat { grid-template-columns: 148px 1fr 0; } }
-        @media (max-width: 680px) {
-          .lm-thread__head { padding: 12px 14px; flex-wrap: wrap; gap: 8px; row-gap: 8px; }
-          .lm-thread__scroll { padding: 24px 14px 48px; }
-          .lm-composer { padding: 12px 14px 16px; }
-        }
-
-        /* === Conversations strip === */
-        .lm-conv {
-          display: flex; flex-direction: column;
-          border-right: 1px solid hsl(0 0% 100% / 0.06);
-          background: hsl(234 22% 4% / 0.4);
-          backdrop-filter: blur(14px);
-          padding: 16px 10px;
-          gap: 8px;
-          min-height: 0;
-          overflow: hidden;
-        }
-        .lm-conv__new {
-          display: inline-flex; align-items: center; justify-content: center;
-          gap: 6px; padding: 8px 10px;
-          background: hsl(0 0% 100% / 0.04);
-          border: 1px solid hsl(0 0% 100% / 0.08);
-          border-radius: 12px;
-          color: hsl(0 0% 100% / 0.9);
-          font-size: 12px; letter-spacing: -0.005em;
-          transition: background var(--lm-dur-micro) var(--lm-ease-micro);
-        }
-        .lm-conv__new:hover { background: hsl(0 0% 100% / 0.08); }
-        .lm-conv__search {
-          background: transparent;
-          border: 1px solid hsl(0 0% 100% / 0.08);
-          border-radius: 10px;
-          padding: 6px 10px;
-          color: hsl(0 0% 100% / 0.9);
-          font-size: 12px;
-          outline: none;
-        }
-        .lm-conv__search:focus { border-color: hsl(0 0% 100% / 0.2); }
-        .lm-conv__list { flex: 1; overflow-y: auto; }
-        .lm-conv__row {
-          display: grid;
-          grid-template-columns: 16px 1fr 16px;
-          align-items: center;
-          gap: 8px;
-          padding: 7px 6px;
-          border-radius: 8px;
-          cursor: pointer;
-          color: hsl(0 0% 100% / 0.72);
-          font-size: 12.5px;
-        }
-        .lm-conv__row:hover { background: hsl(0 0% 100% / 0.04); }
-        .lm-conv__row.is-active { background: hsl(0 0% 100% / 0.06); color: hsl(0 0% 100% / 0.96); }
-        .lm-conv__star { display: inline-flex; }
-        .lm-conv__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .lm-conv__del { opacity: 0; color: hsl(0 0% 100% / 0.4); }
-        .lm-conv__row:hover .lm-conv__del { opacity: 1; }
-
-        /* === Thread === */
-        .lm-thread {
-          display: flex;
-          flex-direction: column;
-          min-width: 0;
-          min-height: 0;
-          height: 100%;
-          overflow: hidden;
-        }
-        .lm-thread__body {
-          flex: 1;
-          min-height: 0;
-          position: relative;
-          display: flex;
-          flex-direction: column;
-        }
-        .lm-thread__head {
-          display: flex; align-items: center; justify-content: space-between;
-          flex-shrink: 0;
-          padding: 14px 28px;
-          border-bottom: 1px solid hsl(0 0% 100% / 0.06);
-          background: hsl(234 22% 4% / 0.72);
-          backdrop-filter: blur(12px);
-          z-index: 2;
-        }
-        .lm-thread__sep { width: 1px; height: 14px; background: hsl(0 0% 100% / 0.10); margin: 0 4px; }
-        .lm-thread__select, .lm-thread__toggle, .lm-thread__export {
-          font-size: 11.5px; letter-spacing: -0.005em;
-          color: hsl(0 0% 100% / 0.7);
-          background: transparent;
-          border: 1px solid hsl(0 0% 100% / 0.08);
-          border-radius: 8px; padding: 4px 10px;
-          display: inline-flex; align-items: center; gap: 6px;
-          transition: background var(--lm-dur-micro) var(--lm-ease-micro);
-        }
-        .lm-thread__toggle[data-active="true"] {
-          background: hsl(0 0% 100% / 0.06); color: hsl(0 0% 100% / 0.96);
-        }
-        .lm-thread__select:hover, .lm-thread__toggle:hover, .lm-thread__export:hover {
-          background: hsl(0 0% 100% / 0.06);
-        }
-        .lm-thread__select option { background: hsl(234 18% 8%); }
-
-        /* Agent mode — segmented control. Auto state gets a soft glow so the
-           user is always aware Sora is operating with full autonomy. */
-        .lm-mode {
-          display: inline-flex; align-items: center;
-          padding: 2px;
-          border: 1px solid hsl(0 0% 100% / 0.08);
-          border-radius: 9999px;
-          background: hsl(0 0% 100% / 0.03);
-        }
-        .lm-mode__seg {
-          padding: 3px 10px;
-          font-size: 11px; letter-spacing: 0.02em;
-          text-transform: uppercase;
-          color: hsl(0 0% 100% / 0.5);
-          border-radius: 9999px;
-          background: transparent;
-          border: none;
-          transition: background var(--lm-dur-micro) var(--lm-ease-micro),
-                      color      var(--lm-dur-micro) var(--lm-ease-micro),
-                      box-shadow var(--lm-dur-micro) var(--lm-ease-micro);
-        }
-        .lm-mode__seg:hover { color: hsl(0 0% 100% / 0.9); }
-        .lm-mode__seg[data-active="true"] {
-          background: hsl(0 0% 100% / 0.10);
-          color: hsl(0 0% 100%);
-        }
-        /* Auto-on flag — soft glow nudges the eye that Sora is unsupervised. */
-        .lm-mode__seg[data-active="true"]:first-child {
-          box-shadow: 0 0 14px hsl(0 0% 100% / 0.35);
-        }
-
-        .lm-thread__scroll {
-          flex: 1;
-          min-height: 0;
-          overflow-y: auto;
-          overscroll-behavior: contain;
-          padding: 40px 28px 60px;
-          scroll-behavior: auto;
-          -webkit-overflow-scrolling: touch;
-        }
-        .lm-thread__anchor {
-          height: 1px;
-          width: 100%;
-          pointer-events: none;
-        }
-        .lm-jump-latest {
-          position: absolute;
-          left: 50%;
-          bottom: 12px;
-          transform: translateX(-50%);
-          z-index: 5;
-          padding: 7px 14px;
-          border-radius: 999px;
-          border: 1px solid hsl(0 0% 100% / 0.14);
-          background: hsl(234 18% 10% / 0.92);
-          color: hsl(0 0% 100% / 0.88);
-          font-size: 12px;
-          letter-spacing: 0.01em;
-          backdrop-filter: blur(10px);
-          box-shadow: 0 8px 24px hsl(0 0% 0% / 0.35);
-          cursor: pointer;
-        }
-        .lm-jump-latest:hover {
-          background: hsl(234 18% 14% / 0.95);
-          color: hsl(0 0% 100%);
-        }
-
-        .lm-empty {
-          display: flex; flex-direction: column; align-items: center;
-          padding: 60px 0;
-        }
-
-        .lm-turn { padding: 14px 0; }
-        .lm-turn--user { display: flex; justify-content: flex-end; }
-        .lm-turn--user .lm-bubble {
-          max-width: 80%;
-          padding: 10px 14px;
-          border-radius: 14px 14px 4px 14px;
-          background: hsl(0 0% 100% / 0.94);
-          color: hsl(234 22% 4%);
-          font-size: 1rem;
-          line-height: 1.55;
-          letter-spacing: -0.005em;
-          white-space: pre-wrap;
-        }
-        .lm-turn--assistant {
-          padding-right: 24px;
-          font-size: 1rem;
-          line-height: 1.55;
-        }
-        .lm-turn--assistant :global(.markdown) {
-          font-size: inherit;
-          line-height: inherit;
-        }
-        .lm-stream-plain {
-          font-size: inherit;
-          line-height: inherit;
-          color: hsl(0 0% 100% / 0.92);
-          white-space: pre-wrap;
-          word-break: break-word;
-        }
-        .lm-stream-caret {
-          display: inline-block;
-          width: 0.55ch;
-          height: 1.05em;
-          margin-left: 1px;
-          vertical-align: text-bottom;
-          background: hsl(0 0% 100% / 0.72);
-          border-radius: 1px;
-          animation: lm-caret-blink 1s steps(1) infinite;
-        }
-        @keyframes lm-caret-blink {
-          0%, 45% { opacity: 1; }
-          50%, 100% { opacity: 0; }
-        }
-        .lm-typing {
-          display: inline-flex;
-          align-items: center;
-          gap: 5px;
-          padding: 10px 4px;
-        }
-        .lm-typing span {
-          width: 6px;
-          height: 6px;
-          border-radius: 50%;
-          background: hsl(0 0% 100% / 0.55);
-          animation: lm-typing-bounce 1.1s ease-in-out infinite;
-        }
-        .lm-typing span:nth-child(2) { animation-delay: 0.15s; }
-        .lm-typing span:nth-child(3) { animation-delay: 0.3s; }
-        @keyframes lm-typing-bounce {
-          0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
-          40% { opacity: 1; transform: translateY(-3px); }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .lm-typing span { animation: none; opacity: 0.6; }
-        }
-        .lm-turn__actions {
-          display: flex; align-items: center; gap: 10px;
-          margin-top: 8px;
-          opacity: 0;
-          transition: opacity var(--lm-dur-micro) var(--lm-ease-micro);
-        }
-        .lm-turn--assistant:hover .lm-turn__actions { opacity: 1; }
-        .lm-turn__action {
-          display: inline-flex; align-items: center; gap: 4px;
-          font-size: 11px; color: hsl(0 0% 100% / 0.4);
-        }
-        .lm-turn__action:hover { color: hsl(0 0% 100% / 0.8); }
-
-        .lm-peer-select {
-          background: hsl(0 0% 100% / 0.04);
-          border: 1px solid hsl(0 0% 100% / 0.12);
-          color: hsl(0 0% 100% / 0.85);
-          border-radius: 6px;
-          padding: 2px 8px;
-          font-size: 11px;
-          font-family: ui-monospace, monospace;
-        }
-        .lm-peer-select:focus { outline: 1px solid hsl(0 0% 100% / 0.3); }
-        .lm-peer-info {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 16px;
-          height: 16px;
-          font-size: 11px;
-          line-height: 1;
-          color: hsl(0 0% 100% / 0.5);
-          border: 1px solid hsl(0 0% 100% / 0.18);
-          border-radius: 50%;
-          cursor: help;
-          background: hsl(0 0% 100% / 0.04);
-        }
-        .lm-peer-info:hover, .lm-peer-info:focus {
-          color: hsl(0 0% 100% / 0.9);
-          border-color: hsl(0 0% 100% / 0.35);
-          outline: none;
-        }
-
-        .lm-regen {
-          display: inline-flex; align-items: center; gap: 6px;
-          font-size: 11px; color: hsl(0 0% 100% / 0.5);
-          margin-top: 8px;
-        }
-        .lm-regen:hover { color: hsl(0 0% 100% / 0.9); }
-
-        .lm-error {
-          margin: 12px 0;
-          padding: 10px 14px;
-          border: 1px solid hsl(0 100% 70% / 0.3);
-          border-radius: 10px;
-          background: hsl(0 100% 50% / 0.05);
-          color: hsl(0 100% 82%);
-          font-size: 13px;
-        }
-
-        /* === Suspended banner === */
-        .lm-suspend {
-          display: flex; align-items: center; gap: 14px;
-          margin: 16px 28px 0;
-          padding: 10px 14px;
-          border: 1px solid hsl(0 0% 100% / 0.18);
-          border-radius: 10px;
-          background: hsl(0 0% 100% / 0.03);
-        }
-        .lm-suspend__btn {
-          margin-left: auto;
-          padding: 4px 12px;
-          border-radius: 8px;
-          background: hsl(0 0% 100% / 0.08);
-          border: 1px solid hsl(0 0% 100% / 0.16);
-          font-size: 12px;
-          color: hsl(0 0% 100% / 0.96);
-        }
-        .lm-suspend__btn:hover { background: hsl(0 0% 100% / 0.14); }
-
-        /* === Composer === */
-        .lm-composer {
-          flex-shrink: 0;
-          padding: 18px 28px 22px;
-          border-top: 1px solid hsl(0 0% 100% / 0.06);
-          background: hsl(234 22% 4% / 0.72);
-          backdrop-filter: blur(12px);
-        }
-        .lm-composer :global(.lm-composer__input) {
-          flex: 1;
-          background: hsl(0 0% 100% / 0.04);
-          border: 1px solid hsl(0 0% 100% / 0.10);
-          border-radius: 14px;
-          padding: 12px 14px;
-          color: hsl(0 0% 100% / 0.96);
-          font-size: 1rem;
-          line-height: 1.45;
-          resize: none;
-          outline: none;
-          min-height: 46px;
-          max-height: 50vh;
-          overflow-y: auto;
-        }
-        .lm-composer :global(.lm-composer__input:focus) {
-          border-color: hsl(0 0% 100% / 0.24);
-          background: hsl(0 0% 100% / 0.06);
-        }
-        .lm-composer__send {
-          width: 46px; height: 46px;
-          display: inline-flex; align-items: center; justify-content: center;
-          background: hsl(0 0% 100%);
-          color: hsl(234 22% 4%);
-          border-radius: 14px;
-          transition: opacity var(--lm-dur-micro) var(--lm-ease-micro);
-        }
-        .lm-composer__send:disabled { opacity: 0.3; }
-        .lm-composer__send:not(:disabled):hover {
-          box-shadow: 0 0 20px hsl(0 0% 100% / 0.4);
-        }
-
-        /* === Sora rail === */
-        .lm-sora {
-          border-left: 1px solid hsl(0 0% 100% / 0.06);
-          background: hsl(234 22% 4% / 0.4);
-          backdrop-filter: blur(14px);
-          padding: 28px 16px;
-          display: flex; flex-direction: column;
-          gap: 24px;
-          min-height: 0;
-          overflow-y: auto;
-        }
-        .lm-sora__top { display: flex; flex-direction: column; align-items: center; padding-top: 12px; }
-        .lm-sora__tools {
-          border-top: 1px solid hsl(0 0% 100% / 0.06);
-          padding-top: 14px;
-        }
-        .lm-sora__tool {
-          padding: 6px 10px;
-          font-size: 11px;
-          color: hsl(0 0% 100% / 0.8);
-          border: 1px solid hsl(0 0% 100% / 0.10);
-          border-radius: 8px;
-          margin-bottom: 6px;
-          font-family: "SF Mono", ui-monospace, monospace;
-        }
-        .lm-sora__agent {
-          display: flex; align-items: center; gap: 10px;
-          padding: 8px 10px;
-          background: hsl(0 0% 100% / 0.03);
-          border: 1px solid hsl(0 0% 100% / 0.08);
-          border-radius: 10px;
-          margin-bottom: 6px;
-        }
-        .lm-sora__agent[data-spawn="true"] {
-          background: hsl(0 0% 100% / 0.05);
-          border-color: hsl(0 0% 100% / 0.16);
-        }
-      `}</style>
     </div>
   );
 }

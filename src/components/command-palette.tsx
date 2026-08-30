@@ -7,15 +7,17 @@
  * the rail destinations so muscle memory transfers.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
+import { openReportImprovement } from "@/lib/client/report-improvement";
 
 type Command = { label: string; href: string; group: string; hint?: string };
 
 const COMMANDS: Command[] = [
   { label: "New conversation", href: "/?new=1", group: "Actions", hint: "⌘N" },
   { label: "Toggle command palette", href: "#", group: "Actions", hint: "⌘K" },
+  { label: "Report improvement", href: "#report", group: "Actions", hint: "⌘⇧F" },
 
   { label: "Chat", href: "/", group: "Chat" },
 
@@ -79,6 +81,22 @@ export function CommandPalette() {
     [filtered]
   );
 
+  // Memoized so the keydown listener below can depend on it without
+  // re-subscribing on every render.
+  const runCommand = useCallback(
+    (cmd: Command) => {
+      setOpen(false);
+      setQ("");
+      if (cmd.href === "#report") {
+        openReportImprovement();
+        return;
+      }
+      if (cmd.href === "#") return;
+      router.push(cmd.href);
+    },
+    [router]
+  );
+
   useEffect(() => {
     setActive(0);
   }, [q, open]);
@@ -115,14 +133,12 @@ export function CommandPalette() {
         e.preventDefault();
         const cmd = filtered[active];
         if (!cmd) return;
-        setOpen(false);
-        setQ("");
-        if (cmd.href !== "#") router.push(cmd.href);
+        runCommand(cmd);
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [router, open, filtered, active]);
+  }, [router, open, filtered, active, runCommand]);
 
   if (!open) return null;
 
@@ -176,11 +192,7 @@ export function CommandPalette() {
                     key={c.label + c.href}
                     role="option"
                     aria-selected={isActive}
-                    onClick={() => {
-                      setOpen(false);
-                      setQ("");
-                      if (c.href !== "#") router.push(c.href);
-                    }}
+                    onClick={() => runCommand(c)}
                     onMouseEnter={() => setActive(idx)}
                     className="flex w-full items-center justify-between rounded-[10px] px-3 py-2 text-left text-[13px]"
                     style={{

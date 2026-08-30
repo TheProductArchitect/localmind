@@ -6,36 +6,48 @@
  * collapses every active process, running task graph, and loop-guard
  * suspension into a single visual state that the orb can render.
  *
- * Polled every ~4s by the Rail. Designed to be cheap: two indexed
- * SELECTs against conv.db, nothing more.
- *
- * Response:
- *   {
- *     state: "idle" | "thinking" | "tool" | "spawn" | "suspended",
- *     processes: number,         // count of active processes
- *     graphs: number,             // count of running graphs
- *     subagents: number,          // approximated subagent breadth (for orb satellites)
- *     suspended: boolean          // any conversation paused by loop-guard?
- *   }
+ * Polled every ~4s by the Rail, from every open window. Because better-sqlite3
+ * is synchronous, anything expensive here stalls the chat stream on the same
+ * event loop — so this route only ever runs COUNT queries, and caches the
+ * result per scope for a fraction of the poll interval.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser, isOwner } from "@/lib/auth/identity";
-import { listActive } from "@/lib/db/agent-processes";
-import { listGraphs } from "@/lib/db/task-graphs";
+import { countActive } from "@/lib/db/agent-processes";
+import { countRunningGraphs } from "@/lib/db/task-graphs";
 import { getConvDb } from "@/lib/db";
 
 export const runtime = "nodejs";
+
+const TTL_MS = 1_500;
+
+type Pulse = {
+  state: "idle" | "thinking" | "tool" | "spawn" | "suspended";
+  processes: number;
+  graphs: number;
+  subagents: number;
+  suspended: boolean;
+};
+
+const cache = new Map<string, { at: number; value: Pulse }>();
+
+// Whether the loop-guard table exists is fixed for the process lifetime once
+// created, so the sqlite_master probe does not need to repeat on every poll.
+let loopTablePresent: boolean | null = null;
 
 function anySuspended(): boolean {
   try {
     const db = getConvDb();
     // The conversation_loop_state table is created lazily by the loop-guard;
     // a missing table is the normal early state and means "nothing suspended".
-    const row = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='conversation_loop_state'")
-      .get() as { name?: string } | undefined;
-    if (!row?.name) return false;
+    if (loopTablePresent !== true) {
+      const row = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='conversation_loop_state'")
+        .get() as { name?: string } | undefined;
+      loopTablePresent = !!row?.name;
+      if (!loopTablePresent) return false;
+    }
     const c = db
       .prepare("SELECT COUNT(*) AS n FROM conversation_loop_state WHERE suspended_at IS NOT NULL")
       .get() as { n: number } | undefined;
@@ -45,33 +57,35 @@ function anySuspended(): boolean {
   }
 }
 
+function collect(scope: string | null): Pulse {
+  const processes = countActive(scope);
+  const graphs = countRunningGraphs(scope);
+  const suspended = anySuspended();
+
+  let state: Pulse["state"] = "idle";
+  if (suspended) state = "suspended";
+  else if (processes.subagents > 0) state = "spawn";
+  else if (processes.total > 0 || graphs > 0) state = "thinking";
+
+  return {
+    state,
+    processes: processes.total,
+    graphs,
+    subagents: processes.subagents,
+    suspended,
+  };
+}
+
 export async function GET(req: NextRequest) {
   const user = currentUser(req);
   const scope = user && !isOwner(req) ? user.id : null;
 
-  const activeProcesses = listActive(scope);
-  const allGraphs = listGraphs(scope, 100);
-  const runningGraphs = allGraphs.filter((g) => g.status === "running" || g.status === "pending");
+  const key = scope ?? "*";
+  const now = Date.now();
+  const hit = cache.get(key);
+  if (hit && now - hit.at < TTL_MS) return NextResponse.json(hit.value);
 
-  // Subagents are processes whose type indicates a spawned child. We
-  // approximate the satellite count for the orb by the number of running
-  // subagent-shaped processes (capped at 6 to match Orb's render cap).
-  const spawnedNow = activeProcesses.filter(
-    (p) => (p.display_name || "").toLowerCase().includes("subagent")
-  ).length;
-
-  const suspended = anySuspended();
-
-  let state: "idle" | "thinking" | "tool" | "spawn" | "suspended" = "idle";
-  if (suspended) state = "suspended";
-  else if (spawnedNow > 0) state = "spawn";
-  else if (activeProcesses.length > 0 || runningGraphs.length > 0) state = "thinking";
-
-  return NextResponse.json({
-    state,
-    processes: activeProcesses.length,
-    graphs: runningGraphs.length,
-    subagents: spawnedNow,
-    suspended,
-  });
+  const value = collect(scope);
+  cache.set(key, { at: now, value });
+  return NextResponse.json(value);
 }

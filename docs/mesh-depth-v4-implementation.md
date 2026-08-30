@@ -50,3 +50,5 @@ files / calendar / mail / browser actions local.
 6. **Confirmations** (destructive `ask`/`pin` actions) raised on the DGX now stream
    back to the initiating PC for approval (M5); `pin`-tier gates are validated
    against the DGX's own PIN.
+
+See also: [dgx-hub-wifi.md](./dgx-hub-wifi.md) for the short operator checklist.

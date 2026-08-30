@@ -22,10 +22,11 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { spawn, spawnSync } from "child_process";
+import { spawn } from "child_process";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { which } from "@/lib/sys/which";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -36,15 +37,9 @@ const MODEL_PATH =
   process.env.LOCALMIND_WHISPER_MODEL ||
   path.join(process.env.HOME || os.homedir(), ".localmind", "models", "ggml-base.en.bin");
 
-function which(cmd: string): string | null {
-  const r = spawnSync("/usr/bin/env", ["bash", "-c", `command -v ${cmd}`], { encoding: "utf8" });
-  const out = (r.stdout || "").trim();
-  return out || null;
-}
 
 export async function POST(req: NextRequest) {
-  const whisper = which("whisper-cli");
-  const ffmpeg = which("ffmpeg");
+  const [whisper, ffmpeg] = await Promise.all([which("whisper-cli"), which("ffmpeg")]);
   if (!whisper || !ffmpeg) {
     return NextResponse.json(
       { error: !whisper ? "whisper-cli not on PATH" : "ffmpeg not on PATH" },

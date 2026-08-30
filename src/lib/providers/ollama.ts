@@ -1,7 +1,64 @@
+import os from "node:os";
 import { nanoid } from "nanoid";
 import type { ChatMessage, Provider, ProviderDelta, ToolDefinition } from "./types";
+import { assessModelFit, isBlockingVerdict } from "@/lib/models/fit";
 
 const HOST = process.env.OLLAMA_HOST || "http://localhost:11434";
+
+/**
+ * Installed model sizes, cached briefly. Used by the memory preflight below;
+ * a chat must not pay for an extra /api/tags round-trip per turn.
+ */
+let sizeCache: { at: number; sizes: Map<string, number> } | null = null;
+const SIZE_TTL_MS = 30_000;
+
+async function modelSizeBytes(model: string): Promise<number | null> {
+  const now = Date.now();
+  if (!sizeCache || now - sizeCache.at > SIZE_TTL_MS) {
+    try {
+      const r = await fetch(`${HOST}/api/tags`, { signal: AbortSignal.timeout(2000) });
+      if (!r.ok) return null;
+      const j = (await r.json()) as { models?: { name?: string; size?: number }[] };
+      const sizes = new Map<string, number>();
+      for (const m of j.models || []) {
+        if (m.name && typeof m.size === "number") sizes.set(m.name, m.size);
+      }
+      sizeCache = { at: now, sizes };
+    } catch {
+      return null;
+    }
+  }
+  const sizes = sizeCache.sizes;
+  // Ollama reports "name:tag"; callers may omit the implicit ":latest".
+  return sizes.get(model) ?? sizes.get(`${model}:latest`) ?? null;
+}
+
+/**
+ * Refuse a model that cannot fit in memory.
+ *
+ * Ollama does not error when the weights exceed available memory — it swaps,
+ * which on a unified-memory box starves everything and leaves this fetch
+ * hanging with no response. Failing fast with the numbers is far better than
+ * an indefinite "Preparing…".
+ */
+async function preflightMemory(model: string): Promise<void> {
+  const sizeBytes = await modelSizeBytes(model);
+  if (!sizeBytes) return;
+  const fit = assessModelFit({
+    sizeBytes,
+    availableBytes: os.freemem(),
+    totalBytes: os.totalmem(),
+    modelName: model,
+  });
+  if (isBlockingVerdict(fit.verdict)) {
+    throw new Error(`Not enough memory to run this model. ${fit.message}`);
+  }
+}
+
+/** Test seam — drops the cached /api/tags sizes. */
+export function clearOllamaSizeCache(): void {
+  sizeCache = null;
+}
 
 export const ollamaProvider: Provider = {
   name: "ollama",
@@ -34,6 +91,7 @@ export const ollamaProvider: Provider = {
   },
 
   async *chat({ model, messages, tools, signal, contextWindow }): AsyncGenerator<ProviderDelta> {
+    await preflightMemory(model);
     const body: Record<string, unknown> = {
       model,
       messages: messages.map((m) => {

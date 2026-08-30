@@ -178,21 +178,21 @@ export function MicButton({ onText }: { onText: (t: string, opts?: { append?: bo
         "Start recording (shift-click for continuous)"
       }
       className={cn(
-        "inline-flex h-9 w-9 items-center justify-center rounded-md border",
+        "inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04]",
         state === "recording" && "bg-destructive text-destructive-foreground animate-pulse",
         state === "streaming" && "bg-primary text-primary-foreground animate-pulse",
         state === "transcribing" && "bg-accent text-accent-foreground",
-        state === "idle" && "hover:bg-accent"
+        state === "idle" && "hover:bg-white/[0.08]"
       )}
     >
       {state === "transcribing" ? (
-        <Loader2 className="h-4 w-4 animate-spin" />
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
       ) : state === "recording" ? (
-        <MicOff className="h-4 w-4" />
+        <MicOff className="h-3.5 w-3.5" />
       ) : state === "streaming" ? (
-        <Radio className="h-4 w-4" />
+        <Radio className="h-3.5 w-3.5" />
       ) : (
-        <Mic className="h-4 w-4" />
+        <Mic className="h-3.5 w-3.5" />
       )}
     </button>
   );
@@ -394,31 +394,31 @@ export function ConversationButton({
   const label =
     state === "listening" ? "Listening…" :
     state === "thinking"  ? "Thinking…"  :
-    state === "speaking"  ? "Speaking…"  : "Start conversation";
+    state === "speaking"  ? "Speaking…"  : "Talk";
 
   return (
     <button
       type="button"
-      title={label}
-      aria-label={label}
+      title={label === "Talk" ? "Start conversation" : label}
+      aria-label={label === "Talk" ? "Start conversation" : label}
       onClick={onClick}
       data-pulse-action={active ? "destructive" : "send"}
       className={cn(
-        "inline-flex h-9 items-center gap-2 px-3 rounded-md border text-[12px] tracking-[-0.005em]",
-        state === "off"       && "border-white/10 bg-white/[0.04] text-white/85 hover:bg-white/[0.07]",
+        "inline-flex h-7 items-center gap-1.5 px-2 rounded-md border text-[11px] tracking-[-0.005em]",
+        state === "off"       && "border-white/10 bg-transparent text-white/70 hover:bg-white/[0.06]",
         state === "listening" && "border-white/25 bg-white/[0.10] text-white animate-pulse",
         state === "thinking"  && "border-white/15 bg-white/[0.06] text-white/85",
         state === "speaking"  && "border-white/30 bg-white/[0.12] text-white",
       )}
     >
       {state === "thinking" ? (
-        <Loader2 className="h-4 w-4 animate-spin" />
+        <Loader2 className="h-3 w-3 animate-spin" />
       ) : state === "speaking" ? (
-        <Volume2 className="h-4 w-4" />
+        <Volume2 className="h-3 w-3" />
       ) : state === "listening" ? (
-        <Radio className="h-4 w-4" />
+        <Radio className="h-3 w-3" />
       ) : (
-        <MessageCircle className="h-4 w-4" />
+        <MessageCircle className="h-3 w-3" />
       )}
       <span className="hidden sm:inline">{label}</span>
     </button>

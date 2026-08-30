@@ -34,4 +34,10 @@ contextBridge.exposeInMainWorld("lmBrowser", {
   /** Hyper-personal shell: app name = assistant, dock icon = live orb. */
   setBranding: (patch) => ipcRenderer.invoke("branding:set", patch),
   getBranding: () => ipcRenderer.invoke("branding:get"),
+  /** Help → Report improvement */
+  onReportImprovement: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on("app:report-improvement", handler);
+    return () => ipcRenderer.removeListener("app:report-improvement", handler);
+  },
 });

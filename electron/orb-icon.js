@@ -134,9 +134,22 @@ async function getOrbIcon(state) {
   return renderOrbIcon(s);
 }
 
-/** Warm common frames so dock swaps are instant. */
+/**
+ * Warm common frames so dock swaps are instant.
+ *
+ * Each render spins up an offscreen BrowserWindow, so re-rendering frames that
+ * are already cached on disk cost five window creations on every launch — and
+ * offscreen capture is not even available in every session (software
+ * rasterisation, --no-sandbox, headless). Skip anything already cached.
+ */
 async function warmOrbIcons() {
   for (const s of ["idle", "thinking", "tool", "error", "suspended"]) {
+    const pngPath = path.join(brandingDir(), `orb-${s}.png`);
+    try {
+      if (fs.statSync(pngPath).size > 0) continue;
+    } catch {
+      /* not cached yet — render below */
+    }
     try {
       await renderOrbIcon(/** @type {OrbState} */ (s));
     } catch (e) {

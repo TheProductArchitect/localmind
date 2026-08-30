@@ -231,7 +231,15 @@ function IntegrationGroup({
                 {e.version || "—"}{e.outdated && e.latest ? ` → ${e.latest}` : ""}
               </span>
               <span className="lm-micro" style={{ textTransform: "none", letterSpacing: 0 }}>{e.license}</span>
-              <a href={e.repo} target="_blank" rel="noreferrer noopener" className="lm-int__repo" data-pulse="true">
+              <a
+                href={e.repo}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="lm-int__repo"
+                data-pulse="true"
+                aria-label={`Open ${e.name} repository`}
+                title="Open repository"
+              >
                 <ExternalLink className="h-3.5 w-3.5" />
               </a>
             </div>
@@ -268,7 +276,7 @@ function useSettings() {
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));
       toast(j.message || j.error || "Save failed", "error");
-      return;
+      return false;
     }
     patchSettingsCache(patch);
     if (typeof patch?.assistant_name === "string") {
@@ -277,6 +285,7 @@ function useSettings() {
     }
     toast("Saved", "success");
     load();
+    return true;
   };
   return { s, save, loading, authError, reload: load };
 }
@@ -448,7 +457,15 @@ function GeneralSection() {
         <div className="flex gap-2">
           <Input type="password" placeholder="New 4+ digit PIN" value={pin}
             onChange={(e) => setPin(e.target.value)} className="w-48" />
-          <Button size="sm" disabled={pin.length < 4} onClick={() => { save({ pin }); setPin(""); }}>Set PIN</Button>
+          <Button
+            size="sm"
+            disabled={pin.length < 4}
+            onClick={async () => {
+              if (await save({ pin })) setPin("");
+            }}
+          >
+            Set PIN
+          </Button>
         </div>
       </Card>
 

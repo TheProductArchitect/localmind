@@ -284,7 +284,7 @@ function OrchestrationPageInner() {
             <div className="flex items-center gap-2">
               <Zap className="h-4 w-4" />
               <p className="text-sm font-medium flex-1">Create a long-running job</p>
-              <Button size="sm" variant="ghost" onClick={() => setShowJobForm(false)}>
+              <Button size="sm" variant="ghost" onClick={() => setShowJobForm(false)} aria-label="Close job form" title="Close">
                 <X className="h-3 w-3" />
               </Button>
             </div>

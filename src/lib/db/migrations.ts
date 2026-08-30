@@ -1415,6 +1415,26 @@ configMigrations.push({
   },
 });
 
+// v40: in-app user improvement reports (local only; analyzed by the active model)
+configMigrations.push({
+  version: 40,
+  up: (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS user_improvement_reports (
+        id TEXT PRIMARY KEY,
+        route TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        context_json TEXT NOT NULL DEFAULT '{}',
+        screenshot_data_url TEXT,
+        analysis_json TEXT,
+        status TEXT NOT NULL DEFAULT 'open',
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_reports_created ON user_improvement_reports(created_at DESC);
+    `);
+  },
+});
+
 const knowledgeMigrations: Migration[] = [
   {
     version: 1,

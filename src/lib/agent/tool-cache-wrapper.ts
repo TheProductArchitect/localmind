@@ -139,7 +139,13 @@ export async function executeWithCache(
   }
 
   const toolVersion = tool.version ?? "1";
-  const inputHash = computeToolInputHash(input);
+  // Scope cache entries to the conversation so identical recall/memory/search
+  // inputs cannot leak another user's or thread's results.
+  const inputHash = computeToolInputHash({
+    input,
+    conversationId: ctx.conversationId,
+    codingSessionId: ctx.codingSessionId ?? null,
+  });
 
   const cached = lookup(toolName, toolVersion, inputHash);
   if (cached && cached.status === "ok") {

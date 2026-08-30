@@ -112,8 +112,12 @@ async function tick() {
       .all(Date.now());
     for (const t of dueOneShots) {
       console.log(`[worker] running one-shot reminder: ${t.name}`);
-      await post("/api/internal/run-task", { taskId: t.id });
-      d.prepare("UPDATE scheduled_tasks SET enabled=0 WHERE id=?").run(t.id);
+      const completed = await post("/api/internal/run-task", { taskId: t.id });
+      // Keep failed reminders due so a later tick retries instead of losing
+      // them when the model or delivery channel is temporarily unavailable.
+      if (completed) {
+        d.prepare("UPDATE scheduled_tasks SET enabled=0 WHERE id=?").run(t.id);
+      }
     }
 
     // Recurring scheduled tasks (run_at IS NULL) — fire once per matching minute.
