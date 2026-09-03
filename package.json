@@ -53,7 +53,7 @@
     "mammoth": "^1.8.0",
     "nanoid": "^5.0.8",
     "next": "15.5.19",
-    "ollama": "^0.5.9",
+    "ollama": "^0.6.3",
     "openai": "^4.71.0",
     "pdfjs-dist": "^4.7.76",
     "playwright": "^1.48.0",
